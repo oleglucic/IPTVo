@@ -6,6 +6,12 @@ const { Readable } = require('stream');
 const { startAiQueue, globalAiCache } = require('./aiCurator'); 
 const { getOverride, getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
+
+// --- Synonym normalization (jr/junior etc) ---
+const SYNONYM_MAP = { jr: 'junior' };
+function applySynonyms(str) {
+    return str.split(/\s+/).map(w => SYNONYM_MAP[w.toLowerCase()] || w).join(' ');
+}
 const { saveCacheToRedis } = require('./redisCache');
 
 const userCaches = new Map();
@@ -172,17 +178,19 @@ async function parseM3uData(configKey, configObj) {
                 const groupTags = groupTagInfo.title !== "Direct Stream" ? groupTagInfo.title : null;
                 
                 let cleanNameStr = normaliseFormat(rawName).toLowerCase();
-                let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|premium|live|backup|alt|online)\b/gi, ' ');
+const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
+const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
+let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|premium|live|backup|alt|online)\b/gi, ' ');
                 cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
                 cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
                 cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
                 cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
                 
                 const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
-                const baseCleanName = cName.replace(/[^a-z0-9]/g, "") || "unknown";
+                const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
                 
                 // No 'iptv:' prefix - colons in IDs can break client URL parsing
-                let cId = `${countryScopeKey}_${baseCleanName}`;
+                let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
                 
                 // 1. Check Supabase Override DB first
                 const dbMapping = overridesMap.get(rawName) || null;
@@ -190,7 +198,7 @@ async function parseM3uData(configKey, configObj) {
                     cId = dbMapping.canonical_id;
                 } else {
                     // Queue for async background AI deduplication if not mapped or low confidence
-                    dirtyChannels.push({ rawName, baseCleanName, cId });
+                    dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
                 }
                 
                 if (tvgId) epgMap.set(tvgId[1].toLowerCase().trim(), cId);
@@ -315,24 +323,26 @@ async function parseXtreamData(configKey, configObj) {
             const groupTags = groupTagInfo.title !== "Direct Stream" ? groupTagInfo.title : null;
 
             let cleanNameStr = normaliseFormat(rawName).toLowerCase();
-            let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|premium|live|backup|alt|online)\b/gi, ' ');
+const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
+const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
+let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|premium|live|backup|alt|online)\b/gi, ' ');
             cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
             cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
             cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
             cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
             const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
-            const baseCleanName = cName.replace(/[^a-z0-9]/g, "") || "unknown";
+            const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
             
             // No 'iptv:' prefix - colons in IDs can break client URL parsing
-            let cId = `${countryScopeKey}_${baseCleanName}`;
+            let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
 
             // Check Supabase override DB
             const dbMapping = overridesMap.get(rawName) || null;
             if (dbMapping && dbMapping.confidence >= 0.5) {
                 cId = dbMapping.canonical_id;
             } else {
-                dirtyChannels.push({ rawName, baseCleanName, cId });
+                dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
             }
 
             if (stream.epg_channel_id) epgMap.set(stream.epg_channel_id.toLowerCase().trim(), cId);

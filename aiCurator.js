@@ -7,21 +7,22 @@ const globalAiCache = new Map();
 /**
  * Asks OpenRouter AI to resolve messy channel strings into a unified canonical ID format.
  */
-async function processAiBatch(rawNamesArray) {
+async function processAiBatch(batchItems) {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) return {};
 
-    const prompt = `You are a channel deduplication engine. I will give you an array of messy IPTV strings.
-    Some of these are duplicates or backups of the same station. 
-    Map each raw name to a clean, canonical ID using only lowercase letters, numbers, and underscores (e.g., "us_hbo", "uk_skysportsf1"). Do NOT use colons or any prefix.
-    Ensure alternate links, backups, and quality variations of the identical station receive the EXACT same ID string so they collapse together.
-    
-    Return ONLY a raw JSON object where the key is the raw name and the value is the clean unified ID. No markdown.
-    
-    Input: ${JSON.stringify(rawNamesArray)}`;
+    // batchItems: [{ name, scope }] — scope is parser-computed (from group-title), AI must NOT invent it
+    const prompt = `You are a channel deduplication engine. I will give you an array of {name, scope} pairs from messy IPTV strings.
+    Some of these are duplicates or backups of the same station.
+    For each entry, return a clean, canonical BASE NAME ONLY (no country/scope prefix, no underscore prefix) using lowercase letters and numbers only, no spaces (e.g., "skysportsf1", "hbo"). Do NOT include the scope in your answer.
+    Ensure alternate links, backups, and quality variations of the identical station receive the EXACT same base name so they collapse together.
+
+    Return ONLY a raw JSON object where the key is the name and the value is the clean base name. No markdown.
+
+    Input: ${JSON.stringify(batchItems)}`;
 
     try {
-        console.log(`[AI Curator] Resolving duplicates for a batch of ${rawNamesArray.length} channels...`);
+        console.log(`[AI Curator] Resolving duplicates for a batch of ${batchItems.length} channels...`);
         const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: "openrouter/free",
             messages: [{ role: "user", content: prompt }]
@@ -100,10 +101,11 @@ async function startAiQueue(dirtyChannels, configKey) {
         if (isShortOrUnknown) priority += 1;
 
         if (isAlt || isShortOrUnknown || hasBaseNameConflict || isOverMerged || isLowConfidence || !existing) {
-            channelsToProcess.push({ name: ch.rawName, priority });
+            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || 'global', priority });
         }
     }
 
+    const scopeMap = new Map(channelsToProcess.map(c => [c.name, c.scope]));
     const priorityMap = new Map();
     for (const item of channelsToProcess) {
         const existingPriority = priorityMap.get(item.name);
@@ -111,7 +113,7 @@ async function startAiQueue(dirtyChannels, configKey) {
             priorityMap.set(item.name, item.priority);
         }
     }
-    const uniqueToProcess = [...priorityMap.entries()].sort((a, b) => b[1] - a[1]).map(entry => entry[0]);
+    const uniqueToProcess = [...priorityMap.entries()].sort((a, b) => b[1] - a[1]).map(entry => ({ name: entry[0], scope: scopeMap.get(entry[0]) || 'global' }));
     if (uniqueToProcess.length === 0) {
         console.log(`[AI Curator] No flagged channels requiring processing for ${configKey}.`);
         return;
@@ -127,12 +129,14 @@ async function startAiQueue(dirtyChannels, configKey) {
                 break;
             }
         
-        for (const [raw, clean] of Object.entries(aiResults)) {
-            if (clean && typeof clean === 'string' && clean.length > 0) {
-                globalAiCache.set(raw, clean);
-                
-                // Persist to Supabase with 0.85 initial confidence
-                await setOverride(raw, clean, 0.85);
+        const batchScopeMap = new Map(batch.map(b => [b.name, b.scope]));
+        for (const [raw, cleanBase] of Object.entries(aiResults)) {
+            if (cleanBase && typeof cleanBase === 'string' && cleanBase.length > 0) {
+                const scope = batchScopeMap.get(raw) || 'global';
+                const sanitizedBase = cleanBase.replace(/[^a-z0-9]/g, '');
+                const finalId = `${scope}_${sanitizedBase}`;
+                globalAiCache.set(raw, finalId);
+                await setOverride(raw, finalId, 0.85);
             }
         }
 
