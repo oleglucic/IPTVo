@@ -180,7 +180,7 @@ async function parseM3uData(configKey, configObj) {
                 let cleanNameStr = normaliseFormat(rawName).toLowerCase();
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
-let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|premium|live|backup|alt|online)\b/gi, ' ');
+let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|live|backup|alt|online)\b/gi, ' ');
                 cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
                 cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
                 cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
@@ -325,7 +325,7 @@ async function parseXtreamData(configKey, configObj) {
             let cleanNameStr = normaliseFormat(rawName).toLowerCase();
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
-let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|premium|live|backup|alt|online)\b/gi, ' ');
+let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|60fps|50fps|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps|vip|live|backup|alt|online)\b/gi, ' ');
             cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
             cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
             cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
