@@ -6,6 +6,7 @@ const { Readable } = require('stream');
 const { startAiQueue, globalAiCache } = require('./aiCurator'); 
 const { getOverride, getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
+const { lookupChannel } = require('./iptvOrgRef');
 
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
@@ -193,8 +194,12 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
                 
                 // 1. Check Supabase Override DB first
-                const dbMapping = overridesMap.get(rawName) || null;
-                if (dbMapping && dbMapping.confidence >= 0.5) {
+                const iptvOrgMatch = lookupChannel(rawName);
+                if (iptvOrgMatch) cId = `${iptvOrgMatch.countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
+                const dbMapping = iptvOrgMatch ? null : (overridesMap.get(rawName) || null);
+                if (iptvOrgMatch) {
+                    // Authoritative match from iptv-org reference data - no AI needed
+                } else if (dbMapping && dbMapping.confidence >= 0.5) {
                     cId = dbMapping.canonical_id;
                 } else {
                     // Queue for async background AI deduplication if not mapped or low confidence
@@ -338,8 +343,12 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
 
             // Check Supabase override DB
-            const dbMapping = overridesMap.get(rawName) || null;
-            if (dbMapping && dbMapping.confidence >= 0.5) {
+            const iptvOrgMatch = lookupChannel(rawName);
+                if (iptvOrgMatch) cId = `${iptvOrgMatch.countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
+                const dbMapping = iptvOrgMatch ? null : (overridesMap.get(rawName) || null);
+            if (iptvOrgMatch) {
+                // Authoritative match from iptv-org reference data - no AI needed
+            } else if (dbMapping && dbMapping.confidence >= 0.5) {
                 cId = dbMapping.canonical_id;
             } else {
                 dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });

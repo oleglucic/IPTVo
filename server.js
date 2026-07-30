@@ -285,8 +285,11 @@ app.get('/:config/poster/:id.png', async (req, res) => {
     }
 });
 
+const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
 const PORT = process.env.PORT || 3000;
-// Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
+startIptvOrgRefresh();
+
+    // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
 setInterval(() => {
     snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', e.message));
 }, 30 * 60 * 1000);
