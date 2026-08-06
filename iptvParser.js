@@ -223,7 +223,9 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 groups.add(grp);
                 
                 if (!tMap.has(cId)) {
-                    const mItem = { id: cId, type: 'tv', name: cName.replace(/\b\w/g, c => c.toUpperCase()), genres: [grp], catalogId: catId, logo: logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
+                    const displayName = (iptvOrgMatch && iptvOrgMatch.canonicalName) ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                    const displayLogo = (iptvOrgMatch && iptvOrgMatch.logo) ? iptvOrgMatch.logo : logo;
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
                     tMap.set(cId, { meta: mItem, streams: [] }); 
                     tCat.push(mItem);
                 }
@@ -366,7 +368,9 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             groups.add(finalGrp);
 
             if (!tMap.has(cId)) {
-                const mItem = { id: cId, type: 'tv', name: cName.replace(/\b\w/g, c => c.toUpperCase()), genres: [finalGrp], catalogId: catId, logo: finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
+                const displayName = (iptvOrgMatch && iptvOrgMatch.canonicalName) ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                const displayLogo = (iptvOrgMatch && iptvOrgMatch.logo) ? iptvOrgMatch.logo : finalLogo;
+                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }
