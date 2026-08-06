@@ -215,15 +215,17 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 let finalLogo = logo ? logo[1] : '';
 
                 logoTrack.set(cId, { url: finalLogo, name: cName });
-                cItem = { cId, cName, rawName, logo: finalLogo, grp: finalGrp, groupTags, catchupInfo };
+                cItem = { cId, cName, rawName, logo: finalLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch };
 
             } else if (t.startsWith('http') && cItem) {
-                const { cId, cName, rawName, logo, grp, groupTags, catchupInfo } = cItem;
+                const { cId, cName, rawName, logo, grp, groupTags, catchupInfo, iptvOrgMatch } = cItem;
                 const catId = `iptv_${grp.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}`;
                 groups.add(grp);
                 
                 if (!tMap.has(cId)) {
-                    const mItem = { id: cId, type: 'tv', name: cName.replace(/\b\w/g, c => c.toUpperCase()), genres: [grp], catalogId: catId, logo: logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
+                    const displayName = (iptvOrgMatch && iptvOrgMatch.canonicalName) ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                    const displayLogo = (iptvOrgMatch && iptvOrgMatch.logo) ? iptvOrgMatch.logo : logo;
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
                     tMap.set(cId, { meta: mItem, streams: [] }); 
                     tCat.push(mItem);
                 }
