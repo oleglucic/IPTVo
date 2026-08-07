@@ -12,8 +12,6 @@ services:
       - DATABASE_URL=postgres://iptvo:${POSTGRES_PASSWORD}@postgres:5432/iptvo
       - REDIS_URL=redis://redis:6379
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
     depends_on:
       - postgres
       - redis

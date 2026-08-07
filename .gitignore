@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+server.log
+
+# Cache
+cache/
+cache-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database backups
+*.db
+*.sqlite
+
+# Temporary
+*.tmp
+*.temp
+diff_output.txt
+
+# Supabase backup
+db.js.supabase-backup
+
+# Test output
+test-output/

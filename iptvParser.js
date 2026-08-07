@@ -6,7 +6,7 @@ const { Readable } = require('stream');
 const { startAiQueue, globalAiCache } = require('./aiCurator'); 
 const { getOverride, getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
-const { lookupChannel, lookupChannelFuzzy } = require('./iptvOrgRef');
+const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
 
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
@@ -165,8 +165,7 @@ async function parseM3uData(configKey, configObj) {
                 const countryMatch = normGrp.match(/^([a-z]{2,3})\b/i);
                 if (countryMatch) {
                     const code = countryMatch[1].toUpperCase();
-                    const exclusions = ["ALL", "NEW", "VIP", "PPV", "RAW", "ALT", "VOD", "FHD", "UHD", "KIDS", "FOR", "THE", "TOP", "BIG", "ONE", "AND", "OUT", "NOT", "YES", "OFF"];
-                    if (!exclusions.includes(code)) {
+                    if (isValidCountryCode(code)) {
                         countryPrefix = code + " | "; normGrp = normGrp.substring(countryMatch[0].length).trim();
                     }
                 }
@@ -320,8 +319,7 @@ async function parseXtreamData(configKey, configObj) {
             const countryMatch = normGrp.match(/^([a-z]{2,3})\b/i);
             if (countryMatch) {
                 const code = countryMatch[1].toUpperCase();
-                const exclusions = ["ALL", "NEW", "VIP", "PPV", "RAW", "ALT", "VOD", "FHD", "UHD", "KIDS", "FOR", "THE", "TOP", "BIG", "ONE", "AND", "OUT", "NOT", "YES", "OFF"];
-                if (!exclusions.includes(code)) {
+                if (isValidCountryCode(code)) {
                     countryPrefix = code + " | "; normGrp = normGrp.substring(countryMatch[0].length).trim();
                 }
             }
