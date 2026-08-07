@@ -1,7 +1,7 @@
 /**
  * Cloudflare Worker: Logo Proxy with Fallback Chain
  *
- * Deploy: wrangler deploy
+ * Deploy: Cloudflare Dashboard (Workers & Pages) or wrangler deploy
  * Endpoint: GET /logo?url=<base64url_encoded_original>[&fallback=<base64url_encoded_fallback>]
  *
  * Fallback chain:
@@ -12,10 +12,6 @@
  * Caching: Cloudflare CDN caches successful responses for 30 days (Cache-Control)
  * Dead URLs: Stored in KV with 24h TTL to avoid retry storms
  */
-import { Buffer } from 'node:buffer';
-
-// KV namespace for dead URL tracking (bind in wrangler.toml)
-declare const LOGO_KV: KVNamespace;
 
 // ============ CONFIG ============
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
@@ -97,16 +93,16 @@ function base64urlDecode(str) {
 }
 
 // Check if URL is marked dead in KV
-async function isDeadUrlKV(url) {
+async function isDeadUrlKV(env, url) {
     const key = `dead:${base64urlEncode(url)}`;
-    const val = await LOGO_KV.get(key);
+    const val = await env.LOGO_KV.get(key);
     return val === '1';
 }
 
 // Mark URL as dead in KV
-async function markDeadUrlKV(url) {
+async function markDeadUrlKV(env, url) {
     const key = `dead:${base64urlEncode(url)}`;
-    await LOGO_KV.put(key, '1', { expirationTtl: DEAD_URL_TTL_SECONDS });
+    await env.LOGO_KV.put(key, '1', { expirationTtl: DEAD_URL_TTL_SECONDS });
 }
 
 // Fetch with retry logic
@@ -178,20 +174,20 @@ async function fetchWithRetry(url, attempt = 0) {
 }
 
 // Try fetching a single URL, checking dead KV first
-async function tryFetchUrl(url) {
+async function tryFetchUrl(env, url) {
     if (!url || !isValidHttpUrl(url)) {
         return { status: 'error', error: 'Invalid URL' };
     }
 
     // Check dead KV first
-    if (await isDeadUrlKV(url)) {
+    if (await isDeadUrlKV(env, url)) {
         return { status: 'dead', reason: 'kv-marked' };
     }
 
     const result = await fetchWithRetry(url);
 
     if (result.status === 'dead') {
-        await markDeadUrlKV(url);
+        await markDeadUrlKV(env, url);
     }
 
     return result;
@@ -200,9 +196,6 @@ async function tryFetchUrl(url) {
 // Main handler
 export default {
     async fetch(request, env, ctx) {
-        // Bind KV from env
-        globalThis.LOGO_KV = env.LOGO_KV;
-
         const url = new URL(request.url);
 
         // Health check
@@ -239,14 +232,14 @@ export default {
         let source = 'primary';
 
         // Try primary URL
-        let result = await tryFetchUrl(primaryUrl);
+        let result = await tryFetchUrl(env, primaryUrl);
 
         if (result.status === 'success') {
             source = 'primary';
         } else if (fallbackUrl) {
             // Try fallback URL
             source = 'fallback';
-            result = await tryFetchUrl(fallbackUrl);
+            result = await tryFetchUrl(env, fallbackUrl);
         }
 
         // Build response
