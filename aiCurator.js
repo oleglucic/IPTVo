@@ -144,7 +144,21 @@ async function startAiQueue(dirtyChannels, configKey) {
             if (cleanBase && typeof cleanBase === 'string' && cleanBase.length > 0) {
                 const scope = batchScopeMap.get(raw) || 'global';
                 const sanitizedBase = cleanBase.replace(/[^a-z0-9]/g, '');
-                const finalId = `${scope}_${sanitizedBase}`;
+
+                // Try to match the AI-cleaned name against iptv-org again
+                // This helps channels that weren't matched initially but might match after AI normalization
+                const iptvOrgMatch = lookupChannel(sanitizedBase, scope) || lookupChannelFuzzy(sanitizedBase, scope);
+
+                let finalId;
+                if (iptvOrgMatch) {
+                    // AI-cleaned name now matches iptv-org! Use authoritative ID
+                    finalId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}`;
+                    console.log(`[AI Curator] AI-cleaned "${raw}" -> "${sanitizedBase}" now matches iptv-org: ${iptvOrgMatch.officialId} (${iptvOrgMatch.countryScopeKey})`);
+                } else {
+                    // No iptv-org match yet, use AI-generated canonical ID
+                    finalId = `${scope}_${sanitizedBase}`;
+                }
+
                 globalAiCache.set(raw, finalId);
                 await setOverride(raw, finalId, 0.85);
             }
