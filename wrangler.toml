@@ -6,8 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 # KV namespace for dead URL tracking (24h TTL)
 [[kv_namespaces]]
 binding = "LOGO_KV"
-id = "<your-kv-namespace-id>"
-preview_id = "<your-preview-kv-namespace-id>"
+id = "cf2936e0989a4e02b5fa34186abe619e"
+preview_id = "cf2936e0989a4e02b5fa34186abe619e"
 
 # Environment variables
 [vars]
