@@ -63,7 +63,11 @@ async function refresh() {
 function lookupChannel(rawName) {
     const key = normalize(rawName);
     const match = nameToChannel.get(key);
-    if (!match) return null;
+    if (!match) {
+        console.log(`[iptv-org] lookupChannel: no exact match for "${rawName}" (key: "${key}")`);
+        return null;
+    }
+    console.log(`[iptv-org] lookupChannel: exact match for "${rawName}" (key: "${key}") -> ${match.name} (id: ${match.id})`);
     return {
         countryScopeKey: match.country || 'global',
         canonicalName: match.name,
@@ -83,8 +87,12 @@ function lookupChannelFuzzy(rawName) {
     const key = normalize(rawName);
     if (key.length < 4) return null;
     const results = fuseIndex.search(key, { limit: 1 });
-    if (!results.length || results[0].score > 0.2) return null;
+    if (!results.length || results[0].score > 0.2) {
+        console.log(`[iptv-org] lookupChannelFuzzy: no fuzzy match for "${rawName}" (key: "${key}") - score: ${results.length ? results[0].score : 'none'}`);
+        return null;
+    }
     const match = results[0].item;
+    console.log(`[iptv-org] lookupChannelFuzzy: fuzzy match for "${rawName}" (key: "${key}") -> ${match.name} (id: ${match.id}) score: ${results[0].score}`);
     return {
         countryScopeKey: match.country || 'global',
         canonicalName: match.name,
