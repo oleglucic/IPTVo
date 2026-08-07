@@ -2,6 +2,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE } = require('./iptvParser');
 const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
@@ -113,71 +114,66 @@ async function ensureCache(config, configObj) {
     return cached;
 }
 
-
 app.get('/health', (req, res) => res.json({ status: 'ok', time: Date.now() }));
-// Stremio Manifest Router
-app.get('/:config/manifest.json', async (req, res) => {
-    const config = req.params.config;
-    const configObj = extractConfig(req);
 
-    let genreOptions = [];
-    if (configObj) {
-        const cached = userCaches.get(config);
-        if (cached && cached.uniqueGroups) {
-            genreOptions = Array.from(cached.uniqueGroups);
-        }
-        ensureCache(config, configObj);
-    }
-
-    res.json({
-        id: 'org.iptvo.premium',
-        version: '1.0.0',
-        name: 'IPTVo Premium',
-        description: 'AI Curation Stack & Intelligent Catalog Filter Layer',
-        resources: ['catalog', 'meta', 'stream'],
-        types: ['tv'],
-        behaviorHints: { configurable: true, configurationRequired: false },
-        catalogs: [{
-            type: 'tv',
-            id: 'iptvo_live',
-            name: 'IPTVo Live TV',
-            extra: [{ name: 'genre', isRequired: false, options: genreOptions }, { name: 'search', isRequired: false }]
-        }]
-    });
+// Stremio Addon SDK Builder
+const builder = new addonBuilder({
+    id: 'org.iptvo.premium',
+    version: '1.0.0',
+    name: 'IPTVo Premium',
+    description: 'AI Curation Stack & Intelligent Catalog Filter Layer for Live IPTV',
+    resources: ['catalog', 'meta', 'stream'],
+    types: ['tv'],
+    behaviorHints: { configurable: true, configurationRequired: false },
+    catalogs: [{
+        type: 'tv',
+        id: 'iptvo_live',
+        name: 'IPTVo Live TV',
+        extra: [
+            { name: 'genre', isRequired: false },
+            { name: 'search', isRequired: false }
+        ]
+    }],
+    idPrefixes: ['global_', 'us_', 'uk_', 'gb_', 'de_', 'fr_', 'es_', 'it_', 'ca_', 'au_', 'nl_', 'be_', 'pt_', 'gr_', 'pl_', 'cz_', 'hu_', 'ro_', 'rs_', 'hr_', 'si_', 'sk_', 'lt_', 'lv_', 'ee_', 'fi_', 'se_', 'no_', 'dk_', 'at_', 'ch_', 'ie_', 'bg_', 'cy_', 'mt_', 'lu_', 'is_', 'li_', 'mc_', 'sm_', 'va_', 'ad_', 'me_', 'mk_', 'al_', 'ba_', 'xk_', 'md_', 'ge_', 'am_', 'az_', 'by_', 'ua_', 'ru_', 'kz_', 'uz_', 'kg_', 'tj_', 'tm_', 'mn_', 'cn_', 'jp_', 'kr_', 'kp_', 'tw_', 'hk_', 'mo_', 'sg_', 'my_', 'th_', 'vn_', 'ph_', 'id_', 'bn_', 'kh_', 'la_', 'mm_', 'np_', 'bd_', 'lk_', 'mv_', 'bt_', 'af_', 'pk_', 'ir_', 'iq_', 'il_', 'jo_', 'lb_', 'sy_', 'ps_', 'sa_', 'ye_', 'om_', 'ae_', 'qa_', 'bh_', 'kw_', 'tr_', 'eg_', 'ly_', 'tn_', 'dz_', 'ma_', 'mr_', 'ml_', 'ne_', 'td_', 'cf_', 'cm_', 'ga_', 'gq_', 'st_', 'ao_', 'zw_', 'zm_', 'mw_', 'mz_', 'na_', 'bw_', 'ls_', 'sz_', 'za_', 'ng_', 'gh_', 'ci_', 'sn_', 'sl_', 'lr_', 'gn_', 'gw_', 'cv_', 'sc_', 'mu_', 'mg_', 'km_', 'dj_', 'er_', 'et_', 'so_', 'ke_', 'ug_', 'rw_', 'bi_', 'tz_', 'cd_', 'cg_', 'rn_', 're_', 'yt_', 'tf_', 'hm_', 'bv_', 'sj_', 'aq_']
 });
 
-// Stremio Catalog Router
-async function handleCatalog(req, res) {
+async function getChannelData(config, id, configObj) {
+    await ensureCache(config, configObj);
+    const ud = userCaches.get(config);
+    if (!ud || !ud.channelMap.has(id)) return null;
+    return ud.channelMap.get(id);
+}
+
+// Catalog handler (tv catalogs)
+builder.defineCatalogHandler(async (args, req) => {
     const config = req.params.config;
     const configObj = extractConfig(req);
-    console.log(`[handleCatalog] request received, path=${req.path}, configObj parsed=${!!configObj}`);
-    if (!configObj) { console.log('[handleCatalog] extractConfig FAILED - returning empty'); return res.json({ metas: [] }); }
-    const ud = await ensureCache(config, configObj);
-      console.log(`[handleCatalog] ensureCache returned status=${ud ? ud.status : 'NULL'}, channelMap size=${ud && ud.channelMap ? ud.channelMap.size : 0}`);
-      if (!ud || !ud.channelMap) { console.log('[handleCatalog] no ud/channelMap - returning empty'); return res.json({ metas: [] }); }
-    const rootUrl = `${req.protocol}://${req.get('host')}`;
+    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${args.extra?.genre}, search=${args.extra?.search}`);
+    if (!configObj) return { metas: [] };
 
-    let selectedGenre = null;
-    let selectedSearch = null;
-    if (req.params.extra) {
-        const decoded = decodeURIComponent(req.params.extra);
-        const genreMatch = decoded.match(/(?:^|&)genre=([^&]+)/);
-        if (genreMatch) selectedGenre = decodeURIComponent(genreMatch[1]);
-        const searchMatch = decoded.match(/(?:^|&)search=([^&]+)/);
-        if (searchMatch) selectedSearch = decodeURIComponent(searchMatch[1]).toLowerCase();
-    }
+    const ud = await ensureCache(config, configObj);
+    if (!ud || !ud.channelMap) return { metas: [] };
+
+    const rootUrl = `${req.protocol}://${req.get('host')}`;
+    const selectedGenre = args.extra?.genre?.replace(/-/g, ' ') || null;
+    const selectedSearch = args.extra?.search?.toLowerCase() || null;
 
     const metas = [];
     for (const [chKey, channel] of ud.channelMap.entries()) {
         if (selectedGenre && channel.meta.group !== selectedGenre) continue;
         if (selectedSearch && !channel.meta.name.toLowerCase().includes(selectedSearch)) continue;
+
         const engineImage = `${rootUrl}/${config}/poster/${chKey}.png?t=${ud.lastUpdated}`;
         const passedThroughLogo = channel.meta.logo || engineImage;
         const epgDescription = getEpgText(chKey, ud.epgData, configObj.timezoneOffset || 0);
-        const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [...(s.groupTags ? s.groupTags.split(" • ") : []), ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])]))];
+        const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
+            ...(s.groupTags ? s.groupTags.split(" • ") : []),
+            ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
+        ]))];
         if (channel.meta.hasCatchup) aggregatedTagsArr.push(`Catch-up${channel.meta.catchupDays ? ` (${channel.meta.catchupDays}d)` : ''}`);
         const aggregatedTags = aggregatedTagsArr.join(" • ");
         const fullDescription = aggregatedTags && aggregatedTags.length > 0 ? `🎬 ${aggregatedTags}\n\n${epgDescription}` : epgDescription;
+
         metas.push({
             id: channel.meta.id,
             type: 'tv',
@@ -189,33 +185,34 @@ async function handleCatalog(req, res) {
             genres: [channel.meta.group]
         });
     }
-    console.log(`[handleCatalog] responding with ${metas.length} metas (genre=${selectedGenre || 'none'}, search=${selectedSearch || 'none'})`);
-    res.json({ metas });
-}
-app.get('/:config/catalog/:type/:id.json', handleCatalog);
-app.get('/:config/catalog/:type/:id/:extra.json', handleCatalog);
+    console.log(`[Catalog] responding with ${metas.length} metas`);
+    return { metas };
+});
 
-// Stremio Meta Information Router
-app.get('/:config/meta/:type/:id.json', async (req, res) => {
+// Meta handler
+builder.defineMetaHandler(async (args, req) => {
     const config = req.params.config;
-    const id = req.params.id; // Keep full id including iptv: prefix
+    const id = args.id;
     const configObj = extractConfig(req);
 
     await ensureCache(config, configObj);
     const ud = userCaches.get(config);
-    if (!ud || !ud.channelMap.has(id)) return res.json({ meta: {} });
+    if (!ud || !ud.channelMap.has(id)) return { meta: {} };
     const channel = ud.channelMap.get(id);
 
     const rootUrl = `${req.protocol}://${req.get('host')}`;
     const engineImage = `${rootUrl}/${config}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
     const epgDescription = getEpgText(id, ud.epgData, configObj ? configObj.timezoneOffset : 0);
-    const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [...(s.groupTags ? s.groupTags.split(" • ") : []), ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])]))];
-        if (channel.meta.hasCatchup) aggregatedTagsArr.push(`Catch-up${channel.meta.catchupDays ? ` (${channel.meta.catchupDays}d)` : ''}`);
-        const aggregatedTags = aggregatedTagsArr.join(" • ");
+    const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
+        ...(s.groupTags ? s.groupTags.split(" • ") : []),
+        ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
+    ]))];
+    if (channel.meta.hasCatchup) aggregatedTagsArr.push(`Catch-up${channel.meta.catchupDays ? ` (${channel.meta.catchupDays}d)` : ''}`);
+    const aggregatedTags = aggregatedTagsArr.join(" • ");
     const fullDescription = aggregatedTags && aggregatedTags.length > 0 ? `🎬 ${aggregatedTags}\n\n${epgDescription}` : epgDescription;
 
-    res.json({
+    return {
         meta: {
             id: channel.meta.id,
             type: 'tv',
@@ -225,25 +222,30 @@ app.get('/:config/meta/:type/:id.json', async (req, res) => {
             logo: passedThroughLogo,
             description: fullDescription
         }
-    });
+    };
 });
 
-// Stremio Stream Handler Routing
-app.get('/:config/stream/:type/:id.json', async (req, res) => {
+// Stream handler
+builder.defineStreamHandler(async (args, req) => {
     const config = req.params.config;
-    const id = req.params.id; // Keep full id including iptv: prefix
+    const id = args.id;
     const configObj = extractConfig(req);
 
     await ensureCache(config, configObj);
     const ud = userCaches.get(config);
-    if (!ud || !ud.channelMap.has(id)) return res.json({ streams: [] });
+    if (!ud || !ud.channelMap.has(id)) return { streams: [] };
     const channel = ud.channelMap.get(id);
 
     const streamsToReturn = channel.streams
         .sort((a, b) => b.score - a.score)
         .map(stream => ({
             name: stream.name,
-            title: (() => { const t = new Set(); if (stream.title && stream.title !== 'Direct Stream') stream.title.split(' • ').forEach(x => t.add(x)); if (stream.groupTags) stream.groupTags.split(' • ').forEach(x => t.add(x)); return t.size > 0 ? [...t].join(' • ') : 'Direct Stream'; })(),
+            title: (() => {
+                const t = new Set();
+                if (stream.title && stream.title !== 'Direct Stream') stream.title.split(' • ').forEach(x => t.add(x));
+                if (stream.groupTags) stream.groupTags.split(' • ').forEach(x => t.add(x));
+                return t.size > 0 ? [...t].join(' • ') : 'Direct Stream';
+            })(),
             url: stream.url
         }));
 
@@ -256,20 +258,58 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         }
     }
 
-    res.json({ streams: [...streamsToReturn, ...catchupEntries] });
+    return { streams: [...streamsToReturn, ...catchupEntries] };
+});
+
+// Get the addon interface and serve it via express
+const addonInterface = builder.getInterface();
+
+// Mount the addon routes on express
+app.get('/:config/manifest.json', (req, res) => {
+    // The manifest is the same for all configs, so just return it
+    res.json(addonInterface.getManifest());
+});
+
+app.get('/:config/catalog/:type/:id.json', (req, res, next) => {
+    // Wrap to extract config and pass req for config parsing
+    addonInterface.handleCatalog(req.params, req, (err, result) => {
+        if (err) return next(err);
+        res.json(result);
+    });
+});
+
+app.get('/:config/catalog/:type/:id/:extra.json', (req, res, next) => {
+    addonInterface.handleCatalog(req.params, req, (err, result) => {
+        if (err) return next(err);
+        res.json(result);
+    });
+});
+
+app.get('/:config/meta/:type/:id.json', (req, res, next) => {
+    addonInterface.handleMeta(req.params, req, (err, result) => {
+        if (err) return next(err);
+        res.json(result);
+    });
+});
+
+app.get('/:config/stream/:type/:id.json', (req, res, next) => {
+    addonInterface.handleStream(req.params, req, (err, result) => {
+        if (err) return next(err);
+        res.json(result);
+    });
 });
 
 // Fallback Canvas Image Generator Route
 app.get('/:config/poster/:id.png', async (req, res) => {
     const config = req.params.config;
-    const id = decodeURIComponent(req.params.id); // Keep full id including iptv: prefix
+    const id = decodeURIComponent(req.params.id);
     const configObj = extractConfig(req);
 
     await ensureCache(config, configObj);
     const ud = userCaches.get(config);
     let logoUrl = null;
     let channelName = "Live TV";
-    
+
     if (ud && ud.channelMap.has(id)) {
         const channel = ud.channelMap.get(id);
         logoUrl = channel.meta.logo;
@@ -289,7 +329,7 @@ const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
 const PORT = process.env.PORT || 3000;
 startIptvOrgRefresh();
 
-    // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
+// Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
 setInterval(() => {
     snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', e.message));
 }, 30 * 60 * 1000);

@@ -1,11 +1,21 @@
 {
-  "name": "nuvio-iptv-premium-addon",
-  "version": "5.3.2",
-  "description": "Country-isolated IPTV proxy with auto-generated premium blurred posters.",
+  "name": "iptvo",
+  "version": "1.0.0",
+  "description": "IPTVo - Stremio/Nuvio IPTV addon with intelligent channel deduplication, iptv-org integration, AI curation, and automatic poster generation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "keywords": [
+    "stremio",
+    "nuvio",
+    "iptv",
+    "addon",
+    "tv",
+    "live"
+  ],
+  "author": "Oleg Lučić",
+  "license": "MIT",
   "dependencies": {
     "axios": "^1.7.2",
     "cors": "^2.8.6",
@@ -15,7 +25,8 @@
     "ioredis": "^5.4.1",
     "pg": "^8.11.5",
     "sax": "^1.4.1",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "stremio-addon-sdk": "^1.6.10"
   },
   "engines": {
     "node": ">=18.0.0"
