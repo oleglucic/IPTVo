@@ -73,8 +73,8 @@ async function ensureCache(config, configObj) {
     let cached = userCaches.get(config);
     console.log(`[ensureCache] cache state: ${cached ? cached.status : 'MISSING'}`);
 
-    // Total cache miss (cold start): kick off the fetch and wait briefly for it,
-    // so we don't return an empty catalog when the parse would finish in time anyway.
+    // Total cache miss (cold start): kick off the fetch and wait for it to complete
+    // Parse can take several minutes for large playlists - don't timeout during initial load
     if (!cached) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
@@ -85,22 +85,22 @@ async function ensureCache(config, configObj) {
             }
             return redisCached;
         }
+        console.log(`[ensureCache] cold-start: waiting for full parse to complete...`);
         const fetchPromise = streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] fetch failed:', e.message));
-        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 6000));
-        await Promise.race([fetchPromise, timeoutPromise]);
+        await fetchPromise; // Wait for complete parse - no timeout
         const result = userCaches.get(config);
-        console.log(`[ensureCache] cold-start wait finished, status=${result ? result.status : 'STILL MISSING'}, channels=${result && result.channelMap ? result.channelMap.size : 0}`);
+        console.log(`[ensureCache] cold-start parse finished, status=${result ? result.status : 'STILL MISSING'}, channels=${result && result.channelMap ? result.channelMap.size : 0}`);
         return result;
     }
 
-    // Already loading (e.g. triggered by a parallel request): wait a bit for it too.
+    // Already loading (e.g. triggered by a parallel request): wait for it with a generous timeout
     if (cached.status === 'loading') {
         const pollPromise = (async () => {
             while (userCaches.get(config) && userCaches.get(config).status === 'loading') {
-                await new Promise(r => setTimeout(r, 300));
+                await new Promise(r => setTimeout(r, 500));
             }
         })();
-        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 6000));
+        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 300000)); // 5 min max wait for parallel request
         await Promise.race([pollPromise, timeoutPromise]);
         return userCaches.get(config);
     }
@@ -116,11 +116,146 @@ async function ensureCache(config, configObj) {
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: Date.now() }));
 
+// Comprehensive health check endpoint
+app.get('/health/detailed', async (req, res) => {
+    const configObj = extractConfig(req);
+    const checks = {
+        timestamp: Date.now(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        server: { status: 'ok' },
+        redis: { status: 'unknown' },
+        postgres: { status: 'unknown' },
+        iptvOrg: { status: 'unknown' },
+        openrouter: { status: 'unknown' },
+        config: { status: configObj ? 'provided' : 'none', type: configObj?.type },
+        caches: {}
+    };
+
+    // Redis check
+    const { hasRedis } = require('./redisCache');
+    if (hasRedis) {
+        try {
+            const redis = require('ioredis');
+            const client = new redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1, connectTimeout: 2000 });
+            await client.ping();
+            await client.quit();
+            checks.redis = { status: 'ok' };
+        } catch (e) {
+            checks.redis = { status: 'error', error: e.message };
+        }
+    } else {
+        checks.redis = { status: 'not_configured' };
+    }
+
+    // Postgres check
+    const db = require('./db');
+    if (db.hasSupabase) {
+        try {
+            const { Pool } = require('pg');
+            const testPool = new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 2000 });
+            await testPool.query('SELECT 1');
+            await testPool.end();
+            checks.postgres = { status: 'ok' };
+        } catch (e) {
+            checks.postgres = { status: 'error', error: e.message };
+        }
+    } else {
+        checks.postgres = { status: 'not_configured' };
+    }
+
+    // iptv-org check
+    const { lastRefreshed } = require('./iptvOrgRef');
+    if (lastRefreshed) {
+        checks.iptvOrg = {
+            status: 'ok',
+            lastRefreshed: new Date(lastRefreshed).toISOString(),
+            ageMinutes: Math.round((Date.now() - lastRefreshed) / 60000)
+        };
+    }
+
+    // OpenRouter check
+    if (process.env.OPENROUTER_API_KEY || configObj?.openrouterKey) {
+        try {
+            const axios = require('axios');
+            const key = configObj?.openrouterKey || process.env.OPENROUTER_API_KEY;
+            await axios.post('https://openrouter.ai/api/v1/auth/key', {}, {
+                headers: { Authorization: `Bearer ${key}` },
+                timeout: 3000
+            });
+            checks.openrouter = { status: 'ok' };
+        } catch (e) {
+            checks.openrouter = { status: 'error', error: e.message };
+        }
+    } else {
+        checks.openrouter = { status: 'not_configured' };
+    }
+
+    // Cache status
+    for (const [key, cached] of userCaches.entries()) {
+        checks.caches[key.substring(0, 12)] = {
+            status: cached.status,
+            channels: cached.channelMap?.size || 0,
+            groups: cached.uniqueGroups?.size || 0,
+            ageMinutes: cached.lastUpdated ? Math.round((Date.now() - cached.lastUpdated) / 60000) : null
+        };
+    }
+
+    // Determine overall status
+    const criticalServices = ['redis', 'postgres'];
+    const hasCriticalErrors = criticalServices.some(s => checks[s].status === 'error');
+    const overallStatus = hasCriticalErrors ? 'degraded' : 'healthy';
+
+    res.json({ overall: overallStatus, checks });
+});
+
+// Internal test endpoint for validating a config
+app.post('/api/test-config', async (req, res) => {
+    const configObj = req.body;
+    if (!configObj || !configObj.type) {
+        return res.status(400).json({ error: 'Missing config type (m3u or xtream)' });
+    }
+
+    const testKey = 'test_' + Date.now();
+    const testConfigObj = { ...configObj };
+    testConfigObj._test = true;
+
+    try {
+        console.log(`[TestConfig] Starting test for ${configObj.type}...`);
+        const result = await require('./iptvParser').streamFetchIPTV(testKey, testConfigObj);
+        const cached = require('./iptvParser').userCaches.get(testKey);
+
+        // Clean up test cache
+        require('./iptvParser').userCaches.delete(testKey);
+
+        if (!cached || cached.status !== 'ready') {
+            return res.status(500).json({
+                success: false,
+                error: cached?.message || 'Parsing did not complete',
+                status: cached?.status
+            });
+        }
+
+        res.json({
+            success: true,
+            channels: cached.channelMap.size,
+            groups: cached.uniqueGroups.size,
+            groupNames: Array.from(cached.uniqueGroups).sort(),
+            parseTimeMs: Date.now() - (cached.lastUpdated || Date.now()),
+            epgChannels: Object.keys(cached.epgData || {}).length
+        });
+    } catch (e) {
+        require('./iptvParser').userCaches.delete(testKey);
+        console.error('[TestConfig] Failed:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Stremio Addon SDK Builder
 const builder = new addonBuilder({
-    id: 'org.iptvo.premium',
-    version: '1.0.0',
-    name: 'IPTVo Premium',
+    id: 'iptvo.oleglucic.com',
+    version: '0.0.1',
+    name: 'IPTVo',
     description: 'AI Curation Stack & Intelligent Catalog Filter Layer for Live IPTV',
     resources: ['catalog', 'meta', 'stream'],
     types: ['tv'],
@@ -267,7 +402,7 @@ const addonInterface = builder.getInterface();
 // Mount the addon routes on express
 app.get('/:config/manifest.json', (req, res) => {
     // The manifest is the same for all configs, so just return it
-    res.json(addonInterface.getManifest());
+    res.json(addonInterface.manifest);
 });
 
 app.get('/:config/catalog/:type/:id.json', (req, res, next) => {

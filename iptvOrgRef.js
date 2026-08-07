@@ -6,15 +6,31 @@ const LOGOS_URL = 'https://iptv-org.github.io/api/logos.json';
 const COUNTRIES_URL = 'https://iptv-org.github.io/api/countries.json';
 const REFRESH_INTERVAL = 24 * 60 * 60 * 1000;
 
-let nameToChannel = new Map();
-let nameCountryToChannel = new Map(); // key: "${normalizedName}|${countryCode}"
+// Single combined exact-match Map: key = "${normalizedName}|${countryCode}"
+// countryCode = '' for global (no country) entries
+let exactMatchMap = new Map();
 let channelIdToLogo = new Map();
 let validCountryCodes = new Set();
 let fuseIndex = null;
+let fuseList = null;
 let lastRefreshed = 0;
 
+// Simple LRU cache for normalize() - max 5000 entries
+const normalizeCache = new Map();
+const NORMALIZE_CACHE_MAX = 5000;
+
 function normalize(str) {
-    return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!str) return '';
+    const cached = normalizeCache.get(str);
+    if (cached !== undefined) return cached;
+    const result = str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (normalizeCache.size >= NORMALIZE_CACHE_MAX) {
+        // Remove oldest entry (first key)
+        const firstKey = normalizeCache.keys().next().value;
+        normalizeCache.delete(firstKey);
+    }
+    normalizeCache.set(str, result);
+    return result;
 }
 
 async function refresh() {
@@ -25,23 +41,43 @@ async function refresh() {
             axios.get(COUNTRIES_URL, { timeout: 15000 })
         ]);
 
-        const newNameMap = new Map();
-        const newNameCountryMap = new Map();
+        const newExactMap = new Map();
+        const newFuseList = [];
+
         for (const ch of channelsRes.data) {
             if (ch.closed) continue;
             const names = [ch.name, ...(ch.alt_names || [])];
+            const countryLower = (ch.country || '').toLowerCase();
+            const officialId = ch.id; // format: "ChannelName.countrycode"
+            const entry = { officialId, name: ch.name, country: countryLower, logo: null };
+
             for (const n of names) {
                 const key = normalize(n);
-                const countryLower = (ch.country || '').toLowerCase();
-                const entry = { id: ch.id, name: ch.name, country: countryLower, officialId: ch.id };
-                if (key && !newNameMap.has(key)) {
-                    newNameMap.set(key, entry);
+                if (!key) continue;
+
+                // Composite key: "normalizedName|countryCode"
+                const compositeKey = `${key}|${countryLower}`;
+                if (!newExactMap.has(compositeKey)) {
+                    newExactMap.set(compositeKey, entry);
                 }
-                // Store country-specific entry (may overwrite if same key+country from different alias, that's fine)
-                newNameCountryMap.set(`${key}|${countryLower}`, entry);
+
+                // Also add global (no-country) fallback for the first name only
+                if (n === ch.name) {
+                    const globalKey = `${key}|`;
+                    if (!newExactMap.has(globalKey)) {
+                        newExactMap.set(globalKey, { ...entry, country: '' });
+                    }
+                }
+            }
+
+            // Build Fuse list entry (use primary name only to keep index smaller)
+            const primaryKey = normalize(ch.name);
+            if (primaryKey && primaryKey.length >= 3) {
+                newFuseList.push({ key: primaryKey, officialId, name: ch.name, country: countryLower });
             }
         }
 
+        // Logos
         const newLogoMap = new Map();
         for (const logo of logosRes.data) {
             if (logo.channel && !newLogoMap.has(logo.channel)) {
@@ -49,90 +85,96 @@ async function refresh() {
             }
         }
 
+        // Countries
         const newCountrySet = new Set(countriesRes.data.map(c => c.code.toLowerCase()));
 
-        const fuseList = [...newNameMap.entries()].map(([key, val]) => ({ key, ...val }));
-        const newFuseIndex = new Fuse(fuseList, { keys: ['key'], threshold: 0.25, includeScore: true });
+        // Build Fuse index (lazy - only when needed, but we'll build it now for consistency)
+        const newFuseIndex = new Fuse(newFuseList, {
+            keys: ['key'],
+            threshold: 0.25,
+            includeScore: true,
+            minMatchCharLength: 3,
+            ignoreLocation: true,
+            distance: 1000
+        });
 
-        nameToChannel = newNameMap;
-        nameCountryToChannel = newNameCountryMap;
+        exactMatchMap = newExactMap;
         channelIdToLogo = newLogoMap;
         validCountryCodes = newCountrySet;
         fuseIndex = newFuseIndex;
+        fuseList = newFuseList;
         lastRefreshed = Date.now();
 
-        console.log(`[iptv-org] Refreshed: ${nameToChannel.size} name entries, ${channelIdToLogo.size} logos, ${validCountryCodes.size} country codes.`);
+        console.log(`[iptv-org] Refreshed: ${exactMatchMap.size} exact entries, ${channelIdToLogo.size} logos, ${validCountryCodes.size} countries, ${fuseList.length} fuse entries.`);
     } catch (e) {
         console.error('[iptv-org] Refresh failed, keeping previous data:', e.message);
     }
 }
 
 /**
- * Lookup channel by name and optional country scope.
- * @param {string} rawName - The raw channel name from playlist
- * @param {string} [countryScopeKey] - Optional country code like 'us', 'uk' (lowercase)
+ * Exact lookup by cleaned name and optional country scope.
+ * @param {string} cleanName - Already normalized channel name (lowercase, alphanumeric only)
+ * @param {string} [countryScopeKey] - Optional country code like 'us', 'gb' (lowercase)
  * @returns {Object|null} Match object with countryScopeKey, canonicalName, logo, officialId
  */
-function lookupChannel(rawName, countryScopeKey) {
-    const key = normalize(rawName);
-    let match = null;
+function lookupChannel(cleanName, countryScopeKey) {
+    if (!cleanName) return null;
+
+    // Try country-specific first
     if (countryScopeKey) {
-        // Try name+country specific map
-        match = nameCountryToChannel.get(`${key}|${countryScopeKey}`);
+        const match = exactMatchMap.get(`${cleanName}|${countryScopeKey}`);
+        if (match) {
+            return buildMatchResult(match);
+        }
     }
-    // Fallback to name-only map if not found or no countryScopeKey provided
-    if (!match && (!countryScopeKey || countryScopeKey === 'global')) {
-        match = nameToChannel.get(key);
+
+    // Fallback to global (no country)
+    const globalMatch = exactMatchMap.get(`${cleanName}|`);
+    if (globalMatch) {
+        return buildMatchResult(globalMatch);
     }
-    if (match) {
-        // Only log when match found to reduce noise
-        console.log(`[iptv-org] lookupChannel: match for "${rawName}"${countryScopeKey ? ` country:${countryScopeKey}` : ''} -> ${match.name} (id: ${match.id})`);
-        return {
-            countryScopeKey: match.country || 'global',
-            canonicalName: match.name,
-            logo: channelIdToLogo.get(match.id) || null,
-            officialId: match.officialId
-        };
-    }
+
     return null;
 }
 
+function buildMatchResult(match) {
+    return {
+        countryScopeKey: match.country || 'global',
+        canonicalName: match.name,
+        logo: channelIdToLogo.get(match.officialId) || null,
+        officialId: match.officialId
+    };
+}
+
 /**
- * Fuzzy fallback for names that don't exact-match (typos, abbreviations,
- * slightly different formatting - e.g. "hbo2" vs iptv-org's "HBO 2").
- * Conservative threshold: only accepts near-exact matches to avoid
- * confidently assigning the wrong channel identity.
- * @param {string} rawName - The raw channel name from playlist
+ * Fuzzy fallback for names that don't exact-match.
+ * Conservative: only accepts near-exact matches to avoid wrong assignments.
+ * @param {string} cleanName - Already normalized channel name
  * @param {string} [countryScopeKey] - Optional country code to filter results
  * @returns {Object|null} Match object with fuzzy flag
  */
-function lookupChannelFuzzy(rawName, countryScopeKey) {
-    if (!fuseIndex) return null;
-    const key = normalize(rawName);
-    if (key.length < 4) return null;
-    const results = fuseIndex.search(key, { limit: 5 }); // get a few candidates to filter by country
-    if (!results.length) {
-        return null;
-    }
-    // Find first result that matches country (if countryScopeKey provided)
+function lookupChannelFuzzy(cleanName, countryScopeKey) {
+    if (!fuseIndex || !cleanName || cleanName.length < 4) return null;
+
+    const results = fuseIndex.search(cleanName, { limit: 8 });
+    if (!results.length) return null;
+
     for (const result of results) {
-        if (result.score > 0.2) continue; // still enforce threshold
+        if (result.score > 0.2) continue; // enforce conservative threshold
         const match = result.item;
-        if (countryScopeKey) {
-            if (match.country !== countryScopeKey) continue;
-        }
-        // Found a match that satisfies country constraint
-        console.log(`[iptv-org] lookupChannelFuzzy: fuzzy match for "${rawName}"${countryScopeKey ? ` country:${countryScopeKey}` : ''} -> ${match.name} (id: ${match.id}) score: ${result.score}`);
+
+        // Country filtering
+        if (countryScopeKey && match.country !== countryScopeKey) continue;
+
         return {
             countryScopeKey: match.country || 'global',
             canonicalName: match.name,
-            logo: channelIdToLogo.get(match.id) || null,
+            logo: channelIdToLogo.get(match.officialId) || null,
             officialId: match.officialId,
             fuzzy: true,
             fuzzyScore: result.score
         };
     }
-    // No match satisfying country constraint
     return null;
 }
 

@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nuvio IPTV Setup Engine</title>
+    <title>IPTVo Setup Engine</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-base: #080c14;
@@ -14,95 +14,175 @@
             --bg-element: #1a2333;
             --color-primary: #6366f1;
             --color-primary-hover: #4f46e5;
+            --color-primary-glow: rgba(99, 102, 241, 0.15);
             --color-success: #10b981;
+            --color-warning: #f59e0b;
+            --color-danger: #ef4444;
             --color-text-main: #f8fafc;
             --color-text-muted: #94a3b8;
+            --color-text-subtle: #64748b;
             --border-color: #1e293b;
+            --border-focus: #6366f1;
+            --card-radius: 20px;
+            --input-radius: 12px;
+            --transition-fast: 150ms ease;
+            --transition-normal: 250ms ease;
         }
+
+        * { box-sizing: border-box; }
 
         body {
             background-color: var(--bg-base);
+            background-image:
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.08), transparent),
+                radial-gradient(ellipse 60% 40% at 100% 100%, rgba(192, 132, 252, 0.06), transparent);
+            background-attachment: fixed;
             color: var(--color-text-main);
             font-family: 'Outfit', system-ui, -apple-system, sans-serif;
             margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            padding: 24px;
             min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         .container {
             width: 100%;
-            max-width: 520px;
-            padding: 20px;
-            box-sizing: border-box;
+            max-width: 580px;
+            padding: 0 16px;
         }
+
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #6366f1, #c084fc);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+        }
+
+        .logo-icon svg { width: 28px; height: 28px; color: white; }
+
+        .logo-text { font-size: 28px; font-weight: 800; background: linear-gradient(to right, #818cf8, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.5px; }
+
+        .tagline { color: var(--color-text-muted); font-size: 14px; font-weight: 400; }
 
         .card {
             background: linear-gradient(145deg, var(--bg-surface), #0b101b);
             border: 1px solid var(--border-color);
-            padding: 35px 30px;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(8px);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            padding: 36px 32px;
+            border-radius: var(--card-radius);
+            box-shadow: 0 24px 48px -16px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255,255,255,0.03);
+            backdrop-filter: blur(12px);
+            transition: transform var(--transition-normal), box-shadow var(--transition-normal), border-color var(--transition-fast);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.3), transparent);
         }
 
         .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 25px 50px -12px rgba(99, 102, 241, 0.15);
+            transform: translateY(-3px);
+            box-shadow: 0 32px 64px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(99, 102, 241, 0.15);
+            border-color: rgba(99, 102, 241, 0.3);
         }
 
-        h2 {
-            font-size: 28px;
-            font-weight: 800;
-            background: linear-gradient(to right, #818cf8, #c084fc);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-top: 0;
-            margin-bottom: 25px;
-            text-align: center;
-            letter-spacing: -0.5px;
+        .section {
+            margin-bottom: 28px;
+        }
+
+        .section:last-of-type { margin-bottom: 8px; }
+
+        .section-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--color-text-subtle);
+            margin: 0 0 18px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
+            background: var(--color-primary);
         }
 
         label {
             font-weight: 600;
-            font-size: 13px;
+            font-size: 12px;
             color: var(--color-text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             display: block;
         }
 
+        .input-wrapper { position: relative; margin-bottom: 20px; }
+
         select, input {
             width: 100%;
-            padding: 12px 16px;
-            margin-bottom: 20px;
+            padding: 14px 16px;
             background-color: var(--bg-element);
             border: 1px solid var(--border-color);
             color: var(--color-text-main);
-            border-radius: 10px;
+            border-radius: var(--input-radius);
             font-family: inherit;
             font-size: 14px;
-            box-sizing: border-box;
-            transition: border-color 0.2s, box-shadow 0.2s;
+            font-weight: 500;
+            transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
         }
+
+        select:hover, input:hover { border-color: rgba(148, 163, 184, 0.3); }
 
         select:focus, input:focus {
             outline: none;
-            border-color: var(--color-primary);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18), 0 0 20px -10px rgba(99, 102, 241, 0.25);
+            background-color: #1e2a3a;
+        }
+
+        select:invalid { color: var(--color-text-subtle); }
+
+        .input-hint {
+            display: block;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--color-text-subtle);
         }
 
         .row-flex {
-            display: flex;
-            gap: 15px;
-        }
-
-        .row-flex > div {
-            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
         }
 
         .toggle-container {
@@ -111,304 +191,561 @@
             justify-content: space-between;
             margin-bottom: 20px;
             background-color: var(--bg-element);
-            padding: 12px 16px;
-            border-radius: 10px;
+            padding: 14px 16px;
+            border-radius: var(--input-radius);
             border: 1px solid var(--border-color);
+            transition: border-color var(--transition-fast), background-color var(--transition-fast);
         }
 
-        .toggle-container label {
-            margin-bottom: 0;
-        }
+        .toggle-container:hover { border-color: rgba(148, 163, 184, 0.3); background-color: #1e2a3a; }
+
+        .toggle-info { flex: 1; }
+
+        .toggle-label { margin-bottom: 0; display: block; font-size: 13px; color: var(--color-text-main); text-transform: none; font-weight: 500; }
+
+        .toggle-desc { font-size: 11px; color: var(--color-text-subtle); margin-top: 2px; }
 
         .switch {
             position: relative;
             display: inline-block;
-            width: 44px;
-            height: 24px;
+            width: 52px;
+            height: 28px;
+            flex-shrink: 0;
         }
 
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
+        .switch input { opacity: 0; width: 0; height: 0; }
 
         .slider {
             position: absolute;
             cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            inset: 0;
             background-color: #374151;
-            transition: .3s;
-            border-radius: 24px;
+            transition: background-color var(--transition-fast);
+            border-radius: 28px;
         }
 
         .slider:before {
             position: absolute;
             content: "";
-            height: 18px;
-            width: 18px;
-            left: 3px;
-            bottom: 3px;
+            height: 20px;
+            width: 20px;
+            left: 4px;
+            bottom: 4px;
             background-color: white;
-            transition: .3s;
+            transition: transform var(--transition-normal), box-shadow var(--transition-fast);
             border-radius: 50%;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
 
-        input:checked + .slider {
-            background-color: var(--color-primary);
-        }
+        input:checked + .slider { background-color: var(--color-primary); }
 
-        input:checked + .slider:before {
-            transform: translateX(20px);
-        }
+        input:checked + .slider:before { transform: translateX(24px); }
 
-        button {
+        input:focus-visible + .slider { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+        .btn {
             width: 100%;
-            padding: 14px;
-            border-radius: 10px;
+            padding: 16px 20px;
+            border-radius: var(--input-radius);
             border: none;
             font-family: inherit;
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
-            transition: background-color 0.2s, transform 0.1s;
+            transition: all var(--transition-fast);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
         }
+
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
         .btn-primary {
-            background-color: var(--color-primary);
+            background: linear-gradient(135deg, var(--color-primary), #5b5bd6);
             color: white;
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
         }
 
-        .btn-primary:hover {
-            background-color: var(--color-primary-hover);
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, var(--color-primary-hover), #4a4acc);
+            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.4);
+            transform: translateY(-1px);
         }
 
-        .btn-primary:active {
-            transform: scale(0.98);
-        }
+        .btn-primary:active:not(:disabled) { transform: translateY(0) scale(0.99); }
 
         .btn-secondary {
-            background-color: #374151;
-            color: white;
-            margin-bottom: 20px;
+            background-color: var(--bg-element);
+            color: var(--color-text-main);
+            border: 1px solid var(--border-color);
+            margin-bottom: 16px;
         }
 
-        .btn-secondary:hover {
-            background-color: #4b5563;
+        .btn-secondary:hover:not(:disabled) {
+            background-color: #1e2a3a;
+            border-color: rgba(148, 163, 184, 0.4);
         }
 
         .btn-install {
-            background-color: var(--color-success);
+            background: linear-gradient(135deg, var(--color-success), #0d9a6e);
             color: white;
-            margin-top: 10px;
+            margin-top: 8px;
             font-weight: 700;
+            padding: 18px;
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
         }
 
-        .btn-install:hover {
-            background-color: #059669;
+        .btn-install:hover:not(:disabled) {
+            background: linear-gradient(135deg, #0d9a6e, #0c8a63);
+            box-shadow: 0 6px 24px rgba(16, 185, 129, 0.4);
+            transform: translateY(-1px);
         }
 
-        #catalogContainer {
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2.5px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .catalog-container {
             display: none;
             background: #0b101b;
             border: 1px solid var(--border-color);
             padding: 20px;
-            border-radius: 12px;
+            border-radius: 14px;
             margin-bottom: 20px;
+            animation: slideDown 0.3s ease;
+        }
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
-        .scroll-box {
-            max-height: 200px;
-            overflow-y: auto;
-            margin-top: 10px;
-            padding-right: 5px;
+        .catalog-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
         }
+
+        .catalog-count { font-size: 13px; color: var(--color-text-muted); }
+
+        .action-links {
+            display: flex;
+            gap: 8px;
+        }
+
+        .action-links .btn {
+            width: auto;
+            padding: 8px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            background: var(--bg-element);
+            border: 1px solid var(--border-color);
+            color: var(--color-text-muted);
+        }
+
+        .action-links .btn:hover:not(:disabled) {
+            background: #1e2a3a;
+            color: var(--color-text-main);
+            border-color: rgba(148, 163, 184, 0.4);
+        }
+
+        .catalog-list {
+            max-height: 280px;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        .catalog-list::-webkit-scrollbar { width: 6px; }
+        .catalog-list::-webkit-scrollbar-track { background: transparent; }
+        .catalog-list::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+        .catalog-list::-webkit-scrollbar-thumb:hover { background: var(--color-text-subtle); }
 
         .chk-row {
             display: flex;
             align-items: center;
-            margin: 8px 0;
+            gap: 12px;
+            padding: 12px 14px;
+            margin: 4px 0;
             cursor: pointer;
             font-size: 14px;
+            font-weight: 500;
+            border-radius: 10px;
+            transition: background-color var(--transition-fast);
+            border: 1px solid transparent;
+        }
+
+        .chk-row:hover { background-color: #1e2a3a; }
+
+        .chk-row:has(input:checked) {
+            background-color: rgba(99, 102, 241, 0.1);
+            border-color: rgba(99, 102, 241, 0.2);
         }
 
         .chk-row input {
-            width: auto;
-            margin-right: 12px;
-            margin-bottom: 0;
+            width: 20px;
+            height: 20px;
+            accent-color: var(--color-primary);
+            margin: 0;
+            cursor: pointer;
         }
 
-        .action-links {
+        .chk-row span {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-badge.ok { background: rgba(16, 185, 129, 0.15); color: var(--color-success); }
+        .status-badge.warn { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); }
+        .status-badge.err { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); }
+        .status-badge.pending { background: rgba(99, 102, 241, 0.15); color: var(--color-primary); }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .footer-links {
             display: flex;
-            gap: 10px;
-            margin-bottom: 12px;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-color);
         }
 
-        .action-links button {
-            padding: 6px 12px;
-            font-size: 12px;
-            background: var(--bg-element);
-            border: 1px solid var(--border-color);
+        .footer-links a {
+            color: var(--color-text-muted);
+            font-size: 13px;
+            text-decoration: none;
+            transition: color var(--transition-fast);
         }
+        .footer-links a:hover { color: var(--color-primary); }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            padding: 14px 24px;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px -15px rgba(0,0,0,0.5);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 100;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .toast.success { border-color: var(--color-success); }
+        .toast.error { border-color: var(--color-danger); }
     </style>
 </head>
 <body>
 
 <div class="container">
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 3H19a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+                    <polyline points="9 9 15 12 9 15"/>
+                </svg>
+            </div>
+            <span class="logo-text">IPTVo</span>
+        </div>
+        <p class="tagline">Stremio & Nuvio IPTV Addon Setup</p>
+    </header>
+
     <div class="card">
-        <h2>Nuvio IPTV Setup</h2>
-        
-        <label for="providerType">Provider Interface</label>
-        <select id="providerType" onchange="toggleFormInputs()">
-            <option value="xtream">Xtream Codes API</option>
-            <option value="m3u">M3U Playlist URL</option>
-        </select>
-
-        <div id="xtreamFields">
-            <label for="xtreamUrl">Server URL</label>
-            <input type="text" id="xtreamUrl" placeholder="http://provider.com:8080">
-            
-            <label for="username">Username</label>
-            <input type="text" id="username" placeholder="Username">
-            
-            <label for="password">Password</label>
-            <input type="password" id="password" placeholder="Password">
-        </div>
-
-        <div id="m3uFields" style="display:none;">
-            <label for="m3uUrl">M3U URL</label>
-            <input type="text" id="m3uUrl" placeholder="https://provider.com/playlist.m3u">
-        </div>
-
-        <div class="row-flex">
-            <div>
-                <label for="fallbackPreference">Fallback Mode</label>
-                <select id="fallbackPreference">
-                    <option value="custom">Clean Posters</option>
-                    <option value="provider">Raw Image</option>
+        <!-- Provider Type -->
+        <div class="section">
+            <h3 class="section-title">Provider Interface</h3>
+            <div class="input-wrapper">
+                <select id="providerType" onchange="toggleFormInputs()">
+                    <option value="xtream">Xtream Codes API</option>
+                    <option value="m3u">M3U Playlist URL</option>
                 </select>
-            </div>
-            <div>
-                <label for="timezoneOffset">Timezone Shift</label>
-                <select id="timezoneOffset">
-                    <option value="-12">UTC -12</option>
-                    <option value="-11">UTC -11</option>
-                    <option value="-10">UTC -10</option>
-                    <option value="-9">UTC -9</option>
-                    <option value="-8">UTC -8</option>
-                    <option value="-7">UTC -7</option>
-                    <option value="-6">UTC -6</option>
-                    <option value="-5">UTC -5</option>
-                    <option value="-4">UTC -4</option>
-                    <option value="-3">UTC -3</option>
-                    <option value="-2">UTC -2</option>
-                    <option value="-1">UTC -1</option>
-                    <option value="0">UTC +0</option>
-                    <option value="1">UTC +1</option>
-                    <option value="2">UTC +2</option>
-                    <option value="3">UTC +3</option>
-                    <option value="4">UTC +4</option>
-                    <option value="5">UTC +5</option>
-                    <option value="6">UTC +6</option>
-                    <option value="7">UTC +7</option>
-                    <option value="8">UTC +8</option>
-                    <option value="9">UTC +9</option>
-                    <option value="10">UTC +10</option>
-                    <option value="11">UTC +11</option>
-                    <option value="12">UTC +12</option>
-                </select>
+                <span class="input-hint">Select your IPTV provider type</span>
             </div>
         </div>
 
-        <label for="customEpgUrl">Custom EPG XMLTV Source</label>
-        <input type="text" id="customEpgUrl" placeholder="Optional URL">
-
-
-        <button type="button" id="loadCatalogsBtn" class="btn-secondary" onclick="fetchCatalogs()">Load Channels</button>
-
-        <div id="catalogContainer">
-            <label>Active Layout Catalogs</label>
-            <div class="action-links">
-                <button type="button" onclick="toggleAllCheckboxes(true)">Select All</button>
-                <button type="button" onclick="toggleAllCheckboxes(false)">Deselect All</button>
+        <!-- Xtream Fields -->
+        <div class="section" id="xtreamFields">
+            <h3 class="section-title">Xtream Credentials</h3>
+            <div class="input-wrapper">
+                <label for="xtreamUrl">Server URL</label>
+                <input type="url" id="xtreamUrl" placeholder="https://provider.com:8080" autocomplete="off">
+                <span class="input-hint">Base URL without /player_api.php</span>
             </div>
-            <div id="checklistList" class="scroll-box"></div>
+            <div class="row-flex">
+                <div class="input-wrapper">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" placeholder="Username" autocomplete="username">
+                </div>
+                <div class="input-wrapper">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+                </div>
+            </div>
         </div>
 
-        <button type="button" id="installBtn" class="btn-primary btn-install" onclick="generateStremioLink()">Install Addon</button>
+        <!-- M3U Fields -->
+        <div class="section" id="m3uFields" style="display:none;">
+            <h3 class="section-title">M3U Playlist</h3>
+            <div class="input-wrapper">
+                <label for="m3uUrl">M3U URL</label>
+                <input type="url" id="m3uUrl" placeholder="https://provider.com/playlist.m3u" autocomplete="off">
+                <span class="input-hint">Direct link to .m3u or .m3u.gz file</span>
+            </div>
+        </div>
+
+        <!-- Optional Settings -->
+        <div class="section">
+            <h3 class="section-title">Channel Matching & AI</h3>
+
+            <div class="toggle-container">
+                <div class="toggle-info">
+                    <span class="toggle-label">iptv-org Matching</span>
+                    <span class="toggle-desc">Use authoritative channel database (47k+ channels) for canonical IDs</span>
+                </div>
+                <label class="switch"><input type="checkbox" id="enableIptvOrg" checked><span class="slider"></span></label>
+            </div>
+
+            <div class="toggle-container">
+                <div class="toggle-info">
+                    <span class="toggle-label">AI Curation (OpenRouter)</span>
+                    <span class="toggle-desc">Auto-deduplicate unmatched channels using AI</span>
+                </div>
+                <label class="switch"><input type="checkbox" id="enableAi" checked><span class="slider"></span></label>
+            </div>
+
+            <div class="input-wrapper" id="openrouterField">
+                <label for="openrouterKey">OpenRouter API Key</label>
+                <input type="password" id="openrouterKey" placeholder="sk-or-v1-... (optional, can use server default)" autocomplete="off">
+                <span class="input-hint">Get a free key at <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--color-primary)">openrouter.ai/keys</a></span>
+            </div>
+        </div>
+
+        <!-- Advanced Settings -->
+        <div class="section">
+            <h3 class="section-title">Advanced</h3>
+
+            <div class="row-flex">
+                <div class="input-wrapper">
+                    <label for="fallbackPreference">Fallback Mode</label>
+                    <select id="fallbackPreference">
+                        <option value="custom">Clean Posters (Generated)</option>
+                        <option value="provider">Raw Provider Image</option>
+                    </select>
+                    <span class="input-hint">Poster style for channels without logos</span>
+                </div>
+                <div class="input-wrapper">
+                    <label for="timezoneOffset">Timezone Shift</label>
+                    <select id="timezoneOffset">
+                        <option value="-12">UTC -12</option>
+                        <option value="-11">UTC -11</option>
+                        <option value="-10">UTC -10</option>
+                        <option value="-9">UTC -9</option>
+                        <option value="-8">UTC -8</option>
+                        <option value="-7">UTC -7</option>
+                        <option value="-6">UTC -6</option>
+                        <option value="-5">UTC -5</option>
+                        <option value="-4">UTC -4</option>
+                        <option value="-3">UTC -3</option>
+                        <option value="-2">UTC -2</option>
+                        <option value="-1">UTC -1</option>
+                        <option value="0" selected>UTC +0</option>
+                        <option value="1">UTC +1</option>
+                        <option value="2">UTC +2</option>
+                        <option value="3">UTC +3</option>
+                        <option value="4">UTC +4</option>
+                        <option value="5">UTC +5</option>
+                        <option value="6">UTC +6</option>
+                        <option value="7">UTC +7</option>
+                        <option value="8">UTC +8</option>
+                        <option value="9">UTC +9</option>
+                        <option value="10">UTC +10</option>
+                        <option value="11">UTC +11</option>
+                        <option value="12">UTC +12</option>
+                    </select>
+                    <span class="input-hint">EPG time offset in hours</span>
+                </div>
+            </div>
+
+            <div class="input-wrapper">
+                <label for="customEpgUrl">Custom EPG Source (XMLTV)</label>
+                <input type="url" id="customEpgUrl" placeholder="Optional: https://provider.com/epg.xml.gz" autocomplete="off">
+                <span class="input-hint">Override provider EPG with custom XMLTV feed</span>
+            </div>
+
+            <div class="input-wrapper">
+                <label for="includeGroups">Include Groups (comma-separated)</label>
+                <input type="text" id="includeGroups" placeholder="Optional: e.g. UK, Sports, News" autocomplete="off">
+                <span class="input-hint">Only include these groups (leave empty for all)</span>
+            </div>
+
+            <div class="input-wrapper">
+                <label for="excludeGroups">Exclude Groups (comma-separated)</label>
+                <input type="text" id="excludeGroups" placeholder="Optional: e.g. VOD, Kids, XXX" autocomplete="off">
+                <span class="input-hint">Exclude these groups from the catalog</span>
+            </div>
+        </div>
+
+        <!-- Load Catalogs -->
+        <button type="button" id="loadCatalogsBtn" class="btn btn-secondary" onclick="fetchCatalogs()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+            Load Channel Groups
+        </button>
+
+        <!-- Catalog Container -->
+        <div id="catalogContainer" class="catalog-container">
+            <div class="catalog-header">
+                <span class="catalog-count"><span id="groupCount">0</span> groups found</span>
+                <div class="action-links">
+                    <button type="button" class="btn" onclick="toggleAllCheckboxes(true)">Select All</button>
+                    <button type="button" class="btn" onclick="toggleAllCheckboxes(false)">Deselect All</button>
+                </div>
+            </div>
+            <div id="checklistList" class="catalog-list"></div>
+        </div>
+
+        <!-- Install Button -->
+        <button type="button" id="installBtn" class="btn btn-install" onclick="generateStremioLink()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Install Addon to Stremio/Nuvio
+        </button>
     </div>
+
+    <!-- Footer -->
+    <div class="footer-links">
+        <a href="https://github.com/oleglucic/nuvio-iptv" target="_blank">GitHub Repository</a>
+        <a href="/health/detailed" target="_blank">System Health</a>
+        <a href="https://t.me/iptvo" target="_blank">Telegram Support</a>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
 </div>
 
 <script>
     let totalCategoriesCount = 0;
 
+    // Auto-detect timezone on load
     window.onload = function() {
         toggleFormInputs();
         const detectedOffset = -Math.round(new Date().getTimezoneOffset() / 60);
         const tzSelect = document.getElementById('timezoneOffset');
-        if (tzSelect.querySelector('option[value="' + detectedOffset + '"]')) {
-            tzSelect.value = detectedOffset.toString();
-        }
+        const opt = tzSelect.querySelector('option[value="' + detectedOffset + '"]');
+        if (opt) tzSelect.value = detectedOffset.toString();
+
+        // Try to load existing config from URL
+        const cfg = decodeConfigFromPath();
+        if (cfg) loadConfigIntoForm(cfg);
     };
 
     function toggleFormInputs() {
-    const type = document.getElementById('providerType').value;
-    document.getElementById('xtreamFields').style.display = type === 'xtream' ? 'block' : 'none';
-    document.getElementById('m3uFields').style.display = type === 'm3u' ? 'block' : 'none';
-}
-
-function decodeConfigFromPath() {
-    const parts = window.location.pathname.split('/').filter(Boolean);
-    if (parts.length < 2 || parts[parts.length - 1] !== 'configure') return null;
-    let b64 = parts[parts.length - 2];
-    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4 !== 0) b64 += '=';
-    try {
-        const decoded = decodeURIComponent(escape(atob(b64)));
-        return JSON.parse(decoded);
-    } catch (e) {
-        console.error('Failed to decode existing config', e);
-        return null;
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const cfg = decodeConfigFromPath();
-    if (!cfg) return;
-
-    document.getElementById('providerType').value = cfg.type || 'm3u';
-    toggleFormInputs();
-
-    if (cfg.type === 'xtream') {
-        document.getElementById('xtreamUrl').value = cfg.xtreamUrl || '';
-        document.getElementById('username').value = cfg.username || '';
-        document.getElementById('password').value = cfg.password || '';
-    } else {
-        document.getElementById('m3uUrl').value = cfg.m3uUrl || '';
+        const type = document.getElementById('providerType').value;
+        document.getElementById('xtreamFields').style.display = type === 'xtream' ? 'block' : 'none';
+        document.getElementById('m3uFields').style.display = type === 'm3h' ? 'block' : 'none';
     }
 
-    if (cfg.fallbackPreference) document.getElementById('fallbackPreference').value = cfg.fallbackPreference;
-    if (cfg.timezoneOffset != null) document.getElementById('timezoneOffset').value = String(cfg.timezoneOffset);
-    if (cfg.epg) document.getElementById('customEpgUrl').value = cfg.epg;
-});
+    function decodeConfigFromPath() {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        if (parts.length < 2 || parts[parts.length - 1] !== 'configure') return null;
+        let b64 = parts[parts.length - 2];
+        b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4 !== 0) b64 += '=';
+        try {
+            const decoded = decodeURIComponent(escape(atob(b64)));
+            return JSON.parse(decoded);
+        } catch (e) {
+            console.error('Failed to decode existing config', e);
+            return null;
+        }
+    }
+
+    function loadConfigIntoForm(cfg) {
+        document.getElementById('providerType').value = cfg.type || 'm3u';
+        toggleFormInputs();
+
+        if (cfg.type === 'xtream') {
+            document.getElementById('xtreamUrl').value = cfg.xtreamUrl || '';
+            document.getElementById('username').value = cfg.username || '';
+            document.getElementById('password').value = cfg.password || '';
+        } else {
+            document.getElementById('m3uUrl').value = cfg.m3uUrl || '';
+        }
+
+        if (cfg.fallbackPreference) document.getElementById('fallbackPreference').value = cfg.fallbackPreference;
+        if (cfg.timezoneOffset != null) document.getElementById('timezoneOffset').value = String(cfg.timezoneOffset);
+        if (cfg.epg) document.getElementById('customEpgUrl').value = cfg.epg;
+        if (cfg.include) document.getElementById('includeGroups').value = cfg.include.join(', ');
+        if (cfg.exclude) document.getElementById('excludeGroups').value = cfg.exclude.join(', ');
+        if (cfg.iptvOrg === false) document.getElementById('enableIptvOrg').checked = false;
+        if (cfg.ai === false) document.getElementById('enableAi').checked = false;
+        if (cfg.openrouterKey) document.getElementById('openrouterKey').value = cfg.openrouterKey;
+    }
+
+    function showToast(message, type = 'info') {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.className = 'toast show ' + (type === 'success' ? 'success' : type === 'error' ? 'error' : '');
+        setTimeout(() => toast.classList.remove('show'), 4000);
+    }
 
     async function fetchCatalogs() {
         const btn = document.getElementById('loadCatalogsBtn');
         const container = document.getElementById('catalogContainer');
         const listDiv = document.getElementById('checklistList');
-        
+        const countEl = document.getElementById('groupCount');
+
         const type = document.getElementById('providerType').value;
         const m3uUrl = document.getElementById('m3uUrl').value;
         const xtreamUrl = document.getElementById('xtreamUrl').value;
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
 
-        btn.innerText = "Loading Groups...";
+        if ((type === 'xtream' && (!xtreamUrl || !username || !password)) ||
+            (type === 'm3u' && !m3uUrl)) {
+            showToast('Please fill in all required fields first', 'error');
+            return false;
+        }
+
+        btn.innerHTML = '<span class="spinner"></span> Loading Groups...';
         btn.disabled = true;
         listDiv.innerHTML = "";
+        container.style.display = 'none';
 
         try {
             const response = await fetch('/api/get-groups', {
@@ -416,12 +753,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ type, m3uUrl, xtreamUrl, username, password })
             });
-            
+
             const data = await response.json();
             if (data.error) throw new Error(data.error);
 
             totalCategoriesCount = data.categories.length;
-            
+            countEl.textContent = totalCategoriesCount;
+
             data.categories.forEach(cat => {
                 const label = document.createElement('label');
                 label.className = "chk-row";
@@ -430,30 +768,34 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             container.style.display = "block";
-            btn.innerText = "Reload Channels";
+            btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> Reload Channel Groups';
             btn.disabled = false;
+            showToast(`Loaded ${totalCategoriesCount} channel groups`, 'success');
             return true;
         } catch (err) {
-            alert("Fetch failed: " + err.message);
-            btn.innerText = "Load Channels";
+            showToast('Fetch failed: ' + err.message, 'error');
+            btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> Load Channel Groups';
             btn.disabled = false;
             return false;
         }
     }
 
     function toggleAllCheckboxes(status) {
-        document.querySelectorAll('.catalog-chk').forEach(chk => chk.checked = status);
+        document.querySelectorAll('.catalog-chk').forEach(chk => {
+            chk.checked = status;
+            chk.parentElement.classList.toggle('checked', status);
+        });
     }
 
     async function generateStremioLink() {
         let allCheckboxes = document.querySelectorAll('.catalog-chk');
         const installBtn = document.getElementById('installBtn');
-        
+
         if (allCheckboxes.length === 0) {
-            installBtn.innerText = "Auto-Syncing...";
+            installBtn.innerHTML = '<span class="spinner"></span> Auto-Syncing...';
             installBtn.disabled = true;
             const syncSuccess = await fetchCatalogs();
-            installBtn.innerText = "Install Addon";
+            installBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Install Addon to Stremio/Nuvio';
             installBtn.disabled = false;
             if (!syncSuccess) return;
             allCheckboxes = document.querySelectorAll('.catalog-chk');
@@ -472,25 +814,24 @@ document.addEventListener('DOMContentLoaded', () => {
         const fallbackPref = document.getElementById('fallbackPreference').value;
         const tzOffset = document.getElementById('timezoneOffset').value;
         const customEpg = document.getElementById('customEpgUrl').value.trim();
-        
-        const configObj = { 
-            type, 
+        const includeGroups = document.getElementById('includeGroups').value.trim();
+        const excludeGroups = document.getElementById('excludeGroups').value.trim();
+        const enableIptvOrg = document.getElementById('enableIptvOrg').checked;
+        const enableAi = document.getElementById('enableAi').checked;
+        const openrouterKey = document.getElementById('openrouterKey').value.trim();
+
+        const configObj = {
+            type,
             fallbackPreference: fallbackPref,
             timezoneOffset: parseInt(tzOffset),
-            ai: true
+            ai: enableAi,
+            iptvOrg: enableIptvOrg
         };
 
-        if (customEpg) {
-            configObj.epg = customEpg;
-        }
-
-        if (type === 'xtream') {
-            configObj.xtreamUrl = document.getElementById('xtreamUrl').value;
-            configObj.username = document.getElementById('username').value;
-            configObj.password = document.getElementById('password').value;
-        } else {
-            configObj.m3uUrl = document.getElementById('m3uUrl').value;
-        }
+        if (openrouterKey) configObj.openrouterKey = openrouterKey;
+        if (customEpg) configObj.epg = customEpg;
+        if (includeGroups) configObj.include = includeGroups.split(',').map(s => s.trim()).filter(Boolean);
+        if (excludeGroups) configObj.exclude = excludeGroups.split(',').map(s => s.trim()).filter(Boolean);
 
         if (allCheckboxes.length > 0) {
             if (checked.length <= totalCategoriesCount / 2) {
@@ -502,11 +843,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let base64Config = btoa(unescape(encodeURIComponent(JSON.stringify(configObj))));
         base64Config = base64Config.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-        
+
         const manifestUrl = `stremio://${window.location.host}/${base64Config}/manifest.json`;
-        
+
         navigator.clipboard.writeText(manifestUrl).catch(() => {}).finally(() => {
-            window.location.href = manifestUrl;
+            showToast('Opening Stremio/Nuvio...', 'success');
+            setTimeout(() => { window.location.href = manifestUrl; }, 500);
         });
     }
 </script>
