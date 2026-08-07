@@ -10,17 +10,29 @@ if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 const DEAD_URL_TTL_BASE = 6 * 60 * 60 * 1000; // 6h base TTL for dead URLs
 const DEAD_URL_TTL_MAX = 24 * 60 * 60 * 1000; // 24h max TTL
 const MAX_CACHE_FILES = 5000; // soft cap on disk cache to avoid unbounded growth
-const FETCH_TIMEOUT = 7000;
+const FETCH_TIMEOUT = 10000; // increased from 7000
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB - reject absurd payloads before sharp touches them
-const LOGO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - cache fetched logos in memory
-const LOGO_CACHE_MAX_SIZE = 1000; // max entries in logo cache
-const RATE_LIMIT_INTERVAL = 1000; // 1 second
-const RATE_LIMIT_MAX = 5; // max requests per interval
+const LOGO_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - cache fetched logos in memory (increased from 5 min)
+const LOGO_CACHE_MAX_SIZE = 2000; // max entries in logo cache (increased from 1000)
+const MAX_RETRIES = 3; // max retry attempts for failed requests
+const BASE_RETRY_DELAY = 1000; // base delay in ms for exponential backoff
+
+// Per-domain rate limiting: track request timestamps per domain
+const domainRequestTimestamps = new Map(); // domain -> number[]
+const DOMAIN_RATE_LIMIT_MAX = 2; // max requests per interval per domain (reduced from 5 global)
+const DOMAIN_RATE_LIMIT_INTERVAL = 2000; // 2 seconds per domain (increased from 1 sec)
 
 const deadUrlCache = new Map(); // logoUrl -> {timestamp: number, failCount: number}
 const inFlight = new Map();     // cId -> Promise, de-dupes concurrent requests for the same poster
 const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
-const requestTimestamps = [];   // timestamps of recent logo fetch requests
+
+function getDomain(url) {
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return 'unknown';
+    }
+}
 
 function isDeadUrl(url) {
     const entry = deadUrlCache.get(url);
@@ -75,22 +87,29 @@ function setLogoCache(url, buffer) {
     logoCache.set(url, {buffer, timestamp: Date.now()});
 }
 
-async function waitForRateLimit() {
+async function waitForDomainRateLimit(domain) {
     const now = Date.now();
+    const timestamps = domainRequestTimestamps.get(domain) || [];
+
     // Remove timestamps older than interval
-    while (requestTimestamps.length && now - requestTimestamps[0] > RATE_LIMIT_INTERVAL) {
-        requestTimestamps.shift();
-    }
-    if (requestTimestamps.length >= RATE_LIMIT_MAX) {
+    const recent = timestamps.filter(ts => now - ts <= DOMAIN_RATE_LIMIT_INTERVAL);
+
+    if (recent.length >= DOMAIN_RATE_LIMIT_MAX) {
         // Need to wait until the oldest timestamp expires
-        const waitTime = RATE_LIMIT_INTERVAL - (now - requestTimestamps[0]) + 1; // +1 ms to be safe
+        const oldest = recent[0];
+        const waitTime = DOMAIN_RATE_LIMIT_INTERVAL - (now - oldest) + 50; // +50ms buffer
         if (waitTime > 0) {
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-            // After waiting, reclean
-            return waitForRateLimit();
+            // Add jitter to prevent thundering herd
+            const jitter = Math.random() * 200;
+            await new Promise(resolve => setTimeout(resolve, waitTime + jitter));
+            // After waiting, reclean and recurse
+            return waitForDomainRateLimit(domain);
         }
     }
-    requestTimestamps.push(now);
+
+    // Record this request
+    recent.push(now);
+    domainRequestTimestamps.set(domain, recent);
 }
 
 async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
@@ -141,71 +160,110 @@ async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
         return await generateFallback(cachePath, fallbackName);
     }
 
-    try {
-        await waitForRateLimit(); // enforce rate limit before request
+    // Retry with exponential backoff
+    let lastError = null;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const domain = getDomain(logoUrl);
+            await waitForDomainRateLimit(domain);
 
-        if (!logoUrl || !logoUrl.startsWith('http')) throw new Error("Invalid or missing logo URL");
+            if (!logoUrl || !logoUrl.startsWith('http')) throw new Error("Invalid or missing logo URL");
 
-        const response = await axios.get(logoUrl, {
-            responseType: 'arraybuffer',
-            timeout: FETCH_TIMEOUT,
-            maxContentLength: MAX_IMAGE_BYTES,
-            validateStatus: s => s === 200 || s === 429 // we'll handle 429 specially
-        });
+            const response = await axios.get(logoUrl, {
+                responseType: 'arraybuffer',
+                timeout: FETCH_TIMEOUT,
+                maxContentLength: MAX_IMAGE_BYTES,
+                validateStatus: s => s >= 200 && s < 500 // accept 4xx to handle them explicitly
+            });
 
-        if (response.status === 429) {
-            console.warn(`[imageEngine] Rate limited (429) for logoUrl=${logoUrl}`);
-            markDeadUrl(logoUrl, false); // increase fail count
+            // Handle rate limiting
+            if (response.status === 429) {
+                console.warn(`[imageEngine] Rate limited (429) for logoUrl=${logoUrl} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+                markDeadUrl(logoUrl, false);
+                lastError = new Error('Rate limited');
+                if (attempt < MAX_RETRIES) {
+                    // Exponential backoff with jitter for rate limits
+                    const delay = BASE_RETRY_DELAY * Math.pow(2, attempt) + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+                return await generateFallback(cachePath, fallbackName);
+            }
+
+            // Handle 403/404 - mark as dead and fall back immediately (don't retry)
+            if (response.status === 403 || response.status === 404) {
+                console.warn(`[imageEngine] Logo fetch failed with ${response.status} for ${logoUrl} - marking as dead`);
+                markDeadUrl(logoUrl, false);
+                return await generateFallback(cachePath, fallbackName);
+            }
+
+            // Handle other 4xx/5xx
+            if (response.status >= 400) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const contentType = response.headers['content-type'] || '';
+            if (!contentType.startsWith('image/')) {
+                throw new Error(`Non-image content-type: ${contentType}`);
+            }
+
+            const logoBuffer = Buffer.from(response.data);
+            // Cache the fetched logo buffer
+            setLogoCache(logoUrl, logoBuffer);
+            markDeadUrl(logoUrl, true); // success, reset fail count
+
+            const background = await sharp(logoBuffer)
+                .resize(600, 900, { fit: 'cover' })
+                .blur(35)
+                .linear(0.55, 0)
+                .toBuffer();
+
+            const haloSvg = `
+                <svg width="500" height="500" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <radialGradient id="haloGlow" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35" />
+                            <stop offset="60%" stop-color="#ffffff" stop-opacity="0.15" />
+                            <stop offset="100%" stop-color="#ffffff" stop-opacity="0.0" />
+                        </radialGradient>
+                    </defs>
+                    <circle cx="250" cy="250" r="250" fill="url(#haloGlow)" />
+                </svg>
+            `;
+            const haloBuffer = Buffer.from(haloSvg);
+
+            const foreground = await sharp(logoBuffer)
+                .resize(400, 400, { fit: 'inside' })
+                .toBuffer();
+
+            await sharp(background)
+                .composite([
+                    { input: haloBuffer, gravity: 'center' },
+                    { input: foreground, gravity: 'center' }
+                ])
+                .toFile(cachePath);
+
+            return cachePath;
+        } catch (err) {
+            lastError = err;
+            console.error(`[imageEngine] Poster generation failed for cId=${cId}, logoUrl=${logoUrl} (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err.message}`);
+
+            // For network errors, retry with backoff
+            if (attempt < MAX_RETRIES && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND' || (err.response && err.response.status >= 500))) {
+                const delay = BASE_RETRY_DELAY * Math.pow(2, attempt) + Math.random() * 500;
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+
+            // For other errors (invalid URL, non-image, 403, 404), mark as dead and fall back
+            if (logoUrl) markDeadUrl(logoUrl, false);
             return await generateFallback(cachePath, fallbackName);
         }
-
-        const contentType = response.headers['content-type'] || '';
-        if (!contentType.startsWith('image/')) {
-            throw new Error(`Non-image content-type: ${contentType}`);
-        }
-
-        const logoBuffer = Buffer.from(response.data);
-        // Cache the fetched logo buffer
-        setLogoCache(logoUrl, logoBuffer);
-        markDeadUrl(logoUrl, true); // success, reset fail count
-
-        const background = await sharp(logoBuffer)
-            .resize(600, 900, { fit: 'cover' })
-            .blur(35)
-            .linear(0.55, 0)
-            .toBuffer();
-
-        const haloSvg = `
-            <svg width="500" height="500" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                    <radialGradient id="haloGlow" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35" />
-                        <stop offset="60%" stop-color="#ffffff" stop-opacity="0.15" />
-                        <stop offset="100%" stop-color="#ffffff" stop-opacity="0.0" />
-                    </radialGradient>
-                </defs>
-                <circle cx="250" cy="250" r="250" fill="url(#haloGlow)" />
-            </svg>
-        `;
-        const haloBuffer = Buffer.from(haloSvg);
-
-        const foreground = await sharp(logoBuffer)
-            .resize(400, 400, { fit: 'inside' })
-            .toBuffer();
-
-        await sharp(background)
-            .composite([
-                { input: haloBuffer, gravity: 'center' },
-                { input: foreground, gravity: 'center' }
-            ])
-            .toFile(cachePath);
-
-        return cachePath;
-    } catch (err) {
-        console.error(`[imageEngine] Poster generation failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
-        if (logoUrl) markDeadUrl(logoUrl, false);
-        return await generateFallback(cachePath, fallbackName);
     }
+
+    // All retries exhausted
+    if (logoUrl) markDeadUrl(logoUrl, false);
+    return await generateFallback(cachePath, fallbackName);
 }
 
 async function generateFallback(cachePath, fallbackName) {
