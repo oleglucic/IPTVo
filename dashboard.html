@@ -833,6 +833,15 @@
         if (includeGroups) configObj.include = includeGroups.split(',').map(s => s.trim()).filter(Boolean);
         if (excludeGroups) configObj.exclude = excludeGroups.split(',').map(s => s.trim()).filter(Boolean);
 
+        // Include source URL and credentials
+        if (type === 'xtream') {
+            configObj.xtreamUrl = xtreamUrl;
+            configObj.username = username;
+            configObj.password = password;
+        } else if (type === 'm3u') {
+            configObj.m3uUrl = m3uUrl;
+        }
+
         if (allCheckboxes.length > 0) {
             if (checked.length <= totalCategoriesCount / 2) {
                 configObj.include = checked;
