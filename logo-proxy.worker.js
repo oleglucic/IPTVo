@@ -51,7 +51,7 @@ function escapeHtml(text) {
         .replace(/</g, '<')
         .replace(/>/g, '>')
         .replace(/"/g, '"')
-        .replace(/'/g, ''');
+        .replace(/'/g, '&apos;');
 }
 
 function isValidHttpUrl(url) {
