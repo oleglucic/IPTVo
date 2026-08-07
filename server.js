@@ -54,14 +54,17 @@ app.post('/api/get-groups', async (req, res) => {
 function extractConfig(req) {
     try {
         let rawB64 = (req.params.config || req.query.config || '');
+        console.log(`[extractConfig] rawB64 (first 50): ${rawB64.substring(0, 50)}`);
         rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
         // Pad to a multiple of 4
         while (rawB64.length % 4 !== 0) rawB64 += '=';
         const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
+        console.log(`[extractConfig] decoded: ${decoded}`);
         // Handle btoa(unescape(encodeURIComponent(...))) encoding from dashboard
         try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
         return JSON.parse(decoded);
     } catch (e) {
+        console.error('[extractConfig] Error:', e.message);
         return null;
     }
 }
