@@ -13,7 +13,8 @@ const SYNONYM_MAP = { jr: 'junior' };
 function applySynonyms(str) {
     return str.split(/\s+/).map(w => SYNONYM_MAP[w.toLowerCase()] || w).join(' ');
 }
-const { saveCacheToRedis } = require('./redisCache');
+const { saveCacheToRedis, saveLogoUrl, loadLogoUrl, hasRedis } = require('./redisCache');
+const { getLogoUrl, setLogoUrl } = require('./db');
 
 const userCaches = new Map();
 const MAX_CACHE_AGE = 60 * 60 * 1000; // 1 hour
@@ -233,17 +234,19 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 let finalLogo = logo ? logo[1] : '';
 
                 logoTrack.set(cId, { url: finalLogo, name: cName });
-                cItem = { cId, cName, rawName, logo: finalLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch };
+                // Store iptv-org logo separately for fallback chain
+                const iptvOrgLogo = iptvOrgMatch ? iptvOrgMatch.logo : null;
+                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch };
 
             } else if (t.startsWith('http') && cItem) {
-                const { cId, cName, rawName, logo, grp, groupTags, catchupInfo, iptvOrgMatch } = cItem;
+                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch } = cItem;
                 const catId = `iptv_${grp.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}`;
                 groups.add(grp);
-                
+
                 if (!tMap.has(cId)) {
                     const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
                     const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : logo;
-                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
                 }
@@ -266,7 +269,10 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
         console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
-        
+
+        // Save logo URLs to Redis for change detection (background, non-blocking)
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
+
         // Always trigger async background AI process when dirty channels exist
         if (dirtyChannels.length > 0) {
             startAiQueue(dirtyChannels, configKey).catch(err => console.error("[AI Queue Error]", err));
@@ -395,6 +401,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             let finalLogo = stream.stream_icon || '';
 
             logoTrack.set(cId, { url: finalLogo, name: cName });
+            // Store iptv-org logo separately for fallback chain
+            const iptvOrgLogo = iptvOrgMatch ? iptvOrgMatch.logo : null;
 
             const catId = `iptv_${finalGrp.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}`;
             groups.add(finalGrp);
@@ -402,7 +410,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             if (!tMap.has(cId)) {
                 const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
                 const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : finalLogo;
-                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }
@@ -426,6 +434,9 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
         console.log(`[Xtream Engine] Categorized and loaded ${tCat.length} streams inside memory.`);
+
+        // Save logo URLs to Redis for change detection (background, non-blocking)
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
 
         if (dirtyChannels.length > 0) {
             startAiQueue(dirtyChannels, configKey).catch(err => console.error("[AI Queue Error]", err));
@@ -534,4 +545,92 @@ function getEpgText(chKey, epgData, offsetHours = 0) {
     return text;
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh };
+
+/**
+ * Save logo URLs to both Redis (fast access) and Database (persistent, no expiry).
+ * Runs in background after parsing completes.
+ */
+async function saveLogoUrlsToRedis(configKey, tMap) {
+    let saved = 0;
+    for (const [cId, channel] of tMap.entries()) {
+        const meta = channel.meta;
+        // Use the primary logo URL for tracking
+        if (meta.logo) {
+            const source = meta.__iptvOrgMatch ? 'iptv-org' : 'playlist';
+            // Save to Redis (fast, 30-day TTL)
+            await saveLogoUrl(cId, meta.logo, source);
+            // Save to Database (persistent, no expiry, only updates on URL change)
+            await setLogoUrl(cId, meta.logo, source);
+            saved++;
+        }
+    }
+    if (saved > 0) {
+        console.log(`[LogoCache] Saved ${saved} logo URLs for change tracking (Redis + DB)`);
+    }
+}
+
+/**
+ * Background logo refresh - only refresh logos that have changed URLs
+ * or are new (haven't been fetched before).
+ * Uses Database for persistent URL tracking (survives restarts, no expiry).
+ * Runs periodically to respect rate limits.
+ */
+async function backgroundLogoRefresh() {
+    console.log('[LogoRefresh] Starting background logo refresh...');
+    let checked = 0;
+    let refreshed = 0;
+    let unchanged = 0;
+    let errors = 0;
+
+    try {
+        for (const [configKey, cached] of userCaches.entries()) {
+            if (!cached || cached.status !== 'ready' || !cached.channelMap) continue;
+
+            for (const [cId, channel] of cached.channelMap.entries()) {
+                const meta = channel.meta;
+                // Skip channels with no logo
+                if (!meta.logo) continue;
+
+                checked++;
+
+                // Check stored URL in Database (persistent, no expiry)
+                const stored = await getLogoUrl(cId);
+                const currentUrl = meta.logo;
+
+                if (stored && stored.url === currentUrl) {
+                    // URL unchanged - logo likely the same, skip
+                    unchanged++;
+                    continue;
+                }
+
+                // URL changed or first time seeing this channel - need refresh
+                console.log(`[LogoRefresh] Logo URL changed/new for ${cId}, refreshing...`);
+
+                try {
+                    // Fetch via imageEngine (which uses Worker proxy + Redis cache)
+                    const { getPremiumPoster } = require('./imageEngine');
+                    await getPremiumPoster(cId, currentUrl, meta.name);
+
+                    // Update stored URL in Database (persistent)
+                    await setLogoUrl(cId, currentUrl, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
+                    // Also update Redis for fast access
+                    await saveLogoUrl(cId, currentUrl, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
+                    refreshed++;
+
+                    // Rate limit between refreshes (respect API limits)
+                    await new Promise(r => setTimeout(r, 100));
+
+                } catch (err) {
+                    errors++;
+                    console.error(`[LogoRefresh] Failed for ${cId}: ${err.message}`);
+                }
+            }
+        }
+
+        console.log(`[LogoRefresh] Complete: checked=${checked}, refreshed=${refreshed}, unchanged=${unchanged}, errors=${errors}`);
+
+    } catch (err) {
+        console.error('[LogoRefresh] Fatal error:', err.message);
+    }
+}

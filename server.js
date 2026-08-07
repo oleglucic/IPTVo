@@ -509,8 +509,18 @@ app.get('/:config/poster/:id.png', async (req, res) => {
 });
 
 const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
+const { backgroundLogoRefresh } = require('./iptvParser');
 const PORT = process.env.PORT || 3000;
 startIptvOrgRefresh();
+
+// Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
+setInterval(() => {
+    backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Cycle failed:', e.message));
+}, 6 * 60 * 60 * 1000); // 6 hours
+// Also run once on startup after a delay
+setTimeout(() => {
+    backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', e.message));
+}, 5 * 60 * 1000); // 5 min after startup
 
 // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
 setInterval(() => {

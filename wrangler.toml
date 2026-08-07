@@ -1,0 +1,20 @@
+name = "iptvo-logo-proxy"
+main = "logo-proxy.worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace for dead URL tracking (24h TTL)
+[[kv_namespaces]]
+binding = "LOGO_KV"
+id = "<your-kv-namespace-id>"
+preview_id = "<your-preview-kv-namespace-id>"
+
+# Environment variables
+[vars]
+LOG_LEVEL = "info"
+
+# Limits
+limits = { cpu_ms = 50 }
+
+# [triggers]
+# cron = "0 * * * *"  # Optional: cron trigger for maintenance

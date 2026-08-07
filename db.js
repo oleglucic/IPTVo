@@ -190,6 +190,49 @@ async function getEpgHistory(channelKey, hoursBack = 48) {
     }
 }
 
+// -- Logo URL Tracking ----------------------------------------------------------
+/**
+ * Persistent logo URL storage - survives Redis restarts, no expiry.
+ * Only refreshed when URL actually changes (detected during parsing).
+ * @param {string} channelId - The channel ID
+ * @returns {Promise<{url: string, source: string, updated_at: Date}|null>}
+ */
+async function getLogoUrl(channelId) {
+    if (!pool) return null;
+    try {
+        const { rows } = await pool.query(
+            'SELECT url, source, updated_at FROM logo_urls WHERE channel_id = $1',
+            [channelId]
+        );
+        return rows[0] || null;
+    } catch (e) {
+        console.error('[DB Error] getLogoUrl:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Store/update a channel's logo URL. Only overwrites if URL actually changed.
+ * @param {string} channelId - The channel ID
+ * @param {string} logoUrl - The logo URL
+ * @param {string} source - Source: 'iptv-org', 'playlist', 'fallback'
+ */
+async function setLogoUrl(channelId, logoUrl, source = 'unknown') {
+    if (!pool) return;
+    try {
+        await pool.query(
+            `INSERT INTO logo_urls (channel_id, url, source, updated_at)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (channel_id)
+             DO UPDATE SET url = $2, source = $3, updated_at = now()
+             WHERE logo_urls.url != $2`, // Only update if URL actually changed
+            [channelId, logoUrl, source]
+        );
+    } catch (e) {
+        console.error('[DB Error] setLogoUrl:', e.message);
+    }
+}
+
 module.exports = {
     // Primary API
     getOverride,
@@ -201,6 +244,9 @@ module.exports = {
     hasSupabase,
     saveEpgSnapshot,
     getEpgHistory,
+    // Logo URL tracking (persistent, no expiry)
+    getLogoUrl,
+    setLogoUrl,
     // Legacy aliases
     getMapping,
     saveMapping,

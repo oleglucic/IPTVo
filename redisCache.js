@@ -5,6 +5,7 @@
 // every request; Redis is purely the durability layer behind it.
 
 const Redis = require('ioredis');
+const crypto = require('crypto');
 
 const redisUrl = process.env.REDIS_URL;
 let redis = null;
@@ -21,7 +22,11 @@ if (redisUrl) {
 }
 
 const KEY_PREFIX = 'nuvio:cache:';
+const LOGO_PREFIX = 'nuvio:logo:';
+const LOGO_URL_PREFIX = 'nuvio:logo:url:';
 const CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours - well beyond MAX_CACHE_AGE, just a safety net
+const LOGO_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days - logo buffers persist across restarts
+const LOGO_URL_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days - URL tracking for refresh detection
 
 /**
  * Convert an in-memory cache entry (with Map/Set fields) into a JSON-safe plain object.
@@ -89,6 +94,76 @@ async function loadCacheFromRedis(configKey) {
 }
 
 /**
+ * Store a logo image buffer in Redis for long-term caching.
+ * @param {string} logoUrl - The original logo URL (used as key)
+ * @param {Buffer} buffer - Image buffer to store
+ */
+async function saveLogoBuffer(logoUrl, buffer) {
+    if (!redis) return;
+    try {
+        const key = LOGO_PREFIX + crypto.createHash('sha256').update(logoUrl).digest('hex');
+        await redis.set(key, buffer, 'EX', LOGO_TTL_SECONDS);
+    } catch (e) {
+        console.error('[Redis Error] saveLogoBuffer:', e.message);
+    }
+}
+
+/**
+ * Load a logo image buffer from Redis.
+ * @param {string} logoUrl - The original logo URL (used as key)
+ * @returns {Promise<Buffer|null>}
+ */
+async function loadLogoBuffer(logoUrl) {
+    if (!redis) return null;
+    try {
+        const key = LOGO_PREFIX + crypto.createHash('sha256').update(logoUrl).digest('hex');
+        const buffer = await redis.get(key);
+        if (!buffer) return null;
+        // ioredis returns Buffer when using get with binary data
+        return buffer instanceof Buffer ? buffer : Buffer.from(buffer);
+    } catch (e) {
+        console.error('[Redis Error] loadLogoBuffer:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Store a logo URL mapping for change detection.
+ * Used to track if a channel's logo URL has changed since last fetch.
+ * @param {string} channelId - The channel ID
+ * @param {string} logoUrl - The logo URL
+ * @param {string} source - Source of logo ('iptv-org', 'playlist', 'fallback')
+ */
+async function saveLogoUrl(channelId, logoUrl, source = 'unknown') {
+    if (!redis) return;
+    try {
+        const key = LOGO_URL_PREFIX + channelId;
+        const data = JSON.stringify({ url: logoUrl, source, updatedAt: Date.now() });
+        await redis.set(key, data, 'EX', LOGO_URL_TTL_SECONDS);
+    } catch (e) {
+        console.error('[Redis Error] saveLogoUrl:', e.message);
+    }
+}
+
+/**
+ * Load stored logo URL for a channel to detect changes.
+ * @param {string} channelId - The channel ID
+ * @returns {Promise<{url: string, source: string, updatedAt: number} | null>}
+ */
+async function loadLogoUrl(channelId) {
+    if (!redis) return null;
+    try {
+        const key = LOGO_URL_PREFIX + channelId;
+        const data = await redis.get(key);
+        if (!data) return null;
+        return JSON.parse(data);
+    } catch (e) {
+        console.error('[Redis Error] loadLogoUrl:', e.message);
+        return null;
+    }
+}
+
+/**
  * List every config key currently persisted in Redis - used to pre-warm
  * the in-memory cache for all known configs on boot.
  * @returns {Promise<string[]>}
@@ -108,5 +183,9 @@ module.exports = {
     saveCacheToRedis,
     loadCacheFromRedis,
     listCachedConfigKeys,
+    saveLogoBuffer,
+    loadLogoBuffer,
+    saveLogoUrl,
+    loadLogoUrl,
     hasRedis: !!redis
 };
