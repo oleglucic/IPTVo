@@ -280,18 +280,18 @@ async function getChannelData(config, id, configObj) {
 }
 
 // Catalog handler (tv catalogs)
-builder.defineCatalogHandler(async (args, config) => {
+builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
-    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${args.extra?.genre}, search=${args.extra?.search}`);
+    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${extra?.genre}, search=${extra?.search}`);
     if (!configObj) return { metas: [] };
 
     const ud = await ensureCache(configKey, configObj);
     if (!ud || !ud.channelMap) return { metas: [] };
 
-    const selectedGenre = args.extra?.genre?.replace(/-/g, ' ') || null;
-    const selectedSearch = args.extra?.search?.toLowerCase() || null;
+    const selectedGenre = extra?.genre?.replace(/-/g, ' ') || null;
+    const selectedSearch = extra?.search?.toLowerCase() || null;
 
     const metas = [];
     for (const [chKey, channel] of ud.channelMap.entries()) {
@@ -325,11 +325,10 @@ builder.defineCatalogHandler(async (args, config) => {
 });
 
 // Meta handler
-builder.defineMetaHandler(async (args, config) => {
+builder.defineMetaHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
-    const id = args.id;
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
@@ -361,10 +360,9 @@ builder.defineMetaHandler(async (args, config) => {
 });
 
 // Stream handler
-builder.defineStreamHandler(async (args, config) => {
+builder.defineStreamHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
-    const id = args.id;
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
