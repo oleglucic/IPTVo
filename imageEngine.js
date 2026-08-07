@@ -138,7 +138,7 @@ async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
     }
 
     if (isDeadUrl(logoUrl)) {
-        return generateFallback(cachePath, fallbackName);
+        return await generateFallback(cachePath, fallbackName);
     }
 
     try {
@@ -156,7 +156,7 @@ async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
         if (response.status === 429) {
             console.warn(`[imageEngine] Rate limited (429) for logoUrl=${logoUrl}`);
             markDeadUrl(logoUrl, false); // increase fail count
-            return generateFallback(cachePath, fallbackName);
+            return await generateFallback(cachePath, fallbackName);
         }
 
         const contentType = response.headers['content-type'] || '';
@@ -204,7 +204,7 @@ async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
     } catch (err) {
         console.error(`[imageEngine] Poster generation failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
         if (logoUrl) markDeadUrl(logoUrl, false);
-        return generateFallback(cachePath, fallbackName);
+        return await generateFallback(cachePath, fallbackName);
     }
 }
 
