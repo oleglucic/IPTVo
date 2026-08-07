@@ -188,7 +188,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 
                 const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
                 const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
-                
+
                 // No 'iptv:' prefix - colons in IDs can break client URL parsing
                 let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
 
@@ -207,6 +207,17 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                         // Queue for async background AI deduplication if not mapped or low confidence
                         dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
                     }
+                }
+
+                // Debug: Track iptv-org match rate
+                if (iptvOrgMatch) {
+                    // We need to set this on the cItem, but we don't have it here
+                    // We'll set it when creating the mItem instead
+                }
+
+                // Debug: Track iptv-org match rate
+                if (iptvOrgMatch) {
+                    cItem.__iptvOrgMatch = true;
                 }
                 
                 if (tvgId) epgMap.set(tvgId[1].toLowerCase().trim(), cId);
@@ -228,7 +239,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 if (!tMap.has(cId)) {
                     const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
                     const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : logo;
-                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
                 }
@@ -240,7 +251,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         
         const tEpg = await handleXmltvEpg(configObj.epg, tMap, epgMap);
-        
+
+        // Log iptv-org match statistics
+        let iptvOrgMatchCount = 0;
+        for (const [, channel] of tMap.entries()) {
+            if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
+        }
+        console.log(`[iptv-org] Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
         console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
@@ -376,7 +394,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             if (!tMap.has(cId)) {
                 const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
                 const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : finalLogo;
-                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
+                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }
@@ -388,7 +406,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
         const tEpg = await handleXmltvEpg(epg, tMap, epgMap);
-        
+
+        // Log iptv-org match statistics
+        let iptvOrgMatchCount = 0;
+        for (const [, channel] of tMap.entries()) {
+            if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
+        }
+        console.log(`[iptv-org] Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
         console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
