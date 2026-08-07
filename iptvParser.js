@@ -6,7 +6,7 @@ const { Readable } = require('stream');
 const { startAiQueue, globalAiCache } = require('./aiCurator'); 
 const { getOverride, getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
-const { lookupChannel } = require('./iptvOrgRef');
+const { lookupChannel, lookupChannelFuzzy } = require('./iptvOrgRef');
 
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
@@ -192,18 +192,22 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 
                 // No 'iptv:' prefix - colons in IDs can break client URL parsing
                 let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
-                
-                // 1. Check Supabase Override DB first
-                const iptvOrgMatch = lookupChannel(rawName);
-                if (iptvOrgMatch) cId = `${iptvOrgMatch.countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
-                const dbMapping = iptvOrgMatch ? null : (overridesMap.get(rawName) || null);
+
+                // 1. Check iptv-org reference data first (authoritative source)
+                const iptvOrgMatch = lookupChannel(rawName) || lookupChannelFuzzy(rawName);
                 if (iptvOrgMatch) {
-                    // Authoritative match from iptv-org reference data - no AI needed
-                } else if (dbMapping && dbMapping.confidence >= 0.5) {
-                    cId = dbMapping.canonical_id;
+                    // Use iptv-org's official ID as the canonical identifier
+                    cId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
+                    // Queue is not needed for AI as we have an authoritative match
                 } else {
-                    // Queue for async background AI deduplication if not mapped or low confidence
-                    dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
+                    // 2. Check Supabase Override DB if no iptv-org match
+                    const dbMapping = overridesMap.get(rawName) || null;
+                    if (dbMapping && dbMapping.confidence >= 0.5) {
+                        cId = dbMapping.canonical_id;
+                    } else {
+                        // Queue for async background AI deduplication if not mapped or low confidence
+                        dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
+                    }
                 }
                 
                 if (tvgId) epgMap.set(tvgId[1].toLowerCase().trim(), cId);
@@ -223,10 +227,10 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 groups.add(grp);
                 
                 if (!tMap.has(cId)) {
-                    const displayName = (iptvOrgMatch && iptvOrgMatch.canonicalName) ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
-                    const displayLogo = (iptvOrgMatch && iptvOrgMatch.logo) ? iptvOrgMatch.logo : logo;
+                    const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                    const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : logo;
                     const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
-                    tMap.set(cId, { meta: mItem, streams: [] }); 
+                    tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
                 }
                 
@@ -344,16 +348,20 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             // No 'iptv:' prefix - colons in IDs can break client URL parsing
             let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
 
-            // Check Supabase override DB
-            const iptvOrgMatch = lookupChannel(rawName);
-                if (iptvOrgMatch) cId = `${iptvOrgMatch.countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
-                const dbMapping = iptvOrgMatch ? null : (overridesMap.get(rawName) || null);
+            // 1. Check iptv-org reference data first (authoritative source)
+            const iptvOrgMatch = lookupChannel(rawName) || lookupChannelFuzzy(rawName);
             if (iptvOrgMatch) {
-                // Authoritative match from iptv-org reference data - no AI needed
-            } else if (dbMapping && dbMapping.confidence >= 0.5) {
-                cId = dbMapping.canonical_id;
+                // Use iptv-org's official ID as the canonical identifier
+                cId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
             } else {
-                dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
+                // 2. Check Supabase Override DB if no iptv-org match
+                const dbMapping = overridesMap.get(rawName) || null;
+                if (dbMapping && dbMapping.confidence >= 0.5) {
+                    cId = dbMapping.canonical_id;
+                } else {
+                    // Queue for async background AI deduplication if not mapped or low confidence
+                    dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
+                }
             }
 
             if (stream.epg_channel_id) epgMap.set(stream.epg_channel_id.toLowerCase().trim(), cId);
@@ -368,7 +376,9 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             groups.add(finalGrp);
 
             if (!tMap.has(cId)) {
-                const mItem = { id: cId, type: 'tv', name: cName.replace(/\b\w/g, c => c.toUpperCase()), genres: [finalGrp], catalogId: catId, logo: finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
+                const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : finalLogo;
+                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0 };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }

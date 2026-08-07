@@ -1,13 +1,15 @@
 const axios = require('axios');
+const Fuse = require('fuse.js');
 
 const CHANNELS_URL = 'https://iptv-org.github.io/api/channels.json';
 const LOGOS_URL = 'https://iptv-org.github.io/api/logos.json';
 const COUNTRIES_URL = 'https://iptv-org.github.io/api/countries.json';
-const REFRESH_INTERVAL = 24 * 60 * 60 * 1000; // 24h
+const REFRESH_INTERVAL = 24 * 60 * 60 * 1000;
 
-let nameToChannel = new Map();   // normalized alt_name/name -> { id, name, country }
-let channelIdToLogo = new Map(); // channel id -> logo url
+let nameToChannel = new Map();
+let channelIdToLogo = new Map();
 let validCountryCodes = new Set();
+let fuseIndex = null;
 let lastRefreshed = 0;
 
 function normalize(str) {
@@ -29,7 +31,7 @@ async function refresh() {
             for (const n of names) {
                 const key = normalize(n);
                 if (key && !newNameMap.has(key)) {
-                    newNameMap.set(key, { id: ch.id, name: ch.name, country: (ch.country || '').toLowerCase() });
+                    newNameMap.set(key, { id: ch.id, name: ch.name, country: (ch.country || '').toLowerCase(), officialId: ch.id });
                 }
             }
         }
@@ -43,9 +45,13 @@ async function refresh() {
 
         const newCountrySet = new Set(countriesRes.data.map(c => c.code.toLowerCase()));
 
+        const fuseList = [...newNameMap.entries()].map(([key, val]) => ({ key, ...val }));
+        const newFuseIndex = new Fuse(fuseList, { keys: ['key'], threshold: 0.25, includeScore: true });
+
         nameToChannel = newNameMap;
         channelIdToLogo = newLogoMap;
         validCountryCodes = newCountrySet;
+        fuseIndex = newFuseIndex;
         lastRefreshed = Date.now();
 
         console.log(`[iptv-org] Refreshed: ${nameToChannel.size} name entries, ${channelIdToLogo.size} logos, ${validCountryCodes.size} country codes.`);
@@ -61,7 +67,31 @@ function lookupChannel(rawName) {
     return {
         countryScopeKey: match.country || 'global',
         canonicalName: match.name,
-        logo: channelIdToLogo.get(match.id) || null
+        logo: channelIdToLogo.get(match.id) || null,
+        officialId: match.officialId
+    };
+}
+
+/**
+ * Fuzzy fallback for names that don't exact-match (typos, abbreviations,
+ * slightly different formatting - e.g. "hbo2" vs iptv-org's "HBO 2").
+ * Conservative threshold: only accepts near-exact matches to avoid
+ * confidently assigning the wrong channel identity.
+ */
+function lookupChannelFuzzy(rawName) {
+    if (!fuseIndex) return null;
+    const key = normalize(rawName);
+    if (key.length < 4) return null;
+    const results = fuseIndex.search(key, { limit: 1 });
+    if (!results.length || results[0].score > 0.2) return null;
+    const match = results[0].item;
+    return {
+        countryScopeKey: match.country || 'global',
+        canonicalName: match.name,
+        logo: channelIdToLogo.get(match.id) || null,
+        officialId: match.officialId,
+        fuzzy: true,
+        fuzzyScore: results[0].score
     };
 }
 
@@ -75,4 +105,10 @@ function startAutoRefresh() {
     setInterval(refresh, REFRESH_INTERVAL);
 }
 
-module.exports = { lookupChannel, isValidCountryCode, startAutoRefresh, get lastRefreshed() { return lastRefreshed; } };
+module.exports = {
+    lookupChannel,
+    lookupChannelFuzzy,
+    isValidCountryCode,
+    startAutoRefresh,
+    get lastRefreshed() { return lastRefreshed; }
+};
