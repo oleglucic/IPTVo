@@ -42,6 +42,24 @@ node server.js
 
 ### Production (Portainer)
 
+**Option 1: Use pre-built image (recommended)**
+1. In Portainer, create a stack with:
+```yaml
+version: '3.8'
+services:
+  iptvo:
+    image: itsoleglucic/iptvo:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://user:pass@host:5432/dbname
+      - REDIS_URL=redis://host:6379
+      - OPENROUTER_API_KEY=your-key  # optional
+    restart: unless-stopped
+```
+2. Deploy
+
+**Option 2: Build from source**
 1. Push to your repository
 2. In Portainer, create a stack from `docker-compose.yml`
 3. Configure environment variables:
@@ -124,6 +142,24 @@ For each raw channel from the provider:
 | `universalEpg.js` | XMLTV EPG parsing (SAX streaming) |
 
 ## Docker
+
+Pre-built image available on Docker Hub:
+```bash
+docker pull itsoleglucic/iptvo:latest
+```
+
+To run:
+```bash
+docker run -d \
+  --name iptvo \
+  -p 3000:3000 \
+  -e DATABASE_URL="postgresql://user:pass@host:5432/dbname" \
+  -e REDIS_URL="redis://host:6379" \
+  -e OPENROUTER_API_KEY="your-key" \
+  itsoleglucic/iptvo:latest
+```
+
+### Building from source
 
 ```dockerfile
 # Multi-stage build
