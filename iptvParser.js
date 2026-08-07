@@ -127,7 +127,7 @@ async function parseM3uData(configKey, configObj) {
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
         if (!m3uTargetUrl) throw new Error("No M3U Playlist link found inside payload parameters.");
 
-        const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 60000 });
+        const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 300000 });
         let mStream = res.data;
         if (res.headers['content-encoding'] === 'gzip' || m3uTargetUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
         const rl = readline.createInterface({ input: mStream, crlfDelay: Infinity });
@@ -409,7 +409,7 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     if (!epgUrl) return tEpg;
     return new Promise(async (resolve) => {
         try {
-            const epgRes = await axios({ method: 'get', url: epgUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 60000 });
+            const epgRes = await axios({ method: 'get', url: epgUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 300000 });
             let rawStream = epgRes.data;
             
             const firstChunk = await new Promise((resChunk) => { rawStream.once('data', (chunk) => resChunk(chunk)); });

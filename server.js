@@ -405,33 +405,67 @@ app.get('/:config/manifest.json', (req, res) => {
     res.json(addonInterface.manifest);
 });
 
-app.get('/:config/catalog/:type/:id.json', (req, res, next) => {
-    // Wrap to extract config and pass req for config parsing
-    addonInterface.handleCatalog(req.params, req, (err, result) => {
-        if (err) return next(err);
+// Catalog routes - using the unified get() method from stremio-addon-sdk v1.6+
+app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
+    try {
+        const config = req.params.config;
+        const configObj = extractConfig(req);
+        const resource = 'catalog';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = req.params.extra || {};
+        const result = await addonInterface.get(resource, type, id, extra, configObj);
         res.json(result);
-    });
+    } catch (err) {
+        next(err);
+    }
 });
 
-app.get('/:config/catalog/:type/:id/:extra.json', (req, res, next) => {
-    addonInterface.handleCatalog(req.params, req, (err, result) => {
-        if (err) return next(err);
+app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
+    try {
+        const config = req.params.config;
+        const configObj = extractConfig(req);
+        const resource = 'catalog';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = req.params.extra || {};
+        const result = await addonInterface.get(resource, type, id, extra, configObj);
         res.json(result);
-    });
+    } catch (err) {
+        next(err);
+    }
 });
 
-app.get('/:config/meta/:type/:id.json', (req, res, next) => {
-    addonInterface.handleMeta(req.params, req, (err, result) => {
-        if (err) return next(err);
+// Meta route
+app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
+    try {
+        const config = req.params.config;
+        const configObj = extractConfig(req);
+        const resource = 'meta';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = {};
+        const result = await addonInterface.get(resource, type, id, extra, configObj);
         res.json(result);
-    });
+    } catch (err) {
+        next(err);
+    }
 });
 
-app.get('/:config/stream/:type/:id.json', (req, res, next) => {
-    addonInterface.handleStream(req.params, req, (err, result) => {
-        if (err) return next(err);
+// Stream route
+app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
+    try {
+        const config = req.params.config;
+        const configObj = extractConfig(req);
+        const resource = 'stream';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = {};
+        const result = await addonInterface.get(resource, type, id, extra, configObj);
         res.json(result);
-    });
+    } catch (err) {
+        next(err);
+    }
 });
 
 // Fallback Canvas Image Generator Route
