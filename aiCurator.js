@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { getOverride, setOverride, getAllOverrides } = require('./db');
+const { lookupChannel, lookupChannelFuzzy } = require('./iptvOrgRef');
 
 // In-memory runtime cache for AI overrides
 const globalAiCache = new Map();
@@ -13,13 +14,13 @@ async function processAiBatch(batchItems) {
 
     // batchItems: [{ name, scope }] — scope is parser-computed (from group-title), AI must NOT invent it
     const prompt = `You are a channel deduplication engine. I will give you an array of {name, scope} pairs from messy IPTV strings.
-    Some of these are duplicates or backups of the same station.
-    For each entry, return a clean, canonical BASE NAME ONLY (no country/scope prefix, no underscore prefix) using lowercase letters and numbers only, no spaces (e.g., "skysportsf1", "hbo"). Do NOT include the scope in your answer.
-    Ensure alternate links, backups, and quality variations of the identical station receive the EXACT same base name so they collapse together.
+Some of these are duplicates or backups of the same station.
+For each entry, return a clean, canonical BASE NAME ONLY (no country/scope prefix, no underscore prefix) using lowercase letters and numbers only, no spaces (e.g., "skysportsf1", "hbo"). Do NOT include the scope in your answer.
+Ensure alternate links, backups, and quality variations of the identical station receive the EXACT same base name so they collapse together.
 
-    Return ONLY a raw JSON object where the key is the name and the value is the clean base name. No markdown.
+Return ONLY a raw JSON object where the key is the name and the value is the clean base name. No markdown.
 
-    Input: ${JSON.stringify(batchItems)}`;
+Input: ${JSON.stringify(batchItems)}`;
 
     try {
         console.log(`[AI Curator] Resolving duplicates for a batch of ${batchItems.length} channels...`);
@@ -35,8 +36,8 @@ async function processAiBatch(batchItems) {
         });
 
         let content = res.data.choices[0].message.content.trim();
-        content = content.replace(/```json/g, '').replace(/```/g, ''); 
-        
+        content = content.replace(/```json/g, '').replace(/```/g, '');
+
         const jsonStart = content.indexOf("{");
         const jsonEnd = content.lastIndexOf("}");
         if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
@@ -69,7 +70,7 @@ async function startAiQueue(dirtyChannels, configKey) {
     // 1. Conflict & Filter Detection
     const rawNamesByBase = new Map();
     const idCounts = new Map();
-    
+
     dirtyChannels.forEach(ch => {
         // Group by baseCleanName
         if (!rawNamesByBase.has(ch.baseCleanName)) {
@@ -93,7 +94,16 @@ async function startAiQueue(dirtyChannels, configKey) {
         // Check if DB already has mapping and confidence is low
         const existing = overridesMap.get(ch.rawName) || null;
         const isLowConfidence = existing && existing.confidence < 0.5;
+
+        // Check if iptv-org can match this channel (using cleaned name and country scope)
+        const iptvOrgMatch = lookupChannel(ch.baseCleanName, ch.countryScopeKey) || lookupChannelFuzzy(ch.baseCleanName, ch.countryScopeKey);
+        const hasIptvOrgMatch = !!iptvOrgMatch;
+
         let priority = 0;
+        if (hasIptvOrgMatch) {
+            // Already has authoritative match, skip AI
+            continue;
+        }
         if (isOverMerged) priority += 3;
         if (hasBaseNameConflict) priority += 2;
         if (isAlt) priority += 1;
@@ -115,11 +125,11 @@ async function startAiQueue(dirtyChannels, configKey) {
     }
     const uniqueToProcess = [...priorityMap.entries()].sort((a, b) => b[1] - a[1]).map(entry => ({ name: entry[0], scope: scopeMap.get(entry[0]) || 'global' }));
     if (uniqueToProcess.length === 0) {
-        console.log(`[AI Curator] No flagged channels requiring processing for ${configKey}.`);
+        console.log(`[AI Curator] No flagged channels requiring processing for ${configKey} (all handled by iptv-org).`);
         return;
     }
 
-    console.log(`[AI Curator] Flagged ${uniqueToProcess.length} channels for AI verification.`);
+    console.log(`[AI Curator] Flagged ${uniqueToProcess.length} channels for AI verification (no iptv-org match).`);
 
     for (let i = 0; i < uniqueToProcess.length; i += 100) {
         const batch = uniqueToProcess.slice(i, i + 100);
@@ -128,7 +138,7 @@ async function startAiQueue(dirtyChannels, configKey) {
                 console.log(`[AI Curator] Stopping early due to rate limit. Processed ${i} of ${uniqueToProcess.length} channels this cycle.`);
                 break;
             }
-        
+
         const batchScopeMap = new Map(batch.map(b => [b.name, b.scope]));
         for (const [raw, cleanBase] of Object.entries(aiResults)) {
             if (cleanBase && typeof cleanBase === 'string' && cleanBase.length > 0) {

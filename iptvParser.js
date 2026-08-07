@@ -193,8 +193,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 // No 'iptv:' prefix - colons in IDs can break client URL parsing
                 let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
 
-                // 1. Check iptv-org reference data first (authoritative source)
-                const iptvOrgMatch = lookupChannel(rawName) || lookupChannelFuzzy(rawName);
+                // 1. Check iptv-org reference data first (authoritative source) using cleaned name
+                const iptvOrgMatch = lookupChannel(baseCleanName, countryScopeKey) || lookupChannelFuzzy(baseCleanName, countryScopeKey);
                 if (iptvOrgMatch) {
                     // Use iptv-org's official ID as the canonical identifier
                     cId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
@@ -348,8 +348,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             // No 'iptv:' prefix - colons in IDs can break client URL parsing
             let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
 
-            // 1. Check iptv-org reference data first (authoritative source)
-            const iptvOrgMatch = lookupChannel(rawName) || lookupChannelFuzzy(rawName);
+            // 1. Check iptv-org reference data first (authoritative source) using cleaned name
+            const iptvOrgMatch = lookupChannel(baseCleanName, countryScopeKey) || lookupChannelFuzzy(baseCleanName, countryScopeKey);
             if (iptvOrgMatch) {
                 // Use iptv-org's official ID as the canonical identifier
                 cId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}${timeshiftSuffix}`;

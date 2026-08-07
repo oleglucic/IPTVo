@@ -7,6 +7,7 @@ const COUNTRIES_URL = 'https://iptv-org.github.io/api/countries.json';
 const REFRESH_INTERVAL = 24 * 60 * 60 * 1000;
 
 let nameToChannel = new Map();
+let nameCountryToChannel = new Map(); // key: "${normalizedName}|${countryCode}"
 let channelIdToLogo = new Map();
 let validCountryCodes = new Set();
 let fuseIndex = null;
@@ -25,14 +26,19 @@ async function refresh() {
         ]);
 
         const newNameMap = new Map();
+        const newNameCountryMap = new Map();
         for (const ch of channelsRes.data) {
             if (ch.closed) continue;
             const names = [ch.name, ...(ch.alt_names || [])];
             for (const n of names) {
                 const key = normalize(n);
+                const countryLower = (ch.country || '').toLowerCase();
+                const entry = { id: ch.id, name: ch.name, country: countryLower, officialId: ch.id };
                 if (key && !newNameMap.has(key)) {
-                    newNameMap.set(key, { id: ch.id, name: ch.name, country: (ch.country || '').toLowerCase(), officialId: ch.id });
+                    newNameMap.set(key, entry);
                 }
+                // Store country-specific entry (may overwrite if same key+country from different alias, that's fine)
+                newNameCountryMap.set(`${key}|${countryLower}`, entry);
             }
         }
 
@@ -49,6 +55,7 @@ async function refresh() {
         const newFuseIndex = new Fuse(fuseList, { keys: ['key'], threshold: 0.25, includeScore: true });
 
         nameToChannel = newNameMap;
+        nameCountryToChannel = newNameCountryMap;
         channelIdToLogo = newLogoMap;
         validCountryCodes = newCountrySet;
         fuseIndex = newFuseIndex;
@@ -60,20 +67,34 @@ async function refresh() {
     }
 }
 
-function lookupChannel(rawName) {
+/**
+ * Lookup channel by name and optional country scope.
+ * @param {string} rawName - The raw channel name from playlist
+ * @param {string} [countryScopeKey] - Optional country code like 'us', 'uk' (lowercase)
+ * @returns {Object|null} Match object with countryScopeKey, canonicalName, logo, officialId
+ */
+function lookupChannel(rawName, countryScopeKey) {
     const key = normalize(rawName);
-    const match = nameToChannel.get(key);
-    if (!match) {
-        console.log(`[iptv-org] lookupChannel: no exact match for "${rawName}" (key: "${key}")`);
-        return null;
+    let match = null;
+    if (countryScopeKey) {
+        // Try name+country specific map
+        match = nameCountryToChannel.get(`${key}|${countryScopeKey}`);
     }
-    console.log(`[iptv-org] lookupChannel: exact match for "${rawName}" (key: "${key}") -> ${match.name} (id: ${match.id})`);
-    return {
-        countryScopeKey: match.country || 'global',
-        canonicalName: match.name,
-        logo: channelIdToLogo.get(match.id) || null,
-        officialId: match.officialId
-    };
+    // Fallback to name-only map if not found or no countryScopeKey provided
+    if (!match && (!countryScopeKey || countryScopeKey === 'global')) {
+        match = nameToChannel.get(key);
+    }
+    if (match) {
+        // Only log when match found to reduce noise
+        console.log(`[iptv-org] lookupChannel: match for "${rawName}"${countryScopeKey ? ` country:${countryScopeKey}` : ''} -> ${match.name} (id: ${match.id})`);
+        return {
+            countryScopeKey: match.country || 'global',
+            canonicalName: match.name,
+            logo: channelIdToLogo.get(match.id) || null,
+            officialId: match.officialId
+        };
+    }
+    return null;
 }
 
 /**
@@ -81,26 +102,38 @@ function lookupChannel(rawName) {
  * slightly different formatting - e.g. "hbo2" vs iptv-org's "HBO 2").
  * Conservative threshold: only accepts near-exact matches to avoid
  * confidently assigning the wrong channel identity.
+ * @param {string} rawName - The raw channel name from playlist
+ * @param {string} [countryScopeKey] - Optional country code to filter results
+ * @returns {Object|null} Match object with fuzzy flag
  */
-function lookupChannelFuzzy(rawName) {
+function lookupChannelFuzzy(rawName, countryScopeKey) {
     if (!fuseIndex) return null;
     const key = normalize(rawName);
     if (key.length < 4) return null;
-    const results = fuseIndex.search(key, { limit: 1 });
-    if (!results.length || results[0].score > 0.2) {
-        console.log(`[iptv-org] lookupChannelFuzzy: no fuzzy match for "${rawName}" (key: "${key}") - score: ${results.length ? results[0].score : 'none'}`);
+    const results = fuseIndex.search(key, { limit: 5 }); // get a few candidates to filter by country
+    if (!results.length) {
         return null;
     }
-    const match = results[0].item;
-    console.log(`[iptv-org] lookupChannelFuzzy: fuzzy match for "${rawName}" (key: "${key}") -> ${match.name} (id: ${match.id}) score: ${results[0].score}`);
-    return {
-        countryScopeKey: match.country || 'global',
-        canonicalName: match.name,
-        logo: channelIdToLogo.get(match.id) || null,
-        officialId: match.officialId,
-        fuzzy: true,
-        fuzzyScore: results[0].score
-    };
+    // Find first result that matches country (if countryScopeKey provided)
+    for (const result of results) {
+        if (result.score > 0.2) continue; // still enforce threshold
+        const match = result.item;
+        if (countryScopeKey) {
+            if (match.country !== countryScopeKey) continue;
+        }
+        // Found a match that satisfies country constraint
+        console.log(`[iptv-org] lookupChannelFuzzy: fuzzy match for "${rawName}"${countryScopeKey ? ` country:${countryScopeKey}` : ''} -> ${match.name} (id: ${match.id}) score: ${result.score}`);
+        return {
+            countryScopeKey: match.country || 'global',
+            canonicalName: match.name,
+            logo: channelIdToLogo.get(match.id) || null,
+            officialId: match.officialId,
+            fuzzy: true,
+            fuzzyScore: result.score
+        };
+    }
+    // No match satisfying country constraint
+    return null;
 }
 
 function isValidCountryCode(code) {
