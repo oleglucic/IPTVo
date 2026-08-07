@@ -208,7 +208,7 @@ async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
     }
 }
 
-function generateFallback(cachePath, fallbackName) {
+async function generateFallback(cachePath, fallbackName) {
     const text = fallbackName || 'Live TV';
     const svg = `
         <svg width="600" height="900" xmlns="http://www.w3.org/2000/svg">
@@ -225,9 +225,10 @@ function generateFallback(cachePath, fallbackName) {
             </text>
         </svg>
     `;
-    return sharp(Buffer.from(svg))
+    await sharp(Buffer.from(svg))
         .resize(600, 900, { fit: 'fill' })
         .toFile(cachePath);
+    return cachePath;
 }
 
 function evictOldestIfOverCap() {

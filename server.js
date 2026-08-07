@@ -82,7 +82,12 @@ async function ensureCache(config, configObj) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
             userCaches.set(config, redisCached);
-            console.log(`[ensureCache] rehydrated from Redis, channels=${redisCached.channelMap.size}, age=${Math.round((Date.now() - redisCached.lastUpdated)/60000)}min`);
+            // Log iptv-org match rate from cached data
+            let iptvOrgMatchCount = 0;
+            for (const [, channel] of redisCached.channelMap.entries()) {
+                if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
+            }
+            console.log(`[ensureCache] rehydrated from Redis, channels=${redisCached.channelMap.size}, age=${Math.round((Date.now() - redisCached.lastUpdated)/60000)}min, iptv-org matched=${iptvOrgMatchCount}/${redisCached.channelMap.size} (${redisCached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / redisCached.channelMap.size) : 0}%)`);
             if (Date.now() - redisCached.lastUpdated > 60 * 60 * 1000) {
                 streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] background refresh failed:', e.message));
             }
@@ -537,6 +542,12 @@ setInterval(() => {
         const cached = await loadCacheFromRedis(key);
         if (cached && cached.status === 'ready') {
             userCaches.set(key, cached);
+            // Log iptv-org match rate from boot-loaded cache
+            let iptvOrgMatchCount = 0;
+            for (const [, channel] of cached.channelMap.entries()) {
+                if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
+            }
+            console.log(`[Boot] Pre-warmed config=${key.substring(0,12)}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
         }
     }
     console.log(`[Boot] Pre-warmed ${keys.length} config(s) from Redis.`);
