@@ -280,16 +280,16 @@ async function getChannelData(config, id, configObj) {
 }
 
 // Catalog handler (tv catalogs)
-builder.defineCatalogHandler(async (args, req) => {
-    const config = req.params.config;
-    const configObj = extractConfig(req);
+builder.defineCatalogHandler(async (args, config) => {
+    const configKey = config.configKey;
+    const configObj = config.configObj;
+    const rootUrl = config.rootUrl;
     console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${args.extra?.genre}, search=${args.extra?.search}`);
     if (!configObj) return { metas: [] };
 
-    const ud = await ensureCache(config, configObj);
+    const ud = await ensureCache(configKey, configObj);
     if (!ud || !ud.channelMap) return { metas: [] };
 
-    const rootUrl = `${req.protocol}://${req.get('host')}`;
     const selectedGenre = args.extra?.genre?.replace(/-/g, ' ') || null;
     const selectedSearch = args.extra?.search?.toLowerCase() || null;
 
@@ -298,7 +298,7 @@ builder.defineCatalogHandler(async (args, req) => {
         if (selectedGenre && channel.meta.group !== selectedGenre) continue;
         if (selectedSearch && !channel.meta.name.toLowerCase().includes(selectedSearch)) continue;
 
-        const engineImage = `${rootUrl}/${config}/poster/${chKey}.png?t=${ud.lastUpdated}`;
+        const engineImage = `${rootUrl}/${configKey}/poster/${chKey}.png?t=${ud.lastUpdated}`;
         const passedThroughLogo = channel.meta.logo || engineImage;
         const epgDescription = getEpgText(chKey, ud.epgData, configObj.timezoneOffset || 0);
         const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
@@ -325,18 +325,18 @@ builder.defineCatalogHandler(async (args, req) => {
 });
 
 // Meta handler
-builder.defineMetaHandler(async (args, req) => {
-    const config = req.params.config;
+builder.defineMetaHandler(async (args, config) => {
+    const configKey = config.configKey;
+    const configObj = config.configObj;
+    const rootUrl = config.rootUrl;
     const id = args.id;
-    const configObj = extractConfig(req);
 
-    await ensureCache(config, configObj);
-    const ud = userCaches.get(config);
+    await ensureCache(configKey, configObj);
+    const ud = userCaches.get(configKey);
     if (!ud || !ud.channelMap.has(id)) return { meta: {} };
     const channel = ud.channelMap.get(id);
 
-    const rootUrl = `${req.protocol}://${req.get('host')}`;
-    const engineImage = `${rootUrl}/${config}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated}`;
+    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
     const epgDescription = getEpgText(id, ud.epgData, configObj ? configObj.timezoneOffset : 0);
     const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
@@ -361,13 +361,13 @@ builder.defineMetaHandler(async (args, req) => {
 });
 
 // Stream handler
-builder.defineStreamHandler(async (args, req) => {
-    const config = req.params.config;
+builder.defineStreamHandler(async (args, config) => {
+    const configKey = config.configKey;
+    const configObj = config.configObj;
     const id = args.id;
-    const configObj = extractConfig(req);
 
-    await ensureCache(config, configObj);
-    const ud = userCaches.get(config);
+    await ensureCache(configKey, configObj);
+    const ud = userCaches.get(configKey);
     if (!ud || !ud.channelMap.has(id)) return { streams: [] };
     const channel = ud.channelMap.get(id);
 
@@ -408,13 +408,15 @@ app.get('/:config/manifest.json', (req, res) => {
 // Catalog routes - using the unified get() method from stremio-addon-sdk v1.6+
 app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
     try {
-        const config = req.params.config;
+        const configKey = req.params.config;
         const configObj = extractConfig(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
         const extra = req.params.extra || {};
-        const result = await addonInterface.get(resource, type, id, extra, configObj);
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
         next(err);
@@ -423,13 +425,15 @@ app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
 
 app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
     try {
-        const config = req.params.config;
+        const configKey = req.params.config;
         const configObj = extractConfig(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
         const extra = req.params.extra || {};
-        const result = await addonInterface.get(resource, type, id, extra, configObj);
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
         next(err);
@@ -439,13 +443,15 @@ app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
 // Meta route
 app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
     try {
-        const config = req.params.config;
+        const configKey = req.params.config;
         const configObj = extractConfig(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
         const extra = {};
-        const result = await addonInterface.get(resource, type, id, extra, configObj);
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
         next(err);
@@ -455,13 +461,15 @@ app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
 // Stream route
 app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
     try {
-        const config = req.params.config;
+        const configKey = req.params.config;
         const configObj = extractConfig(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
         const extra = {};
-        const result = await addonInterface.get(resource, type, id, extra, configObj);
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
         next(err);
