@@ -215,16 +215,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 }
 
                 // Debug: Track iptv-org match rate
-                if (iptvOrgMatch) {
-                    // We need to set this on the cItem, but we don't have it here
-                    // We'll set it when creating the mItem instead
-                }
+                // cItem is created below; mItem at line 249 sets __iptvOrgMatch: !!iptvOrgMatch
 
-                // Debug: Track iptv-org match rate
-                if (iptvOrgMatch) {
-                    cItem.__iptvOrgMatch = true;
-                }
-                
                 if (tvgId) epgMap.set(tvgId[1].toLowerCase().trim(), cId);
                 if (tvgName) epgMap.set(tvgName[1].toLowerCase().trim(), cId);
                 epgMap.set(rawName.toLowerCase().trim(), cId);

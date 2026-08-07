@@ -139,6 +139,11 @@ async function fetchLogoDirect(logoUrl) {
 async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) {
     const sourceLog = [];
 
+    // Handle missing/null logo URL early
+    if (!logoUrl || typeof logoUrl !== 'string' || !logoUrl.startsWith('http')) {
+        return await generateFallback(cachePath, fallbackName, ['no-logo']);
+    }
+
     // 1. Check in-memory logo cache (fastest ~1ms)
     const cachedBuffer = getFromLogoCache(logoUrl);
     if (cachedBuffer) {
