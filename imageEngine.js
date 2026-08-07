@@ -208,6 +208,28 @@ async function renderPoster(cId, logoUrl, fallbackName, cachePath) {
     }
 }
 
+function generateFallback(cachePath, fallbackName) {
+    const text = fallbackName || 'Live TV';
+    const svg = `
+        <svg width="600" height="900" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#0f172a" />
+                    <stop offset="100%" stop-color="#1e293b" />
+                </linearGradient>
+            </defs>
+            <rect width="600" height="900" fill="url(#bgGrad)" />
+            <text x="300" y="450" text-anchor="middle" dominant-baseline="middle"
+                  font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="600" fill="#94a3b8">
+                ${text}
+            </text>
+        </svg>
+    `;
+    return sharp(Buffer.from(svg))
+        .resize(600, 900, { fit: 'fill' })
+        .toFile(cachePath);
+}
+
 function evictOldestIfOverCap() {
     try {
         const files = fs.readdirSync(cacheDir);
