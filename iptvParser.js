@@ -128,7 +128,7 @@ async function parseM3uData(configKey, configObj) {
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
         if (!m3uTargetUrl) throw new Error("No M3U Playlist link found inside payload parameters.");
 
-        const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 300000 });
+        const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000 }); // 10 min for large playlists
         let mStream = res.data;
         if (res.headers['content-encoding'] === 'gzip' || m3uTargetUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
         const rl = readline.createInterface({ input: mStream, crlfDelay: Infinity });
@@ -162,7 +162,8 @@ async function parseM3uData(configKey, configObj) {
                 
                 let normGrp = normaliseFormat(rawGrp).toLowerCase();
                 let countryPrefix = "";
-                
+
+                // Try to extract country code from group name (e.g., "US | Sports" -> "us")
                 const countryMatch = normGrp.match(/^([a-z]{2,3})\b/i);
                 if (countryMatch) {
                     const code = countryMatch[1].toUpperCase();
@@ -170,7 +171,18 @@ async function parseM3uData(configKey, configObj) {
                         countryPrefix = code + " | "; normGrp = normGrp.substring(countryMatch[0].length).trim();
                     }
                 }
-                
+
+                // Also check original raw group for country codes that might be in different formats
+                if (!countryPrefix) {
+                    const rawCountryMatch = rawGrp.match(/^([A-Z]{2,3})\s*[\|\-\:]\s*/);
+                    if (rawCountryMatch) {
+                        const code = rawCountryMatch[1].toUpperCase();
+                        if (isValidCountryCode(code)) {
+                            countryPrefix = code + " | ";
+                        }
+                    }
+                }
+
                 let cleanGrp = normGrp.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|live|vod|vip|60fps|50fps|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps)\b/gi, ' ');
                 cleanGrp = cleanGrp.replace(/[-\/|:_\s]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
                 let finalGrp = countryPrefix + cleanGrp;
@@ -192,6 +204,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 
                 // No 'iptv:' prefix - colons in IDs can break client URL parsing
                 let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
+
+                // DEBUG: Log first few channels to trace iptv-org matching
+                // if (Math.random() < 0.01) {
+                //     console.log(`[DEBUG] cId=${cId}, baseCleanName=${baseCleanName}, countryScopeKey=${countryScopeKey}, rawName=${rawName}`);
+                // }
 
                 // 1. Check iptv-org reference data first (authoritative source) using cleaned name
                 // Only run iptv-org matching if explicitly enabled in config
@@ -265,11 +282,28 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         // Save logo URLs to Redis for change detection (background, non-blocking)
         saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
 
+        // Queue background logo pre-fetch for channels without iptv-org match
+        const missingLogos = [];
+        for (const [, channel] of tMap.entries()) {
+            if (!channel.meta.__iptvOrgMatch && channel.meta.logo) {
+                missingLogos.push({
+                    url: channel.meta.logo,
+                    cId: channel.meta.id,
+                    iptvOrgLogo: channel.meta.iptvOrgLogo
+                });
+            }
+        }
+        if (missingLogos.length > 0) {
+            console.log(`[LogoPrefetch] Queuing ${missingLogos.length} logos for background fetch...`);
+            queueLogoPrefetch(missingLogos).catch(e => console.error('[LogoPrefetch] Error:', e.message));
+        }
+
         // Always trigger async background AI process when dirty channels exist
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
+            console.log(`[AI Curator] Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
             startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", err));
         } else if (dirtyChannels.length > 0) {
-            console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config`);
+            console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${Object.keys(configObj).join(', ')}, ai=${configObj.ai}`);
         }
 
     } catch(e) {
@@ -299,8 +333,8 @@ async function parseXtreamData(configKey, configObj) {
         console.log(`[Xtream Engine] Querying data channels from endpoint: ${baseUrl}`);
 
         const [catRes, streamRes] = await Promise.all([
-            axios.get(`${apiBase}&action=get_live_categories`, { timeout: 30000, headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(() => ({ data: [] })),
-            axios.get(`${apiBase}&action=get_live_streams`, { timeout: 45000, headers: { 'User-Agent': 'Mozilla/5.0' } })
+            axios.get(`${apiBase}&action=get_live_categories`, { timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(() => ({ data: [] })),
+            axios.get(`${apiBase}&action=get_live_streams`, { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } })
         ]);
 
         if (!streamRes.data || !Array.isArray(streamRes.data)) {
@@ -338,11 +372,23 @@ async function parseXtreamData(configKey, configObj) {
             let normGrp = normaliseFormat(rawGrp).toLowerCase();
             let countryPrefix = "";
 
+            // Try to extract country code from group name (e.g., "US | Sports" -> "us")
             const countryMatch = normGrp.match(/^([a-z]{2,3})\b/i);
             if (countryMatch) {
                 const code = countryMatch[1].toUpperCase();
                 if (isValidCountryCode(code)) {
                     countryPrefix = code + " | "; normGrp = normGrp.substring(countryMatch[0].length).trim();
+                }
+            }
+
+            // Also check original raw group for country codes that might be in different formats
+            if (!countryPrefix) {
+                const rawCountryMatch = rawGrp.match(/^([A-Z]{2,3})\s*[\|\-\:]\s*/);
+                if (rawCountryMatch) {
+                    const code = rawCountryMatch[1].toUpperCase();
+                    if (isValidCountryCode(code)) {
+                        countryPrefix = code + " | ";
+                    }
                 }
             }
 
@@ -605,8 +651,11 @@ async function backgroundLogoRefresh() {
 
                 try {
                     // Fetch via imageEngine (which uses Worker proxy + Redis cache)
+                    // Pass both primary (iptv-org) and fallback (playlist) logos for Worker fallback chain
                     const { getPremiumPoster } = require('./imageEngine');
-                    await getPremiumPoster(cId, currentUrl, meta.name);
+                    const primaryLogo = meta.iptvOrgLogo || meta.logo;
+                    const fallbackLogo = meta.iptvOrgLogo ? meta.logo : null;
+                    await getPremiumPoster(cId, primaryLogo, fallbackLogo, meta.name);
 
                     // Update stored URL in Database (persistent)
                     await setLogoUrl(cId, currentUrl, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
@@ -630,3 +679,37 @@ async function backgroundLogoRefresh() {
         console.error('[LogoRefresh] Fatal error:', err.message);
     }
 }
+
+/**
+ * Background logo pre-fetch queue - fetches logos for channels without iptv-org match
+ * to warm up the Cloudflare Worker cache (which caches at edge for 30 days).
+ * Fire-and-forget, runs during parsing.
+ */
+async function queueLogoPrefetch(missingLogos) {
+    if (!missingLogos || missingLogos.length === 0) return;
+
+    // Limit concurrent fetches to avoid overwhelming the Worker
+    const concurrencyLimit = 10;
+    const chunks = [];
+    for (let i = 0; i < missingLogos.length; i += concurrencyLimit) {
+        chunks.push(missingLogos.slice(i, i + concurrencyLimit));
+    }
+
+    for (const chunk of chunks) {
+        const promises = chunk.map(async ({ url, cId, iptvOrgLogo }) => {
+            try {
+                const { getPremiumPoster } = require('./imageEngine');
+                const primaryLogo = iptvOrgLogo || url;
+                const fallbackLogo = iptvOrgLogo ? url : null;
+                await getPremiumPoster(cId, primaryLogo, fallbackLogo, cId);
+            } catch (e) {
+                // Ignore pre-fetch errors - they'll be retried on actual request
+            }
+        });
+        await Promise.all(promises);
+        // Small delay between chunks to respect rate limits
+        await new Promise(r => setTimeout(r, 100));
+    }
+}
+
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh };

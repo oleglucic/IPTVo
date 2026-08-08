@@ -77,8 +77,7 @@ async function ensureCache(config, configObj) {
     let cached = userCaches.get(config);
     console.log(`[ensureCache] cache state: ${cached ? cached.status : 'MISSING'}`);
 
-    // Total cache miss (cold start): kick off the fetch and wait for it to complete
-    // Parse can take several minutes for large playlists - don't timeout during initial load
+    // Total cache miss (cold start): check Redis first, then start background parse
     if (!cached) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
@@ -89,17 +88,30 @@ async function ensureCache(config, configObj) {
                 if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
             }
             console.log(`[ensureCache] rehydrated from Redis, channels=${redisCached.channelMap.size}, age=${Math.round((Date.now() - redisCached.lastUpdated)/60000)}min, iptv-org matched=${iptvOrgMatchCount}/${redisCached.channelMap.size} (${redisCached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / redisCached.channelMap.size) : 0}%)`);
-            if (Date.now() - redisCached.lastUpdated > 60 * 60 * 1000) {
+
+            // Check if Redis cache is stale (older than 2 hours) - refresh in background
+            if (Date.now() - redisCached.lastUpdated > 2 * 60 * 60 * 1000) {
                 streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] background refresh failed:', e.message));
             }
             return redisCached;
         }
-        console.log(`[ensureCache] cold-start: waiting for full parse to complete...`);
-        const fetchPromise = streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] fetch failed:', e.message));
-        await fetchPromise; // Wait for complete parse - no timeout
-        const result = userCaches.get(config);
-        console.log(`[ensureCache] cold-start parse finished, status=${result ? result.status : 'STILL MISSING'}, channels=${result && result.channelMap ? result.channelMap.size : 0}`);
-        return result;
+
+        console.log(`[ensureCache] cold-start: starting background parse, returning placeholder...`);
+        // Start background parse WITHOUT waiting - just kick it off
+        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] fetch failed:', e.message));
+
+        // Return a minimal "loading" cache so catalog can return empty but not timeout
+        const loadingCache = {
+            status: 'loading',
+            channelMap: new Map(),
+            logoTracker: new Map(),
+            catalogItems: [],
+            uniqueGroups: new Set(),
+            epgData: {},
+            lastUpdated: Date.now()
+        };
+        userCaches.set(config, loadingCache);
+        return loadingCache;
     }
 
     // Already loading (e.g. triggered by a parallel request): wait for it with a generous timeout
@@ -109,7 +121,7 @@ async function ensureCache(config, configObj) {
                 await new Promise(r => setTimeout(r, 500));
             }
         })();
-        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 300000)); // 5 min max wait for parallel request
+        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 600000)); // 10 min max wait for parallel request
         await Promise.race([pollPromise, timeoutPromise]);
         return userCaches.get(config);
     }
@@ -544,10 +556,17 @@ const PORT = process.env.PORT || 3000;
     setInterval(() => {
         for (const [configKey, cached] of userCaches.entries()) {
             if (cached && cached.status === 'ready' && (Date.now() - cached.lastUpdated > MAX_CACHE_AGE)) {
-                const configObj = extractConfig({ params: { config: configKey }, query: {} });
-                if (configObj) {
-                    console.log(`[ProactiveRefresh] refreshing stale config=${configKey.substring(0,12)}...`);
-                    streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
+                // Extract the full config object including openrouterKey from the config key
+                // The configKey is the base64-encoded config, so we can decode it
+                try {
+                    const configObj = extractConfig({ params: { config: configKey }, query: {} });
+                    if (configObj) {
+                        console.log(`[ProactiveRefresh] configObj keys: ${Object.keys(configObj).join(', ')}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${configObj.ai}`);
+                        console.log(`[ProactiveRefresh] refreshing stale config=${configKey.substring(0,12)}...`);
+                        streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
+                    }
+                } catch (e) {
+                    console.error(`[ProactiveRefresh] Failed to extract config for ${configKey}:`, e.message);
                 }
             }
         }

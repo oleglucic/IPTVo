@@ -26,6 +26,7 @@ const PROBLEMATIC_DOMAINS = new Set([
     'images-web.ug-be.cdn.united.cloud', // 404 rotation
     'i.imgur.com',               // aggressive rate limiting
     'imgur.com',                 // aggressive rate limiting
+    'photo-tmdb.com',            // 404 on stale stalker portal logos
 ]);
 
 // SVG placeholder generator

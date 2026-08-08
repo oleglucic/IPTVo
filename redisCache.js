@@ -120,7 +120,15 @@ async function loadLogoBuffer(logoUrl) {
         const buffer = await redis.get(key);
         if (!buffer) return null;
         // ioredis returns Buffer when using get with binary data
-        return buffer instanceof Buffer ? buffer : Buffer.from(buffer);
+        const buf = buffer instanceof Buffer ? buffer : Buffer.from(buffer);
+        // Skip SVG placeholders - Sharp can't process them for background blur
+        // Check for various SVG formats: <svg, <?xml ... <svg, <SVG
+        const header = buf.length > 0 ? buf.subarray(0, 20).toString().trim().toLowerCase() : '';
+        const isSvg = header.startsWith('<svg') || header.startsWith('<?xml') && header.includes('<svg');
+        if (isSvg) {
+            return null; // Treat as cache miss
+        }
+        return buf;
     } catch (e) {
         console.error('[Redis Error] loadLogoBuffer:', e.message);
         return null;

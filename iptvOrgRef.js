@@ -114,14 +114,14 @@ async function refresh() {
 /**
  * Exact lookup by cleaned name and optional country scope.
  * @param {string} cleanName - Already normalized channel name (lowercase, alphanumeric only)
- * @param {string} [countryScopeKey] - Optional country code like 'us', 'gb' (lowercase)
+ * @param {string} [countryScopeKey] - Optional country code like 'us', 'gb' (lowercase) or 'global'
  * @returns {Object|null} Match object with countryScopeKey, canonicalName, logo, officialId
  */
 function lookupChannel(cleanName, countryScopeKey) {
     if (!cleanName) return null;
 
     // Try country-specific first
-    if (countryScopeKey) {
+    if (countryScopeKey && countryScopeKey !== 'global') {
         const match = exactMatchMap.get(`${cleanName}|${countryScopeKey}`);
         if (match) {
             return buildMatchResult(match);

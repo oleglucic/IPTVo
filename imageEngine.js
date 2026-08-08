@@ -23,6 +23,12 @@ const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 // Cloudflare Worker proxy URL - set via environment variable
 const LOGO_PROXY_URL = process.env.LOGO_PROXY_URL || 'https://logo-proxy.your-worker.workers.dev/logo';
 
+function isSvgBuffer(buffer) {
+    if (!buffer || buffer.length === 0) return false;
+    const header = buffer.subarray(0, Math.min(50, buffer.length)).toString().trim().toLowerCase();
+    return header.startsWith('<svg') || (header.startsWith('<?xml') && header.includes('<svg'));
+}
+
 function isDeadUrl(url) {
     const entry = deadUrlCache.get(url);
     if (!entry) return false;
@@ -160,8 +166,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         const redisBuffer = await loadLogoBuffer(logoUrl);
         if (redisBuffer) {
             // Skip SVG placeholders that may have been cached - Sharp can't process them for background blur
-            const isSvg = redisBuffer.length > 0 && redisBuffer.subarray(0, 5).toString() === '<svg ';
-            if (isSvg) {
+            if (isSvgBuffer(redisBuffer)) {
                 console.log(`[imageEngine] Skipping SVG placeholder in Redis for ${cId}`);
             } else {
                 sourceLog.push('redis');
@@ -228,7 +233,16 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
 }
 
 async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, contentType = 'image/png') {
-    const background = await sharp(logoBuffer)
+    // If we got an SVG, we can use it directly for high-quality scaling
+    let processBuffer = logoBuffer;
+    let isSvg = isSvgBuffer(logoBuffer);
+
+    if (isSvg) {
+        // For SVG source, we still render via Sharp but it handles SVG→PNG natively
+        sourceLog.push('svg-source');
+    }
+
+    const background = await sharp(processBuffer)
         .resize(600, 900, { fit: 'cover' })
         .blur(35)
         .linear(0.55, 0)
@@ -248,7 +262,7 @@ async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, conten
     `;
     const haloBuffer = Buffer.from(haloSvg);
 
-    const foreground = await sharp(logoBuffer)
+    const foreground = await sharp(processBuffer)
         .resize(400, 400, { fit: 'inside' })
         .toBuffer();
 
