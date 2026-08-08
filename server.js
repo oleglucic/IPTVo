@@ -513,58 +513,64 @@ const { backgroundLogoRefresh } = require('./iptvParser');
 const PORT = process.env.PORT || 3000;
 
 // Initialize database schema (creates tables if missing)
-await initSchema();
-
-startIptvOrgRefresh();
-
-// Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
-setInterval(() => {
-    backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Cycle failed:', e.message));
-}, 6 * 60 * 60 * 1000); // 6 hours
-// Also run once on startup after a delay
-setTimeout(() => {
-    backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', e.message));
-}, 5 * 60 * 1000); // 5 min after startup
-
-// Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
-setInterval(() => {
-    snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', e.message));
-}, 30 * 60 * 1000);
-setTimeout(() => {
-    snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', e.message));
-}, 2 * 60 * 1000);
-
-// Proactively refresh any cached config older than MAX_CACHE_AGE, independent of
-// incoming requests - so the cache stays fresh even during idle periods.
-setInterval(() => {
-    for (const [configKey, cached] of userCaches.entries()) {
-        if (cached && cached.status === 'ready' && (Date.now() - cached.lastUpdated > MAX_CACHE_AGE)) {
-            const configObj = extractConfig({ params: { config: configKey }, query: {} });
-            if (configObj) {
-                console.log(`[ProactiveRefresh] refreshing stale config=${configKey.substring(0,12)}...`);
-                streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
-            }
-        }
-    }
-}, 15 * 60 * 1000);
-
-// Pre-warm the in-memory cache from Redis on boot, so the very first request
-// after a container restart is instant instead of needing a full re-parse.
 (async () => {
-    const keys = await listCachedConfigKeys();
-    for (const key of keys) {
-        const cached = await loadCacheFromRedis(key);
-        if (cached && cached.status === 'ready') {
-            userCaches.set(key, cached);
-            // Log iptv-org match rate from boot-loaded cache
-            let iptvOrgMatchCount = 0;
-            for (const [, channel] of cached.channelMap.entries()) {
-                if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
-            }
-            console.log(`[Boot] Pre-warmed config=${key.substring(0,12)}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
-        }
+    try {
+        await initSchema();
+    } catch (e) {
+        console.error('[DB Init] Failed:', e.message);
     }
-    console.log(`[Boot] Pre-warmed ${keys.length} config(s) from Redis.`);
-})();
 
-app.listen(PORT, () => console.log(`IPTVo Premium Backend operational on port ${PORT}`));
+    startIptvOrgRefresh();
+
+    // Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
+    setInterval(() => {
+        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Cycle failed:', e.message));
+    }, 6 * 60 * 60 * 1000); // 6 hours
+    // Also run once on startup after a delay
+    setTimeout(() => {
+        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', e.message));
+    }, 5 * 60 * 1000); // 5 min after startup
+
+    // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
+    setInterval(() => {
+        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', e.message));
+    }, 30 * 60 * 1000);
+    setTimeout(() => {
+        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', e.message));
+    }, 2 * 60 * 1000);
+
+    // Proactively refresh any cached config older than MAX_CACHE_AGE, independent of
+    // incoming requests - so the cache stays fresh even during idle periods.
+    setInterval(() => {
+        for (const [configKey, cached] of userCaches.entries()) {
+            if (cached && cached.status === 'ready' && (Date.now() - cached.lastUpdated > MAX_CACHE_AGE)) {
+                const configObj = extractConfig({ params: { config: configKey }, query: {} });
+                if (configObj) {
+                    console.log(`[ProactiveRefresh] refreshing stale config=${configKey.substring(0,12)}...`);
+                    streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
+                }
+            }
+        }
+    }, 15 * 60 * 1000);
+
+    // Pre-warm the in-memory cache from Redis on boot, so the very first request
+    // after a container restart is instant instead of needing a full re-parse.
+    (async () => {
+        const keys = await listCachedConfigKeys();
+        for (const key of keys) {
+            const cached = await loadCacheFromRedis(key);
+            if (cached && cached.status === 'ready') {
+                userCaches.set(key, cached);
+                // Log iptv-org match rate from boot-loaded cache
+                let iptvOrgMatchCount = 0;
+                for (const [, channel] of cached.channelMap.entries()) {
+                    if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
+                }
+                console.log(`[Boot] Pre-warmed config=${key.substring(0,12)}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
+            }
+        }
+        console.log(`[Boot] Pre-warmed ${keys.length} config(s) from Redis.`);
+    })();
+
+    app.listen(PORT, () => console.log(`IPTVo Premium Backend operational on port ${PORT}`));
+})();
