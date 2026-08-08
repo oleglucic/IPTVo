@@ -183,13 +183,12 @@ app.get('/health/detailed', async (req, res) => {
         };
     }
 
-    // OpenRouter check
-    if (process.env.OPENROUTER_API_KEY || configObj?.openrouterKey) {
+    // OpenRouter check (server env var only - per-config key removed)
+    if (process.env.OPENROUTER_API_KEY) {
         try {
             const axios = require('axios');
-            const key = configObj?.openrouterKey || process.env.OPENROUTER_API_KEY;
             await axios.post('https://openrouter.ai/api/v1/auth/key', {}, {
-                headers: { Authorization: `Bearer ${key}` },
+                headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
                 timeout: 3000
             });
             checks.openrouter = { status: 'ok' };

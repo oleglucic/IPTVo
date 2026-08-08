@@ -544,9 +544,9 @@
                 <label class="switch"><input type="checkbox" id="enableAi" checked><span class="slider"></span></label>
             </div>
 
-            <div class="input-wrapper" id="openrouterField">
-                <label for="openrouterKey">OpenRouter API Key</label>
-                <input type="password" id="openrouterKey" placeholder="sk-or-v1-... (optional, can use server default)" autocomplete="off">
+            <div class="input-wrapper required" id="openrouterField">
+                <label for="openrouterKey">OpenRouter API Key <span class="required-mark">*</span></label>
+                <input type="password" id="openrouterKey" placeholder="sk-or-v1-... (required if AI enabled)" autocomplete="off" required>
                 <span class="input-hint">Get a free key at <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--color-primary)">openrouter.ai/keys</a></span>
             </div>
         </div>
@@ -823,6 +823,12 @@
         const xtreamUrl = document.getElementById('xtreamUrl').value.trim();
         const username = document.getElementById('username').value.trim();
         const password = document.getElementById('password').value.trim();
+
+        // Validation: OpenRouter key required if AI is enabled
+        if (enableAi && !openrouterKey) {
+            showToast('OpenRouter API Key is required when AI Curation is enabled', 'error');
+            return;
+        }
 
         const configObj = {
             type,

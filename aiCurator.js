@@ -7,9 +7,9 @@ const globalAiCache = new Map();
 
 /**
  * Asks OpenRouter AI to resolve messy channel strings into a unified canonical ID format.
+ * @param {string} apiKey - OpenRouter API key (mandatory if AI enabled)
  */
-async function processAiBatch(batchItems) {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+async function processAiBatch(batchItems, apiKey) {
     if (!apiKey) return {};
 
     // batchItems: [{ name, scope }] — scope is parser-computed (from group-title), AI must NOT invent it
@@ -61,9 +61,11 @@ Input: ${JSON.stringify(batchItems)}`;
 /**
  * Background worker that processes unmapped or highly duplicated strings
  * @param {Array<{rawName: string, baseCleanName: string, cId: string}>} dirtyChannels
+ * @param {string} configKey
+ * @param {string} openrouterKey - Mandatory OpenRouter API key from user config
  */
-async function startAiQueue(dirtyChannels, configKey) {
-    if (!process.env.OPENROUTER_API_KEY || !dirtyChannels || dirtyChannels.length === 0) return;
+async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
+    if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
 
     console.log(`[AI Curator] Background queue triggered for ${dirtyChannels.length} stream evaluations...`);
 
@@ -133,7 +135,7 @@ async function startAiQueue(dirtyChannels, configKey) {
 
     for (let i = 0; i < uniqueToProcess.length; i += 100) {
         const batch = uniqueToProcess.slice(i, i + 100);
-        const aiResults = await processAiBatch(batch);
+        const aiResults = await processAiBatch(batch, openrouterKey);
             if (aiResults.__rateLimited) {
                 console.log(`[AI Curator] Stopping early due to rate limit. Processed ${i} of ${uniqueToProcess.length} channels this cycle.`);
                 break;
