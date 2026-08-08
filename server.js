@@ -7,6 +7,7 @@ const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE } = require('./ip
 const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
+const { initSchema } = require('./dbInit');
 
 const app = express();
 app.use(cors());
@@ -508,9 +509,14 @@ app.get('/:config/poster/:id.png', async (req, res) => {
     }
 });
 
+const { initSchema } = require('./dbInit');
 const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
 const { backgroundLogoRefresh } = require('./iptvParser');
 const PORT = process.env.PORT || 3000;
+
+// Initialize database schema (creates tables if missing)
+await initSchema();
+
 startIptvOrgRefresh();
 
 // Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
