@@ -508,7 +508,6 @@ app.get('/:config/poster/:id.png', async (req, res) => {
     }
 });
 
-const { initSchema } = require('./dbInit');
 const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
 const { backgroundLogoRefresh } = require('./iptvParser');
 const PORT = process.env.PORT || 3000;
