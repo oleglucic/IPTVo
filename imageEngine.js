@@ -159,12 +159,18 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
     if (hasRedis) {
         const redisBuffer = await loadLogoBuffer(logoUrl);
         if (redisBuffer) {
-            sourceLog.push('redis');
-            setLogoCache(logoUrl, redisBuffer); // promote to memory cache
-            try {
-                return await generatePosterFromBuffer(redisBuffer, cachePath, sourceLog);
-            } catch (sharpErr) {
-                console.error(`[imageEngine] Sharp processing failed for cId=${cId} (Redis logo): ${sharpErr.message}`);
+            // Skip SVG placeholders that may have been cached - Sharp can't process them for background blur
+            const isSvg = redisBuffer.length > 0 && redisBuffer.subarray(0, 5).toString() === '<svg ';
+            if (isSvg) {
+                console.log(`[imageEngine] Skipping SVG placeholder in Redis for ${cId}`);
+            } else {
+                sourceLog.push('redis');
+                setLogoCache(logoUrl, redisBuffer); // promote to memory cache
+                try {
+                    return await generatePosterFromBuffer(redisBuffer, cachePath, sourceLog);
+                } catch (sharpErr) {
+                    console.error(`[imageEngine] Sharp processing failed for cId=${cId} (Redis logo): ${sharpErr.message}`);
+                }
             }
         }
     }
