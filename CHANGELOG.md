@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automated release workflow with semantic versioning
 - Multi-arch Docker builds (amd64/arm64) pushed to Docker Hub and GHCR
 - GitHub Releases with changelog, Docker pull commands, addon URLs
-- Auto-patch version bump on main branch pushes
 
 ### Changed
 - `OPENROUTER_API_KEY` server env var deprecated → per-user config in dashboard

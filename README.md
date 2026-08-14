@@ -21,7 +21,7 @@ A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream 
 - **Postgres persistence** — AI override mappings, EPG history, logo URL tracking, user accounts (auto-initialized on startup)
 - **Apple HIG / Liquid Glass dashboard** — Tabbed mobile-first UI (Provider, Matching & AI, Filters, Advanced, Sync)
 - **Docker-ready** — Multi-stage build, multi-arch (amd64/arm64), Portainer deployment
-- **Automated releases** — Semantic versioning, standard-version, Docker Hub + GHCR publishing, GitHub Releases
+- **Automated releases** — Semantic versioning via manual tags, multi-arch Docker builds, Docker Hub + GHCR publishing, GitHub Releases
 
 ## Quick Start
 
@@ -635,27 +635,32 @@ IPTVo uses **semantic versioning** with automated releases via GitHub Actions.
 
 ### Release Workflow (`.github/workflows/release.yml`)
 
-Triggers on push to `main` or tag `v*`:
+Triggers on push to tag `v*`:
 
-1. **Determine version** — from git tag or `package.json`
+1. **Determine version** — from git tag
 2. **Multi-arch Docker build** — linux/amd64, linux/arm64 via Buildx
 3. **Push to registries** — Docker Hub (`itsoleglucic/iptvo`) + GHCR (`ghcr.io/oleglucic/iptvo`)
 4. **Generate changelog** — from git log since last tag
 5. **Create GitHub Release** — with changelog, Docker pull commands, addon URLs
-6. **Auto-bump patch** — on main branch push (non-tag), commits `chore: bump version`
 
 ### Manual Release
 
+Version tags are created manually — no auto-bump on main branch pushes.
+
 ```bash
-# Standard release (analyzes commits, bumps version, creates tag, generates changelog)
-npm run release
+# Create and push a version tag (triggers release workflow)
+git tag v1.2.3
+git push origin v1.2.3
 
-# Or manual version bump
-npm run version:patch  # npm version patch --no-git-tag-version
-npm run version:minor  # npm version minor --no-git-tag-version
-npm run version:major  # npm version major --no-git-tag-version
+# Or with message
+git tag -a v1.2.3 -m "Release v1.2.3"
+git push origin v1.2.3
+```
 
-# Preview changelog
+The release workflow only runs on version tags (`v*`). Push to `main` no longer triggers releases.
+
+To preview what the changelog would contain:
+```bash
 npm run changelog
 ```
 
