@@ -73,7 +73,7 @@ services:
     restart: unless-stopped
 
   iptvo:
-    image: oleglucic/iptvo:latest
+    image: itsoleglucic/iptvo:latest
     ports:
       - "3000:3000"
     environment:
@@ -130,7 +130,7 @@ If running Postgres/Redis on separate hosts:
 version: '3.8'
 services:
   iptvo:
-    image: oleglucic/iptvo:latest
+    image: itsoleglucic/iptvo:latest
     ports:
       - "3000:3000"
     environment:
@@ -163,7 +163,7 @@ node server.js
 
 ### Production (Portainer)
 
-#### Using Pre-built Docker Image (`oleglucic/iptvo:latest`)
+#### Using Pre-built Docker Image (`itsoleglucic/iptvo:latest`)
 
 The pre-built image **requires external Postgres & Redis** — it does not include them.
 
@@ -188,7 +188,7 @@ In Portainer → Stacks → Add stack → Web editor:
 version: '3.8'
 services:
   iptvo:
-    image: oleglucic/iptvo:latest
+    image: itsoleglucic/iptvo:latest
     ports:
       - "3000:3000"
     environment:
@@ -232,7 +232,7 @@ services:
     restart: unless-stopped
 
   iptvo:
-    image: oleglucic/iptvo:latest
+    image: itsoleglucic/iptvo:latest
     ports:
       - "3000:3000"
     environment:
@@ -563,8 +563,8 @@ Pre-built multi-arch images available on Docker Hub and GitHub Container Registr
 
 ```bash
 # Docker Hub
-docker pull oleglucic/iptvo:latest
-docker pull oleglucic/iptvo:v1.2.3
+docker pull itsoleglucic/iptvo:latest
+docker pull itsoleglucic/iptvo:v1.2.3
 
 # GitHub Container Registry
 docker pull ghcr.io/oleglucic/iptvo:latest
@@ -639,7 +639,7 @@ Triggers on push to `main` or tag `v*`:
 
 1. **Determine version** — from git tag or `package.json`
 2. **Multi-arch Docker build** — linux/amd64, linux/arm64 via Buildx
-3. **Push to registries** — Docker Hub (`oleglucic/iptvo`) + GHCR (`ghcr.io/oleglucic/iptvo`)
+3. **Push to registries** — Docker Hub (`itsoleglucic/iptvo`) + GHCR (`ghcr.io/oleglucic/iptvo`)
 4. **Generate changelog** — from git log since last tag
 5. **Create GitHub Release** — with changelog, Docker pull commands, addon URLs
 6. **Auto-bump patch** — on main branch push (non-tag), commits `chore: bump version`

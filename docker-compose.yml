@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
 
   iptvo:
-    image: oleglucic/iptvo:latest
+    image: itsoleglucic/iptvo:latest
     # For building from source, comment out 'image' and uncomment 'build:'
     # build:
     #   context: .

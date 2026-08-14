@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OPENROUTER_API_KEY` server env var deprecated → per-user config in dashboard
 - Logo proxy URL now configurable via dashboard, served via `GET /api/logo-proxy-url`
 - iptv-org matching uses country scope from group-title (previously global fallback only)
-- Docker image renamed from `itsoleglucic/iptvo` to `oleglucic/iptvo` on Docker Hub
+- Docker image namespace confirmed as `itsoleglucic/iptvo` on Docker Hub
 - Dashboard completely redesigned from single-page form to tabbed Apple HIG interface
 - Sticky bottom action bar on mobile (safe-area aware)
 - Sensitive data redaction in all auth responses (passwords, keys, URLs with auth)
