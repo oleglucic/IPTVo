@@ -10,6 +10,18 @@ async function initSchema() {
     }
 
     const statements = [
+        // users (encrypted config storage with password auth)
+        `CREATE TABLE IF NOT EXISTS users (
+            user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            username VARCHAR(100) UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            encrypted_config TEXT, -- AES-GCM encrypted config JSON
+            config_iv TEXT,        -- IV for AES-GCM (base64)
+            config_salt TEXT,      -- Salt for key derivation (base64)
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )`,
+
         // ai_overrides (created in earlier versions)
         `CREATE TABLE IF NOT EXISTS ai_overrides (
             raw_name VARCHAR(500) PRIMARY KEY,
@@ -44,7 +56,8 @@ async function initSchema() {
         `CREATE INDEX IF NOT EXISTS idx_ai_overrides_usage ON ai_overrides(usage_count DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_epg_history_channel ON epg_history(channel_key)`,
         `CREATE INDEX IF NOT EXISTS idx_epg_history_time ON epg_history(start_time)`,
-        `CREATE INDEX IF NOT EXISTS idx_logo_urls_source ON logo_urls(source)`
+        `CREATE INDEX IF NOT EXISTS idx_logo_urls_source ON logo_urls(source)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`
     ];
 
     for (const sql of statements) {

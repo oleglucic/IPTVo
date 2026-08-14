@@ -8,10 +8,22 @@ const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
+const { hashPassword, verifyPassword, generateSessionToken, decryptConfig } = require('./cryptoUtils');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Session store (in-memory, for simplicity - can be moved to Redis later)
+const sessions = new Map(); // token -> { userId, expiresAt, config }
+
+// Session cleanup (every hour)
+setInterval(() => {
+    const now = Date.now();
+    for (const [token, session] of sessions.entries()) {
+        if (session.expiresAt < now) sessions.delete(token);
+    }
+}, 60 * 60 * 1000);
 
 // Serve dashboard
 app.get('/', (req, res) => {
@@ -72,6 +84,20 @@ function extractConfig(req) {
 
 // Ensure cache is populated before serving data routes
 async function ensureCache(config, configObj) {
+    // If configObj contains _userId, resolve the full config from database
+    if (configObj && configObj._userId) {
+        const user = await require('./db').getUserById(configObj._userId);
+        if (user && user.encrypted_config && user.config_iv && user.config_salt) {
+            const { decryptConfig } = require('./cryptoUtils');
+            const resolvedConfig = await decryptConfig(user.encrypted_config, user.config_iv, user.config_salt, process.env.ENCRYPTION_KEY);
+            if (resolvedConfig) {
+                config = configObj._userId; // Use userId as cache key
+                configObj = resolvedConfig;
+                console.log(`[ensureCache] Resolved config for user: ${configObj._userId}`);
+            }
+        }
+    }
+
     console.log(`[ensureCache] called for config=${config ? config.substring(0,12) : 'null'}... configObj=${!!configObj}`);
     if (!configObj) { console.log('[ensureCache] no configObj, returning null'); return null; }
     let cached = userCaches.get(config);
@@ -229,49 +255,288 @@ app.get('/health/detailed', async (req, res) => {
     res.json({ overall: overallStatus, checks });
 });
 
-// Internal test endpoint for validating a config
-app.post('/api/test-config', async (req, res) => {
-    const configObj = req.body;
-    if (!configObj || !configObj.type) {
-        return res.status(400).json({ error: 'Missing config type (m3u or xtream)' });
-    }
+// ============ USER AUTHENTICATION ENDPOINTS ============
 
-    const testKey = 'test_' + Date.now();
-    const testConfigObj = { ...configObj };
-    testConfigObj._test = true;
-
+// Register new user
+app.post('/api/auth/register', async (req, res) => {
     try {
-        console.log(`[TestConfig] Starting test for ${configObj.type}...`);
-        const result = await require('./iptvParser').streamFetchIPTV(testKey, testConfigObj);
-        const cached = require('./iptvParser').userCaches.get(testKey);
-
-        // Clean up test cache
-        require('./iptvParser').userCaches.delete(testKey);
-
-        if (!cached || cached.status !== 'ready') {
-            return res.status(500).json({
-                success: false,
-                error: cached?.message || 'Parsing did not complete',
-                status: cached?.status
-            });
+        const { username, password, config } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password are required' });
+        }
+        if (username.length < 3 || username.length > 50) {
+            return res.status(400).json({ error: 'Username must be 3-50 characters' });
+        }
+        if (password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
         }
 
-        res.json({
-            success: true,
-            channels: cached.channelMap.size,
-            groups: cached.uniqueGroups.size,
-            groupNames: Array.from(cached.uniqueGroups).sort(),
-            parseTimeMs: Date.now() - (cached.lastUpdated || Date.now()),
-            epgChannels: Object.keys(cached.epgData || {}).length
+        const { createUser } = require('./db');
+        const existing = await require('./db').getUserByUsername(username);
+        if (existing) {
+            return res.status(409).json({ error: 'Username already exists' });
+        }
+
+        const passwordHash = await hashPassword(password);
+        const user = await createUser(username, passwordHash, config || {}, process.env.ENCRYPTION_KEY);
+        if (!user) {
+            return res.status(500).json({ error: 'Failed to create user' });
+        }
+
+        const token = generateSessionToken();
+        sessions.set(token, {
+            userId: user.user_id,
+            config: config || {},
+            expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days
         });
+
+        console.log(`[Auth] User registered: ${username} (${user.user_id})`);
+        res.json({ success: true, userId: user.user_id, token });
     } catch (e) {
-        require('./iptvParser').userCaches.delete(testKey);
-        console.error('[TestConfig] Failed:', e.message);
-        res.status(500).json({ success: false, error: e.message });
+        console.error('[Auth] Register error:', e.message);
+        res.status(500).json({ error: 'Registration failed' });
     }
 });
 
-// Stremio Addon SDK Builder
+// Login user
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password are required' });
+        }
+
+        const user = await require('./db').getUserByUsername(username);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        const valid = await verifyPassword(password, user.password_hash);
+        if (!valid) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Decrypt user's stored config
+        let config = {};
+        if (user.encrypted_config && user.config_iv && user.config_salt) {
+            config = await decryptConfig(user.encrypted_config, user.config_iv, user.config_salt, process.env.ENCRYPTION_KEY) || {};
+        }
+
+        const token = generateSessionToken();
+        sessions.set(token, {
+            userId: user.user_id,
+            config,
+            expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
+        });
+
+        console.log(`[Auth] User logged in: ${username} (${user.user_id})`);
+        // Redact sensitive config fields in response
+        const safeConfig = { ...config };
+        if (safeConfig.password) safeConfig.password = '[REDACTED]';
+        if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
+        if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/.*@/, '://[REDACTED]@');
+        res.json({ success: true, userId: user.user_id, token, config: safeConfig });
+    } catch (e) {
+        console.error('[Auth] Login error:', e.message);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// Validate session
+app.get('/api/auth/validate', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ valid: false });
+    }
+    const token = authHeader.slice(7);
+    const session = sessions.get(token);
+    if (!session || session.expiresAt < Date.now()) {
+        if (session) sessions.delete(token);
+        return res.status(401).json({ valid: false });
+    }
+    const safeConfig = { ...session.config };
+    if (safeConfig.password) safeConfig.password = '[REDACTED]';
+    if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
+    if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/.*@/, '://[REDACTED]@');
+    res.json({ valid: true, userId: session.userId, config: safeConfig });
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        sessions.delete(authHeader.slice(7));
+    }
+    res.json({ success: true });
+});
+
+// Get logo proxy URL (for dashboard)
+app.get('/api/logo-proxy-url', (req, res) => {
+    const url = process.env.LOGO_PROXY_URL;
+    if (url) {
+        res.json({ url });
+    } else {
+        res.status(404).json({ error: 'Logo proxy URL not configured' });
+    }
+});
+
+// Update user config (encrypted)
+app.put('/api/auth/config', async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const token = authHeader.slice(7);
+        const session = sessions.get(token);
+        if (!session || session.expiresAt < Date.now()) {
+            if (session) sessions.delete(token);
+            return res.status(401).json({ error: 'Session expired' });
+        }
+
+        const { config } = req.body;
+        if (!config || typeof config !== 'object') {
+            return res.status(400).json({ error: 'Config object required' });
+        }
+
+        const { updateUserConfig } = require('./db');
+        const success = await updateUserConfig(session.userId, config, process.env.ENCRYPTION_KEY);
+        if (!success) {
+            return res.status(500).json({ error: 'Failed to update config' });
+        }
+
+        // Update session config
+        session.config = config;
+        sessions.set(token, session);
+
+        console.log(`[Auth] Config updated for user: ${session.userId}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[Auth] Config update error:', e.message);
+        res.status(500).json({ error: 'Config update failed' });
+    }
+});
+
+// Change password
+app.put('/api/auth/password', async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const token = authHeader.slice(7);
+        const session = sessions.get(token);
+        if (!session || session.expiresAt < Date.now()) {
+            if (session) sessions.delete(token);
+            return res.status(401).json({ error: 'Session expired' });
+        }
+
+        const { currentPassword, newPassword } = req.body;
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ error: 'Current and new password required' });
+        }
+        if (newPassword.length < 8) {
+            return res.status(400).json({ error: 'New password must be at least 8 characters' });
+        }
+
+        const { getUserById } = require('./db');
+        const { hashPassword } = require('./cryptoUtils');
+
+        const user = await getUserById(session.userId);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const valid = await verifyPassword(currentPassword, user.password_hash);
+        if (!valid) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+        }
+
+        const newHash = await hashPassword(newPassword);
+        const pool = require('./db').pool;
+        if (pool) {
+            await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE user_id = $2', [newHash, session.userId]);
+        }
+
+        console.log(`[Auth] Password changed for user: ${session.userId}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[Auth] Password change error:', e.message);
+        res.status(500).json({ error: 'Password change failed' });
+    }
+});
+
+// Delete account
+app.delete('/api/auth/account', async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const token = authHeader.slice(7);
+        const session = sessions.get(token);
+        if (!session || session.expiresAt < Date.now()) {
+            if (session) sessions.delete(token);
+            return res.status(401).json({ error: 'Session expired' });
+        }
+
+        const { password } = req.body;
+        if (!password) {
+            return res.status(400).json({ error: 'Password required for confirmation' });
+        }
+
+        const { getUserById } = require('./db');
+        const user = await getUserById(session.userId);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const valid = await verifyPassword(password, user.password_hash);
+        if (!valid) {
+            return res.status(401).json({ error: 'Password is incorrect' });
+        }
+
+        const pool = require('./db').pool;
+        if (pool) {
+            await pool.query('DELETE FROM users WHERE user_id = $1', [session.userId]);
+        }
+        sessions.delete(token);
+
+        console.log(`[Auth] Account deleted for user: ${session.userId}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[Auth] Account deletion error:', e.message);
+        res.status(500).json({ error: 'Account deletion failed' });
+    }
+});
+
+// ============ STREMIO ADDON ENDPOINTS ============
+
+// Updated extractConfig to support user UUID
+function extractConfig(req) {
+    try {
+        // First check for user UUID in Authorization header or query param
+        const userId = req.params.userId || req.query.userId || req.headers['x-user-id'];
+        if (userId) {
+            // Will be resolved async in ensureCache
+            return { _userId: userId };
+        }
+
+        // Fallback to base64 config (legacy support)
+        let rawB64 = (req.params.config || req.query.config || '');
+        if (rawB64) {
+            rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
+            while (rawB64.length % 4 !== 0) rawB64 += '=';
+            const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
+            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
+            return JSON.parse(decoded);
+        }
+        return null;
+    } catch (e) {
+        console.error('[extractConfig] Error:', e.message);
+        return null;
+    }
+}
 const builder = new addonBuilder({
     id: 'iptvo.oleglucic.com',
     version: '0.0.1',
@@ -417,13 +682,120 @@ builder.defineStreamHandler(async ({ type, id, extra, config }) => {
 // Get the addon interface and serve it via express
 const addonInterface = builder.getInterface();
 
-// Mount the addon routes on express
-app.get('/:config/manifest.json', (req, res) => {
-    // The manifest is the same for all configs, so just return it
+// Helper to extract configKey and configObj from request
+async function getConfigFromReq(req) {
+    // Check for user UUID first (new system)
+    const userId = req.params.userId;
+    if (userId) {
+        const configObj = extractConfig(req);
+        return { configKey: userId, configObj };
+    }
+
+    // Fallback to legacy base64 config
+    const configKey = req.params.config;
+    const configObj = extractConfig(req);
+    return { configKey, configObj };
+}
+
+// Mount the addon routes on express - NEW USER SYSTEM ROUTES
+app.get('/:userId/manifest.json', (req, res) => {
     res.json(addonInterface.manifest);
 });
 
-// Catalog routes - using the unified get() method from stremio-addon-sdk v1.6+
+app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
+    try {
+        const { configKey, configObj } = await getConfigFromReq(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const resource = 'catalog';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = req.params.extra || {};
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
+        res.json(result);
+    } catch (err) {
+        next(err);
+    }
+});
+
+app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
+    try {
+        const { configKey, configObj } = await getConfigFromReq(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const resource = 'catalog';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = req.params.extra || {};
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
+        res.json(result);
+    } catch (err) {
+        next(err);
+    }
+});
+
+app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
+    try {
+        const { configKey, configObj } = await getConfigFromReq(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const resource = 'meta';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = {};
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
+        res.json(result);
+    } catch (err) {
+        next(err);
+    }
+});
+
+app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
+    try {
+        const { configKey, configObj } = await getConfigFromReq(req);
+        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const resource = 'stream';
+        const type = req.params.type;
+        const id = req.params.id;
+        const extra = {};
+        const config = { configKey, configObj, rootUrl };
+        const result = await addonInterface.get(resource, type, id, extra, config);
+        res.json(result);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// Poster route - user system
+app.get('/:userId/poster/:id.png', async (req, res) => {
+    const { configKey, configObj } = await getConfigFromReq(req);
+    const id = decodeURIComponent(req.params.id);
+
+    await ensureCache(configKey, configObj);
+    const ud = userCaches.get(configKey);
+    let logoUrl = null;
+    let channelName = "Live TV";
+
+    if (ud && ud.channelMap.has(id)) {
+        const channel = ud.channelMap.get(id);
+        logoUrl = channel.meta.logo;
+        channelName = channel.meta.name;
+    }
+
+    try {
+        const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
+        res.sendFile(cachedPosterPath);
+    } catch (error) {
+        console.error("[Poster Generation Error]", error.message);
+        res.status(500).send("Error compiling image layer context");
+    }
+});
+
+// Legacy routes for backward compatibility (base64 config)
+app.get('/:config/manifest.json', (req, res) => {
+    res.json(addonInterface.manifest);
+});
+
 app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
@@ -458,7 +830,6 @@ app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
     }
 });
 
-// Meta route
 app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
@@ -476,7 +847,6 @@ app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
     }
 });
 
-// Stream route
 app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
@@ -494,7 +864,6 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
     }
 });
 
-// Fallback Canvas Image Generator Route
 app.get('/:config/poster/:id.png', async (req, res) => {
     const config = req.params.config;
     const id = decodeURIComponent(req.params.id);

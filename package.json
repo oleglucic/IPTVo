@@ -4,7 +4,13 @@
   "description": "IPTVo - Stremio/Nuvio IPTV addon with intelligent channel deduplication, iptv-org integration, AI curation, and automatic poster generation",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "release": "standard-version && git push --follow-tags origin main",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "changelog": "standard-version --release-as minor --dry-run"
   },
   "keywords": [
     "stremio",
@@ -12,7 +18,11 @@
     "iptv",
     "addon",
     "tv",
-    "live"
+    "live",
+    "cloudflare",
+    "redis",
+    "postgresql",
+    "ai-curation"
   ],
   "author": "Oleg Lučić",
   "license": "MIT",
@@ -27,6 +37,9 @@
     "sax": "^1.4.1",
     "sharp": "^0.35.3",
     "stremio-addon-sdk": "^1.6.10"
+  },
+  "devDependencies": {
+    "standard-version": "^9.5.0"
   },
   "engines": {
     "node": ">=18.0.0"

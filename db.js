@@ -190,6 +190,99 @@ async function getEpgHistory(channelKey, hoursBack = 48) {
     }
 }
 
+// -- User Management (Encrypted Config Storage) -------------------------------
+
+/**
+ * Create a new user with encrypted config
+ * @param {string} username - Username
+ * @param {string} passwordHash - Bcrypt password hash
+ * @param {object} config - Config object to encrypt
+ * @param {string} encryptionKey - Encryption key (from env)
+ * @returns {Promise<{user_id: string}|null>}
+ */
+async function createUser(username, passwordHash, config, encryptionKey) {
+    if (!pool) return null;
+    try {
+        const { encryptConfig } = require('./cryptoUtils');
+        const { encryptedConfig, iv, salt } = await encryptConfig(config, encryptionKey);
+
+        const { rows } = await pool.query(
+            `INSERT INTO users (username, password_hash, encrypted_config, config_iv, config_salt)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING user_id`,
+            [username, passwordHash, encryptedConfig, iv, salt]
+        );
+        return rows[0] || null;
+    } catch (e) {
+        console.error('[DB Error] createUser:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Get user by username
+ * @param {string} username - Username
+ * @returns {Promise<object|null>}
+ */
+async function getUserByUsername(username) {
+    if (!pool) return null;
+    try {
+        const { rows } = await pool.query(
+            'SELECT user_id, username, password_hash, encrypted_config, config_iv, config_salt, created_at, updated_at FROM users WHERE username = $1',
+            [username]
+        );
+        return rows[0] || null;
+    } catch (e) {
+        console.error('[DB Error] getUserByUsername:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Get user by user_id
+ * @param {string} userId - User UUID
+ * @returns {Promise<object|null>}
+ */
+async function getUserById(userId) {
+    if (!pool) return null;
+    try {
+        const { rows } = await pool.query(
+            'SELECT user_id, username, password_hash, encrypted_config, config_iv, config_salt, created_at, updated_at FROM users WHERE user_id = $1',
+            [userId]
+        );
+        return rows[0] || null;
+    } catch (e) {
+        console.error('[DB Error] getUserById:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Update user's encrypted config
+ * @param {string} userId - User UUID
+ * @param {object} config - Config object to encrypt
+ * @param {string} encryptionKey - Encryption key (from env)
+ * @returns {Promise<boolean>}
+ */
+async function updateUserConfig(userId, config, encryptionKey) {
+    if (!pool) return false;
+    try {
+        const { encryptConfig } = require('./cryptoUtils');
+        const { encryptedConfig, iv, salt } = await encryptConfig(config, encryptionKey);
+
+        await pool.query(
+            `UPDATE users
+             SET encrypted_config = $1, config_iv = $2, config_salt = $3, updated_at = now()
+             WHERE user_id = $4`,
+            [encryptedConfig, iv, salt, userId]
+        );
+        return true;
+    } catch (e) {
+        console.error('[DB Error] updateUserConfig:', e.message);
+        return false;
+    }
+}
+
 // -- Logo URL Tracking ----------------------------------------------------------
 /**
  * Persistent logo URL storage - survives Redis restarts, no expiry.
@@ -247,6 +340,11 @@ module.exports = {
     // Logo URL tracking (persistent, no expiry)
     getLogoUrl,
     setLogoUrl,
+    // User management (encrypted config storage)
+    createUser,
+    getUserByUsername,
+    getUserById,
+    updateUserConfig,
     // Legacy aliases
     getMapping,
     saveMapping,

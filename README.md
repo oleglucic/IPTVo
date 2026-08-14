@@ -1,21 +1,27 @@
 # IPTVo — Stremio/Nuvio IPTV Addon
 
-A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream Codes providers. Built with Node.js/Express, featuring intelligent channel deduplication, iptv-org reference data integration, AI-powered curation, Cloudflare Worker logo proxy, and automatic poster generation.
+A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream Codes providers. Built with Node.js/Express, featuring intelligent channel deduplication, iptv-org reference data integration, AI-powered curation, Cloudflare Worker logo proxy, automatic poster generation, **user authentication with encrypted configs**, and **automated releases**.
 
 ## Features
 
 - **Multi-format support** — M3U playlists and Xtream Codes API
-- **Intelligent channel deduplication** — Canonical channel IDs via iptv-org reference data (87k+ channels, 39k+ logos, 250 countries)
-- **AI curation fallback** — OpenRouter-powered deduplication for channels not in iptv-org (requires user-provided API key)
+- **User authentication system** — Register/login, session tokens, PBKDF2-SHA256 (100k iterations), AES-256-GCM encrypted configs with per-user salt/IV
+- **Dual routing** — New user system (`/:userId/...`) and legacy base64 config (`/:config/...`)
+- **Intelligent channel deduplication** — Canonical channel IDs via iptv-org reference data (47k+ channels, logos, 250+ countries)
+- **Country code fallback** — Extracts country from group-title for improved iptv-org match rates
+- **AI curation fallback** — OpenRouter-powered deduplication for unmatched channels (batched 100/batch, requires per-user API key)
 - **Authoritative metadata** — Canonical names, logos, and country scopes from iptv-org (always used when matched)
 - **Cloudflare Worker logo proxy** — Edge caching, rate limit handling (429 backoff), 403/404 fallback chain, dead URL tracking (KV 24h TTL)
+- **SVG logo support** — Inline SVG placeholders served directly from Worker, cached at edge
 - **Redis logo cache** — 7-day TTL logo buffers survive restarts (~2GB for 40k logos)
 - **Automatic poster generation** — Sharp-powered composites with blur/halo backgrounds, cached to disk
 - **Catch-up TV support** — Extracts catch-up metadata from M3U/Xtream, surfaces as stream badges
 - **EPG integration** — XMLTV parsing with streaming SAX parser for memory efficiency
 - **Redis caching** — Playlist parse cache with 1hr TTL, proactive refresh every 15min
-- **Postgres persistence** — AI override mappings, EPG history, logo URL tracking (auto-initialized on startup)
-- **Docker-ready** — Multi-stage build, Portainer deployment
+- **Postgres persistence** — AI override mappings, EPG history, logo URL tracking, user accounts (auto-initialized on startup)
+- **Apple HIG / Liquid Glass dashboard** — Tabbed mobile-first UI (Provider, Matching & AI, Filters, Advanced, Sync)
+- **Docker-ready** — Multi-stage build, multi-arch (amd64/arm64), Portainer deployment
+- **Automated releases** — Semantic versioning, standard-version, Docker Hub + GHCR publishing, GitHub Releases
 
 ## Quick Start
 
@@ -23,10 +29,11 @@ A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream 
 
 - Node.js 20+ (for local development)
 - Docker & Docker Compose (for production via Portainer)
-- Postgres database (for AI override persistence, EPG history, logo URL tracking)
+- Postgres database (for AI override persistence, EPG history, logo URL tracking, user accounts)
 - Redis instance (for cache persistence, logo buffers)
-- OpenRouter API key (required if AI Curation enabled in config)
+- OpenRouter API key (required if AI Curation enabled in config — **per-user, not server env**)
 - Cloudflare account (for Worker logo proxy — free tier sufficient)
+- `ENCRYPTION_KEY` — 32+ character secret for AES-GCM config encryption
 
 ### Local Development
 
@@ -35,8 +42,10 @@ A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream 
 npm install
 
 # Set environment variables
+export ENCRYPTION_KEY="your-32-char-secret-key-here"
 export DATABASE_URL="postgresql://user:pass@host:5432/dbname"
 export REDIS_URL="redis://localhost:6379"
+export LOGO_PROXY_URL="https://your-worker.workers.dev/logo"
 
 # Start server
 node server.js
@@ -45,26 +54,30 @@ node server.js
 ### Production (Portainer)
 
 **Option 1: Use pre-built image (recommended)**
-1. In Portainer, create a stack with:
+
+In Portainer, create a stack with:
+
 ```yaml
 version: '3.8'
 services:
   iptvo:
-    image: itsoleglucic/iptvo:latest
+    image: oleglucic/iptvo:latest
     ports:
       - "3000:3000"
     environment:
+      - ENCRYPTION_KEY=your-32-char-secret-key-here
       - DATABASE_URL=postgresql://user:pass@host:5432/dbname
       - REDIS_URL=redis://host:6379
-      - LOGO_PROXY_URL=https://your-worker.workers.dev/logo  # Cloudflare Worker URL
+      - LOGO_PROXY_URL=https://your-worker.workers.dev/logo
     restart: unless-stopped
 ```
-2. Deploy
 
 **Option 2: Build from source**
+
 1. Push to your repository
 2. In Portainer, create a stack from `docker-compose.yml`
 3. Configure environment variables:
+   - `ENCRYPTION_KEY` — 32+ char secret for config encryption
    - `DATABASE_URL` — Postgres connection string
    - `REDIS_URL` — Redis connection string
    - `LOGO_PROXY_URL` — Cloudflare Worker logo proxy URL (e.g., `https://assets.yourdomain.com/logo`)
@@ -72,7 +85,7 @@ services:
 
 ## Cloudflare Worker Logo Proxy (Required for Production)
 
-The logo proxy eliminates rate limits, handles 403/404 fallbacks, and caches at Cloudflare's edge (30 days).
+The logo proxy eliminates rate limits, handles 403/404 fallbacks, caches at Cloudflare's edge (30 days), and serves SVG placeholders.
 
 ### One-time Setup
 
@@ -101,12 +114,170 @@ Set `LOGO_PROXY_URL=https://logo-proxy.<account>.workers.dev/logo` in backend en
 - **Fallback chain per channel**: iptv-org authoritative logo → playlist `tvg-logo`/`stream_icon` → generated SVG
 - **Rate limits**: Automatic 429 retry with exponential backoff
 - **Dead URLs**: Tracked in KV (24h TTL) to avoid retry storms
+- **SVG placeholders**: Served inline (no external fetch), cached 30 days at edge
 - **Caching**: Cloudflare CDN caches successful responses 30 days
 - **CORS**: `Access-Control-Allow-Origin: *` for Stremio compatibility
+- **Cold start optimization**: Pre-warms Redis logo buffer cache on startup
+
+## User Authentication System
+
+IPTVo includes a complete user authentication system with encrypted configuration storage, enabling multi-user deployments where each user gets their own addon URL.
+
+### Architecture
+
+```
+��─────────────────────────────────────────────────────────────────��
+│                        CLIENTS                                   │
+│  Stremio / Nuvio / Web Dashboard                                │
+��──────────────────────────��──────────────────────────────────────��
+                           │
+                           ��
+��─────────────────────────────────────────────────────────────────��
+│                      EXPRESS SERVER                              │
+│  /api/auth/*      →  User registration, login, session mgmt    │
+│  /:userId/*       →  Stremio addon endpoints (user system)     │
+│  /:config/*       →  Legacy base64 config endpoints            │
+│  /health*         →  Health checks (Docker)                    │
+│  /api/get-groups  →  Category discovery                        │
+��──────────────────────────��──────────────────────────────────────��
+                           │
+        ��──────────────────��──────────────────��
+        ��                  ��                  ��
+��───────────────��  ��───────────────��  ��───────────────��
+│  POSTGRES     │  │    REDIS      │  │  CLOUDFLARE   │
+│  (Primary)    │  │  (Cache)      │  │   WORKER      │
+│               │  │               │  │  (Logos)      │
+│ - users       │  │ - channelMap  │  │               │
+│ - ai_overrides│  │ - logo buffers│  │ - edge cache  │
+│ - epg_history │  │ - logo URLs   │  │ - rate limit  │
+│ - logo_urls   │  │               │  │ - fallback    │
+��───────────────��  └───────────────��  └───────────────��
+```
+
+### Auth Flow
+
+```
+Register:     POST /api/auth/register {username, password, config?} → {userId, token, config}
+Login:        POST /api/auth/login {username, password} → {userId, token, config}
+Validate:     GET  /api/auth/validate (Bearer token) → {valid, userId, config}
+Update Config: PUT /api/auth/config (Bearer token) {config} → {success}
+Change Pass:   PUT /api/auth/password (Bearer token) {current, new} → {success}
+Delete Acct:  DELETE /api/auth/account (Bearer token) → {success}
+Logo Proxy:   GET  /api/logo-proxy-url → {logoProxyUrl}
+```
+
+### Session Tokens
+
+- Generated via `crypto.randomBytes(32).toString('base64url')`
+- Stored in-memory Map with 30-day expiry
+- Header: `Authorization: Bearer <token>`
+- Config returned in auth responses (passwords/keys redacted)
+
+### Config Encryption
+
+- **Algorithm**: AES-256-GCM
+- **Key derivation**: PBKDF2-SHA256 (100k iterations) from `ENCRYPTION_KEY` + per-user 16-byte salt
+- **IV**: 12-byte random per encryption
+- **Storage**: `encrypted_config` (base64), `config_iv` (base64), `config_salt` (base64) in `users` table
+- **Per-user isolation**: Each user's config encrypted with unique salt
+
+### Database Schema (Auto-initialized)
+
+```sql
+-- Users table
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,                    -- UUID
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,            -- PBKDF2: iterations$salt$hash
+  encrypted_config TEXT,                  -- Base64 AES-GCM ciphertext
+  config_iv TEXT,                         -- Base64 IV
+  config_salt TEXT,                       -- Base64 salt
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- AI override mappings
+CREATE TABLE ai_overrides (
+  raw_name TEXT PRIMARY KEY,
+  canonical_id TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- EPG history for catch-up
+CREATE TABLE epg_history (
+  channel_key TEXT NOT NULL,
+  title TEXT,
+  description TEXT,
+  start_time BIGINT NOT NULL,
+  stop_time BIGINT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (channel_key, start_time)
+);
+
+-- Persistent logo URL tracking
+CREATE TABLE logo_urls (
+  channel_id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  source TEXT DEFAULT 'unknown',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+## Stremio Addon URLs
+
+### New: User System (Recommended)
+
+Each user gets a unique addon URL based on their `userId`:
+
+```
+Manifest:     /:userId/manifest.json
+Catalog:      /:userId/catalog/tv/iptvo_live.json
+Meta:         /:userId/meta/tv/:id.json
+Stream:       /:userId/stream/tv/:id.json
+Poster:       /:userId/poster/:id.png
+```
+
+**Installation**: In Stremio → Addons → Community → Add addon → `http://your-host/<userId>/manifest.json`
+
+### Legacy: Base64 Config (Backwards Compatible)
+
+```
+Manifest:     /:config/manifest.json
+Catalog:      /:config/catalog/tv/iptvo_live.json
+Meta:         /:config/meta/tv/:id.json
+Stream:       /:config/stream/tv/:id.json
+Poster:       /:config/poster/:id.png
+```
+
+Where `:config` is the base64-encoded JSON config. The dashboard at `/` generates this.
+
+## Dashboard
+
+The web dashboard at `/` provides an **Apple HIG / Liquid Glass** (iOS 26/macOS 26) design:
+
+- **Tabbed navigation**: Provider | Matching & AI | Filters | Advanced | Sync
+- **Mobile-first responsive**: Segmented control (<430px), tab bar (430-768px), sidebar (>768px)
+- **Glassmorphism**: `backdrop-filter: saturate(180%) blur(20px)` with semantic color tokens
+- **Authentication**: Login/register in header, user profile in Sync tab
+- **Config management**: Save to DB, import/export JSON, change password, delete account
+- **Group management**: Searchable list with include/exclude toggles, channel counts
+- **Sticky action bar**: Save & Install, Import, Export, Status (safe-area aware)
+
+### Tabs Detail
+
+| Tab | Purpose |
+|-----|---------|
+| **Provider** | M3U/Xtream selection, URLs, credentials, EPG, timezone |
+| **Matching & AI** | iptv-org toggle, AI toggle, OpenRouter key, confidence slider |
+| **Filters** | Group discovery, search, include/exclude toggles, auto-sync |
+| **Advanced** | Fallback preference, logo proxy URL, cache TTL, debug logging |
+| **Sync** | Auth state, user profile, config import/export, password change, delete account |
 
 ## Configuration
 
-The addon accepts configuration via Stremio's configuration UI or direct URL parameters. The configuration is a base64-encoded JSON object:
+The addon accepts configuration via the dashboard UI or direct URL parameters (legacy). Configuration is a JSON object:
 
 ```json
 {
@@ -116,31 +287,19 @@ The addon accepts configuration via Stremio's configuration UI or direct URL par
   "username": "user",
   "password": "pass",
   "epg": "https://provider.com/epg.xml.gz",
-  "include": ["Group A", "Group B"],       // optional: only include these groups
-  "exclude": ["Group C"],                  // optional: exclude these groups
-  "timezoneOffset": 0,                     // EPG timezone offset in hours
-  "fallbackPreference": "custom",          // poster style
-  "iptvOrg": true,                         // enable iptv-org matching (default: true)
-  "ai": true,                              // enable AI curation (default: true)
-  "openrouterKey": "sk-or-v1-..."          // REQUIRED if ai: true
+  "include": ["Group A", "Group B"],
+  "exclude": ["Group C"],
+  "timezoneOffset": 0,
+  "fallbackPreference": "custom",
+  "iptvOrg": true,
+  "ai": true,
+  "openrouterKey": "sk-or-v1-..."
 }
 ```
 
-**Important**: `openrouterKey` is **mandatory** if `ai: true` (server env var deprecated). Enter it in the dashboard UI.
+**Important**: `openrouterKey` is **mandatory** if `ai: true` (server env var deprecated). Enter it in the dashboard UI per-user.
 
-In Stremio, paste the base64-encoded config into the addon configuration field. The dashboard at `/` provides a UI to generate this.
-
-## API Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /:config/manifest.json` | Stremio manifest |
-| `GET /:config/catalog/:type/:id.json` | Catalog (with optional genre/search) |
-| `GET /:config/meta/:type/:id.json` | Meta information for a channel |
-| `GET /:config/stream/:type/:id.json` | Stream URLs for a channel |
-| `GET /:config/poster/:id.png` | Generated poster image |
-| `POST /api/get-groups` | Discover groups from M3U/Xtream (dashboard helper) |
-| `GET /health` | Health check |
+In Stremio (legacy), paste the base64-encoded config into the addon configuration field. The dashboard at `/` provides a UI to generate this.
 
 ## Architecture: Channel ID Pipeline
 
@@ -169,56 +328,74 @@ For each raw channel from the provider:
    - On AI cleanup: retries iptv-org match to promote to authoritative ID
 ```
 
+### Country Code Fallback
+
+The parser extracts country codes from group names using a regex pattern (e.g., `�������� USA`, `[UK]`, `United States`, `(CA)`), normalizes to ISO-3166-1 alpha-2, and falls back through: `US` → `CA` → `GB` → `DE` → `FR` → `global` for iptv-org lookup. This significantly improves match rates for international channel packages.
+
 ## Logo Pipeline
 
 ```
 getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
   │
-  ├─▶ 1. In-memory cache (30 min) — fastest
+  ├─�� 1. In-memory cache (30 min) — fastest
   │
-  ├─▶ 2. Redis logo cache (7 days) — survives restarts
+  ├─�� 2. Redis logo cache (7 days) — survives restarts
   │
-  ├─▶ 3. Cloudflare Worker proxy — handles rate limits, fallbacks, edge cache
-  │     ├─▶ Try iptv-org authoritative logo
-  │     ├─▶ Try playlist fallback logo
-  │     └─▶ Return SVG placeholder
+  ├─�� 3. Cloudflare Worker proxy — handles rate limits, fallbacks, edge cache
+  │     ├─�� Try iptv-org authoritative logo
+  │     ├─�� Try playlist fallback logo
+  │     └─�� Return SVG placeholder
   │
-  └─▶ 4. Generate SVG fallback (no external calls)
+  └─�� 4. Generate SVG fallback (no external calls)
 ```
+
+**Cold-start optimization**: On server startup, Redis logo buffers are pre-warmed via background job (100 concurrent fetches, respects rate limits) to reduce first-request latency.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `server.js` | Express routes, cache orchestration, proactive refresh |
-| `iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline |
-| `iptvOrgRef.js` | iptv-org data fetch + exact/fuzzy lookup |
-| `aiCurator.js` | AI deduplication queue, OpenRouter integration |
-| `imageEngine.js` | Poster generation (Sharp), logo cache, Worker proxy |
-| `db.js` | Postgres pool, override CRUD, EPG history, logo URL tracking |
+| `server.js` | Express routes, auth, Stremio addon, health endpoints, cold-start pre-warm |
+| `iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline, country extraction, AI queue |
+| `iptvOrgRef.js` | iptv-org data fetch + exact/fuzzy lookup (daily refresh) |
+| `aiCurator.js` | AI deduplication queue, OpenRouter integration, batching |
+| `imageEngine.js` | Poster generation (Sharp), logo cache, Worker proxy, SVG fallbacks |
+| `db.js` | Postgres pool, user CRUD, override CRUD, EPG history, logo URL tracking |
 | `dbInit.js` | Auto-initialize database schema on startup |
-| `redisCache.js` | Playlist cache read/write, logo buffer persist |
-| `catchup.js` | Catch-up metadata extraction |
+| `redisCache.js` | Playlist cache read/write, logo buffer persist/get, pre-warm job |
+| `catchup.js` | Catch-up metadata extraction (M3U `catchup`/`catchup-days`, Xtream) |
 | `universalEpg.js` | XMLTV EPG parsing (SAX streaming) |
-| `logo-proxy.worker.js` | Cloudflare Worker logo proxy |
-| `wrangler.toml` | Worker config |
+| `cryptoUtils.js` | AES-GCM encryption/decryption, PBKDF2 password hashing, session tokens |
+| `logo-proxy.worker.js` | Cloudflare Worker logo proxy with KV dead URL tracking |
+| `wrangler.toml` | Worker config (KV bindings, compatibility date) |
+| `dashboard.html` | Apple HIG/Liquid Glass tabbed UI, auth integration |
+| `docker-compose.yaml` | Container orchestration |
 
 ## Docker
 
-Pre-built image available on Docker Hub:
+Pre-built multi-arch images available on Docker Hub and GitHub Container Registry:
+
 ```bash
-docker pull itsoleglucic/iptvo:latest
+# Docker Hub
+docker pull oleglucic/iptvo:latest
+docker pull oleglucic/iptvo:v1.2.3
+
+# GitHub Container Registry
+docker pull ghcr.io/oleglucic/iptvo:latest
+docker pull ghcr.io/oleglucic/iptvo:v1.2.3
 ```
 
 To run:
+
 ```bash
 docker run -d \
   --name iptvo \
   -p 3000:3000 \
+  -e ENCRYPTION_KEY="your-32-char-secret-key-here" \
   -e DATABASE_URL="postgresql://user:pass@host:5432/dbname" \
   -e REDIS_URL="redis://host:6379" \
   -e LOGO_PROXY_URL="https://your-worker.workers.dev/logo" \
-  itsoleglucic/iptvo:latest
+  oleglucic/iptvo:latest
 ```
 
 ### Building from source
@@ -248,6 +425,7 @@ Font packages are required for Sharp text rendering (poster initials badge).
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PORT` | No | Server port (default: 3000) |
+| `ENCRYPTION_KEY` | Yes | 32+ char secret for AES-GCM config encryption |
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `REDIS_URL` | Yes | Redis connection string |
 | `LOGO_PROXY_URL` | Yes* | Cloudflare Worker logo proxy URL (required for production) |
@@ -256,39 +434,56 @@ Font packages are required for Sharp text rendering (poster initials badge).
 *Required for production to avoid rate limits. Optional for local dev (falls back to direct fetch).
 **Server env var is deprecated. Provide OpenRouter key in dashboard config per-addon instance.
 
-## Database Schema (Auto-initialized)
+## Release Process
 
-Tables are created automatically on first startup:
+IPTVo uses **semantic versioning** with automated releases via GitHub Actions.
 
-```sql
--- AI override mappings
-CREATE TABLE ai_overrides (
-  raw_name TEXT PRIMARY KEY,
-  canonical_id TEXT NOT NULL,
-  confidence REAL NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+### Version Management
 
--- EPG history for catch-up
-CREATE TABLE epg_history (
-  channel_key TEXT NOT NULL,
-  title TEXT,
-  description TEXT,
-  start_time BIGINT NOT NULL,
-  stop_time BIGINT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (channel_key, start_time)
-);
+- Source of truth: `package.json` version
+- Commits drive version bumps via `standard-version`:
+  - `feat:` → MINOR
+  - `fix:` → PATCH
+  - `BREAKING CHANGE:` → MAJOR
+  - Other prefixes (`docs:`, `chore:`, `refactor:`) → no version bump
 
--- Persistent logo URL tracking (survives restarts, no expiry)
-CREATE TABLE logo_urls (
-  channel_id TEXT PRIMARY KEY,
-  url TEXT NOT NULL,
-  source TEXT DEFAULT 'unknown',
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+### Release Workflow (`.github/workflows/release.yml`)
+
+Triggers on push to `main` or tag `v*`:
+
+1. **Determine version** — from git tag or `package.json`
+2. **Multi-arch Docker build** — linux/amd64, linux/arm64 via Buildx
+3. **Push to registries** — Docker Hub (`oleglucic/iptvo`) + GHCR (`ghcr.io/oleglucic/iptvo`)
+4. **Generate changelog** — from git log since last tag
+5. **Create GitHub Release** — with changelog, Docker pull commands, addon URLs
+6. **Auto-bump patch** — on main branch push (non-tag), commits `chore: bump version`
+
+### Manual Release
+
+```bash
+# Standard release (analyzes commits, bumps version, creates tag, generates changelog)
+npm run release
+
+# Or manual version bump
+npm run version:patch  # npm version patch --no-git-tag-version
+npm run version:minor  # npm version minor --no-git-tag-version
+npm run version:major  # npm version major --no-git-tag-version
+
+# Preview changelog
+npm run changelog
 ```
+
+### Required Secrets (GitHub Repository Settings)
+
+| Secret | Purpose |
+|--------|---------|
+| `DOCKERHUB_USERNAME` | Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub access token |
+| `GITHUB_TOKEN` | Auto-provided, no setup needed |
+
+### Changelog Format
+
+See `CHANGELOG.md` — follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
 
 ## Development Notes
 
@@ -296,6 +491,15 @@ CREATE TABLE logo_urls (
 - **Test before push** — Use `node -e` standalone scripts with real decoded production config against `streamFetchIPTV` directly
 - **Two-pass M3U parsing** — Any variable computed on the `#EXTINF:` pass must be added to both the `cItem` construction AND the destructuring on the URL-line pass
 - **XTream parsing is single-pass** — No scope issues there
+- **Sensitive data redaction** — Never log passwords, openrouterKey, Authorization headers, or URLs with embedded credentials (replace `://user:pass@` → `://[REDACTED]@`)
+
+## Health Checks
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Basic liveness (Docker) |
+| `GET /health/detailed` | Readiness with DB/Redis/Worker checks |
+| `GET /health/startup` | Startup probe (longer timeout) |
 
 ## License
 
