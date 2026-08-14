@@ -442,7 +442,25 @@ app.post('/api/auth/login', async (req, res) => {
         const safeConfig = { ...config };
         if (safeConfig.password) safeConfig.password = '[REDACTED]';
         if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
-        if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/[^@]*@/, '://[REDACTED]@');
+        if (safeConfig.xtreamUrl) {
+            try {
+                const url = new URL(safeConfig.xtreamUrl);
+                if (url.username || url.password) {
+                    url.username = '';
+                    url.password = '[REDACTED]';
+                    safeConfig.xtreamUrl = url.toString();
+                }
+            } catch {
+                // Fallback: simple string replace without regex backtracking
+                const atIdx = safeConfig.xtreamUrl.lastIndexOf('@');
+                if (atIdx > 0) {
+                    const protoIdx = safeConfig.xtreamUrl.lastIndexOf('://', atIdx);
+                    if (protoIdx >= 0) {
+                        safeConfig.xtreamUrl = safeConfig.xtreamUrl.substring(0, protoIdx + 3) + '[REDACTED]@' + safeConfig.xtreamUrl.substring(atIdx + 1);
+                    }
+                }
+            }
+        }
         res.json({ success: true, userId: user.user_id, token, config: safeConfig });
     } catch (e) {
         console.error('[Auth] Login error:', e.message);
@@ -465,7 +483,25 @@ app.get('/api/auth/validate', (req, res) => {
     const safeConfig = { ...session.config };
     if (safeConfig.password) safeConfig.password = '[REDACTED]';
     if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
-    if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/[^@]*@/, '://[REDACTED]@');
+    if (safeConfig.xtreamUrl) {
+            try {
+                const url = new URL(safeConfig.xtreamUrl);
+                if (url.username || url.password) {
+                    url.username = '';
+                    url.password = '[REDACTED]';
+                    safeConfig.xtreamUrl = url.toString();
+                }
+            } catch {
+                // Fallback: simple string replace without regex backtracking
+                const atIdx = safeConfig.xtreamUrl.lastIndexOf('@');
+                if (atIdx > 0) {
+                    const protoIdx = safeConfig.xtreamUrl.lastIndexOf('://', atIdx);
+                    if (protoIdx >= 0) {
+                        safeConfig.xtreamUrl = safeConfig.xtreamUrl.substring(0, protoIdx + 3) + '[REDACTED]@' + safeConfig.xtreamUrl.substring(atIdx + 1);
+                    }
+                }
+            }
+        }
     res.json({ valid: true, userId: session.userId, config: safeConfig });
 });
 
