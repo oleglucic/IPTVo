@@ -13,7 +13,8 @@ let redis = null;
 if (redisUrl) {
     redis = new Redis(redisUrl, {
         maxRetriesPerRequest: 2,
-        retryStrategy: (times) => Math.min(times * 200, 2000)
+        retryStrategy: (times) => Math.min(times * 200, 2000),
+        protocol: 2  // ioredis v6 defaults to RESP3; use RESP2 for compatibility
     });
     redis.on('error', (e) => console.error('[Redis Error]', e.message));
     redis.on('connect', () => console.log('[Redis] Connected.'));
