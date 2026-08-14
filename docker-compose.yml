@@ -1,0 +1,52 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iptvo
+      POSTGRES_USER: iptvo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iptvo -d iptvo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  iptvo:
+    image: oleglucic/iptvo:latest
+    # For building from source, comment out 'image' and uncomment 'build:'
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD:-changeme}@postgres:5432/iptvo
+      - REDIS_URL=redis://redis:6379
+      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

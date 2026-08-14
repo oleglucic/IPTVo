@@ -29,11 +29,119 @@ A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream 
 
 - Node.js 20+ (for local development)
 - Docker & Docker Compose (for production via Portainer)
-- Postgres database (for AI override persistence, EPG history, logo URL tracking, user accounts)
-- Redis instance (for cache persistence, logo buffers)
+- **Postgres database** (for AI override persistence, EPG history, logo URL tracking, user accounts)
+- **Redis instance** (for cache persistence, logo buffers)
 - OpenRouter API key (required if AI Curation enabled in config — **per-user, not server env**)
 - Cloudflare account (for Worker logo proxy — free tier sufficient)
 - `ENCRYPTION_KEY` — 32+ character secret for AES-GCM config encryption
+
+### Self-Hosting PostgreSQL & Redis
+
+You can run Postgres and Redis locally via Docker Compose, or use managed services.
+
+#### Option A: All-in-One Docker Compose (recommended for self-hosting)
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iptvo
+      POSTGRES_USER: iptvo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iptvo -d iptvo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  iptvo:
+    image: oleglucic/iptvo:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD:-changeme}@postgres:5432/iptvo
+      - REDIS_URL=redis://redis:6379
+      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+**Usage:**
+```bash
+# Create .env file
+cat > .env << 'EOF'
+ENCRYPTION_KEY=your-32-char-secret-key-here
+POSTGRES_PASSWORD=secure-password-here
+LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+EOF
+
+# Deploy
+docker-compose up -d
+```
+
+#### Option B: Managed Services (Railway, Neon, Upstash, etc.)
+
+| Service | Provider Examples | Connection String Format |
+|---------|------------------|-------------------------|
+| **PostgreSQL** | Neon, Supabase, Railway, Render, Aiven, Timescale | `postgresql://user:pass@host:5432/dbname?sslmode=require` |
+| **Redis** | Upstash, Railway, Redis Cloud, Aiven, Render | `redis://default:pass@host:port` or `rediss://...` (TLS) |
+
+**Example `.env` for managed services:**
+```bash
+ENCRYPTION_KEY=your-32-char-secret-key-here
+DATABASE_URL=postgresql://user:pass@ep-xyz.us-east-1.neon.tech/iptvo?sslmode=require
+REDIS_URL=redis://default:pass@fly-xyz.upstash.io:6379
+LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+```
+
+#### Option C: External Host + Portainer Stack
+
+If running Postgres/Redis on separate hosts:
+
+```yaml
+# portainer-stack.yml
+version: '3.8'
+services:
+  iptvo:
+    image: oleglucic/iptvo:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - ENCRYPTION_KEY=your-32-char-secret-key-here
+      - DATABASE_URL=postgresql://user:pass@postgres-host:5432/iptvo
+      - REDIS_URL=redis://redis-host:6379
+      - LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+    restart: unless-stopped
+```
+
+---
 
 ### Local Development
 
@@ -41,21 +149,36 @@ A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream 
 # Install dependencies
 npm install
 
-# Set environment variables
+# Set environment variables (using local Docker Compose for DB/Redis)
 export ENCRYPTION_KEY="your-32-char-secret-key-here"
-export DATABASE_URL="postgresql://user:pass@host:5432/dbname"
+export DATABASE_URL="postgresql://iptvo:changeme@localhost:5432/iptvo"
 export REDIS_URL="redis://localhost:6379"
-export LOGO_PROXY_URL="https://your-worker.workers.dev/logo"
+export LOGO_PROXY_URL="https://assets.oleglucic.com/logo"
 
 # Start server
 node server.js
 ```
 
+> **Tip**: Run `docker-compose up -d postgres redis` first, then start the Node server locally for fast iteration.
+
 ### Production (Portainer)
 
-**Option 1: Use pre-built image (recommended)**
+**Option 1: All-in-One Stack (Postgres + Redis + IPTVo)**
 
-In Portainer, create a stack with:
+In Portainer, create a stack from the repo's `docker-compose.yml`:
+
+1. Push repository to your Git host
+2. In Portainer → Stacks → Add stack → Repository
+3. Select repo, set `docker-compose.yml` as Compose path
+4. Add environment variables in Portainer stack config:
+   - `ENCRYPTION_KEY` — 32+ char secret for config encryption
+   - `POSTGRES_PASSWORD` — Secure password for Postgres
+   - `LOGO_PROXY_URL` — Cloudflare Worker URL (default: `https://assets.oleglucic.com/logo`)
+5. Deploy — Portainer pulls image, starts all 3 services with health checks
+
+**Option 2: External DB/Redis + IPTVo Only**
+
+Use the minimal stack from **Option C: External Host + Portainer Stack** in [Self-Hosting PostgreSQL & Redis](#self-hosting-postgresql--redis):
 
 ```yaml
 version: '3.8'
@@ -66,21 +189,17 @@ services:
       - "3000:3000"
     environment:
       - ENCRYPTION_KEY=your-32-char-secret-key-here
-      - DATABASE_URL=postgresql://user:pass@host:5432/dbname
-      - REDIS_URL=redis://host:6379
-      - LOGO_PROXY_URL=https://your-worker.workers.dev/logo
+      - DATABASE_URL=postgresql://user:pass@postgres-host:5432/iptvo
+      - REDIS_URL=redis://redis-host:6379
+      - LOGO_PROXY_URL=https://assets.oleglucic.com/logo
     restart: unless-stopped
 ```
 
-**Option 2: Build from source**
+**Option 3: Build from source**
 
 1. Push to your repository
-2. In Portainer, create a stack from `docker-compose.yml`
-3. Configure environment variables:
-   - `ENCRYPTION_KEY` — 32+ char secret for config encryption
-   - `DATABASE_URL` — Postgres connection string
-   - `REDIS_URL` — Redis connection string
-   - `LOGO_PROXY_URL` — Cloudflare Worker logo proxy URL (e.g., `https://assets.yourdomain.com/logo`)
+2. In Portainer, create a stack from `docker-compose.yml` (without postgres/redis services if external)
+3. Configure environment variables as above
 4. Deploy — Portainer handles the build and restart
 
 ## Cloudflare Worker Logo Proxy (Required for Production)
