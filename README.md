@@ -163,22 +163,26 @@ node server.js
 
 ### Production (Portainer)
 
-**Option 1: All-in-One Stack (Postgres + Redis + IPTVo)**
+#### Using Pre-built Docker Image (`oleglucic/iptvo:latest`)
 
-In Portainer, create a stack from the repo's `docker-compose.yml`:
+The pre-built image **requires external Postgres & Redis** — it does not include them.
 
-1. Push repository to your Git host
-2. In Portainer → Stacks → Add stack → Repository
-3. Select repo, set `docker-compose.yml` as Compose path
-4. Add environment variables in Portainer stack config:
-   - `ENCRYPTION_KEY` — 32+ char secret for config encryption
-   - `POSTGRES_PASSWORD` — Secure password for Postgres
-   - `LOGO_PROXY_URL` — Cloudflare Worker URL (default: `https://assets.oleglucic.com/logo`)
-5. Deploy — Portainer pulls image, starts all 3 services with health checks
+**Option 1: Standalone Container (with external DB/Redis)**
 
-**Option 2: External DB/Redis + IPTVo Only**
+```bash
+docker run -d \
+  --name iptvo \
+  -p 3000:3000 \
+  -e ENCRYPTION_KEY="your-32-char-secret-key-here" \
+  -e DATABASE_URL="postgresql://user:pass@postgres-host:5432/iptvo" \
+  -e REDIS_URL="redis://redis-host:6379" \
+  -e LOGO_PROXY_URL="https://assets.oleglucic.com/logo" \
+  oleglucic/iptvo:latest
+```
 
-Use the minimal stack from **Option C: External Host + Portainer Stack** in [Self-Hosting PostgreSQL & Redis](#self-hosting-postgresql--redis):
+**Option 2: Portainer Stack (pre-built image + external DB/Redis)**
+
+In Portainer → Stacks → Add stack → Web editor:
 
 ```yaml
 version: '3.8'
@@ -195,12 +199,75 @@ services:
     restart: unless-stopped
 ```
 
-**Option 3: Build from source**
+**Option 3: Portainer Stack (pre-built image + local Postgres/Redis)**
 
-1. Push to your repository
-2. In Portainer, create a stack from `docker-compose.yml` (without postgres/redis services if external)
-3. Configure environment variables as above
-4. Deploy — Portainer handles the build and restart
+```yaml
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iptvo
+      POSTGRES_USER: iptvo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iptvo -d iptvo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  iptvo:
+    image: oleglucic/iptvo:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD}@postgres:5432/iptvo
+      - REDIS_URL=redis://redis:6379
+      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+Set these in Portainer stack **Environment variables**:
+```
+ENCRYPTION_KEY=<32-char-secret>
+POSTGRES_PASSWORD=<secure-password>
+LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+```
+
+---
+
+#### Build from Source (using repo's docker-compose.yml)
+
+1. Push repository to your Git host
+2. In Portainer → Stacks → Add stack → Repository
+3. Select repo, set `docker-compose.yml` as Compose path
+4. Add same environment variables as above
+5. Deploy — Portainer builds image locally, starts all services
 
 ## Cloudflare Worker Logo Proxy (Required for Production)
 
