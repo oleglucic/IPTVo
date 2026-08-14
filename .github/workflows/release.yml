@@ -60,7 +60,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            oleglucic/iptvo
+            itsoleglucic/iptvo
             ghcr.io/oleglucic/iptvo
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
@@ -104,7 +104,7 @@ jobs:
 
             ## Docker Images
             ```bash
-            docker pull oleglucic/iptvo:v${{ steps.version.outputs.version }}
+            docker pull itsoleglucic/iptvo:v${{ steps.version.outputs.version }}
             # or
             docker pull ghcr.io/oleglucic/iptvo:v${{ steps.version.outputs.version }}
             ```
