@@ -177,7 +177,7 @@ docker run -d \
   -e DATABASE_URL="postgresql://user:pass@postgres-host:5432/iptvo" \
   -e REDIS_URL="redis://redis-host:6379" \
   -e LOGO_PROXY_URL="https://assets.oleglucic.com/logo" \
-  oleglucic/iptvo:latest
+  itsoleglucic/iptvo:latest
 ```
 
 **Option 2: Portainer Stack (pre-built image + external DB/Redis)**
@@ -581,7 +581,7 @@ docker run -d \
   -e DATABASE_URL="postgresql://user:pass@host:5432/dbname" \
   -e REDIS_URL="redis://host:6379" \
   -e LOGO_PROXY_URL="https://your-worker.workers.dev/logo" \
-  oleglucic/iptvo:latest
+  itsoleglucic/iptvo:latest
 ```
 
 ### Building from source
