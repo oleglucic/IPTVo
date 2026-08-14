@@ -3,10 +3,56 @@ const readline = require('readline');
 const zlib = require('zlib');
 const sax = require('sax');
 const { Readable } = require('stream');
-const { startAiQueue, globalAiCache } = require('./aiCurator'); 
+const { startAiQueue, globalAiCache } = require('./aiCurator');
 const { getOverride, getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
 const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
+
+/**
+ * Validates a URL to prevent SSRF attacks.
+ * Blocks private/internal IPs, localhost, and requires http/https scheme.
+ * @param {string} url - The URL to validate
+ * @returns {boolean} - True if URL is safe to fetch
+ */
+function isSafeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return false;
+    }
+
+    // Only allow http/https
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block localhost and loopback
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false;
+
+    // Block private IPv4 ranges
+    // 10.0.0.0/8
+    if (/^10\./.test(hostname)) return false;
+    // 172.16.0.0/12
+    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)) return false;
+    // 192.168.0.0/16
+    if (/^192\.168\./.test(hostname)) return false;
+    // 169.254.0.0/16 (link-local)
+    if (/^169\.254\./.test(hostname)) return false;
+
+    // Block private IPv6 ranges
+    // fc00::/7 (ULA)
+    if (/^fc[0-9a-f]{2}:/i.test(hostname) || /^fd[0-9a-f]{2}:/i.test(hostname)) return false;
+    // fe80::/10 (link-local)
+    if (/^fe8[0-9a-f]:/i.test(hostname) || /^fe9[0-9a-f]:/i.test(hostname) || /^fea[0-9a-f]:/i.test(hostname) || /^feb[0-9a-f]:/i.test(hostname)) return false;
+
+    // Block metadata services (cloud provider internal endpoints)
+    if (hostname === '169.254.169.254' || hostname === '[fd00:ec2::254]') return false;
+
+    return true;
+}
 
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
@@ -127,6 +173,11 @@ async function parseM3uData(configKey, configObj) {
         if (!configObj) throw new Error("Configuration context object is missing.");
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
         if (!m3uTargetUrl) throw new Error("No M3U Playlist link found inside payload parameters.");
+
+        // Prevent SSRF: validate URL before fetching
+        if (!isSafeUrl(m3uTargetUrl)) {
+            throw new Error("Invalid M3U URL: private/internal addresses not allowed");
+        }
 
         const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000 }); // 10 min for large playlists
         let mStream = res.data;
@@ -319,7 +370,7 @@ async function parseXtreamData(configKey, configObj) {
     console.log(`[parser] Preloaded ${overridesMap.size} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration mapping context payload is missing.");
-        
+
         const rawUrl = configObj.xtreamUrl || configObj.host || "";
         if (!rawUrl) throw new Error("Xtream target base Server URL string parameter was undefined.");
 
@@ -327,6 +378,11 @@ async function parseXtreamData(configKey, configObj) {
         const user = configObj.username || configObj.user || "";
         const pass = configObj.password || configObj.pass || "";
         const epg = configObj.epg;
+
+        // Prevent SSRF: validate base URL before making API calls
+        if (!isSafeUrl(baseUrl)) {
+            throw new Error("Invalid Xtream URL: private/internal addresses not allowed");
+        }
 
         const apiBase = `${baseUrl}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
 
@@ -493,6 +549,13 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     const tEpg = {};
     if (!epgUrl) return tEpg;
+
+    // Prevent SSRF: validate EPG URL before fetching
+    if (!isSafeUrl(epgUrl)) {
+        console.error('[handleXmltvEpg] Invalid EPG URL: private/internal addresses not allowed');
+        return tEpg;
+    }
+
     return new Promise(async (resolve) => {
         try {
             const epgRes = await axios({ method: 'get', url: epgUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 300000 });
