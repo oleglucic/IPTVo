@@ -14,6 +14,100 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Rate limiting middleware
+const rateLimit = require('express-rate-limit');
+
+// General API rate limiter (applied to all /api routes)
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: { error: 'Too many requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Stricter rate limiter for auth endpoints
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // limit each IP to 10 requests per windowMs for auth
+    message: { error: 'Too many authentication attempts, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Rate limiter for poster endpoints
+const posterLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 30, // limit each IP to 30 poster requests per minute
+    message: { error: 'Too many poster requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Rate limiter for /health/detailed (expensive operation)
+const healthDetailedLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 10, // limit each IP to 10 requests per minute
+    message: { error: 'Too many health check requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Rate limiter for /api/get-groups (external API calls)
+const getGroupsLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 5, // limit each IP to 5 group discovery requests per minute
+    message: { error: 'Too many group discovery requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+/**
+ * Validates a URL to prevent SSRF attacks.
+ * Blocks private/internal IPs, localhost, and requires http/https scheme.
+ * @param {string} url - The URL to validate
+ * @returns {boolean} - True if URL is safe to fetch
+ */
+function isSafeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return false;
+    }
+
+    // Only allow http/https
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block localhost and loopback
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false;
+
+    // Block private IPv4 ranges
+    // 10.0.0.0/8
+    if (/^10\./.test(hostname)) return false;
+    // 172.16.0.0/12
+    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)) return false;
+    // 192.168.0.0/16
+    if (/^192\.168\./.test(hostname)) return false;
+    // 169.254.0.0/16 (link-local)
+    if (/^169\.254\./.test(hostname)) return false;
+
+    // Block private IPv6 ranges
+    // fc00::/7 (ULA)
+    if (/^fc[0-9a-f]{2}:/i.test(hostname) || /^fd[0-9a-f]{2}:/i.test(hostname)) return false;
+    // fe80::/10 (link-local)
+    if (/^fe8[0-9a-f]:/i.test(hostname) || /^fe9[0-9a-f]:/i.test(hostname) || /^fea[0-9a-f]:/i.test(hostname) || /^feb[0-9a-f]:/i.test(hostname)) return false;
+
+    // Block metadata services (cloud provider internal endpoints)
+    if (hostname === '169.254.169.254' || hostname === '[fd00:ec2::254]') return false;
+
+    return true;
+}
+
 // Session store (in-memory, for simplicity - can be moved to Redis later)
 const sessions = new Map(); // token -> { userId, expiresAt, config }
 
@@ -33,13 +127,20 @@ app.get('/:config/configure', (req, res) => {
     res.sendFile(path.join(__dirname, 'dashboard.html'));
 });
 
-// Shallow Category Discovery Route
-app.post('/api/get-groups', async (req, res) => {
+// Apply general API rate limiting to all /api routes
+app.use('/api/', apiLimiter);
+
+// Shallow Category Discovery Route (with stricter rate limiting)
+app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
     const { type, m3uUrl, xtreamUrl, username, password } = req.body;
     try {
         if (type === 'xtream') {
             if (!xtreamUrl || !username || !password) return res.status(400).json({ error: "Missing Credentials" });
             const cleanUrl = xtreamUrl.replace(/\/$/, "");
+            // Prevent SSRF: validate URL before fetching
+            if (!isSafeUrl(cleanUrl)) {
+                return res.status(400).json({ error: "Invalid Xtream URL: private/internal addresses not allowed" });
+            }
             const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${username}&password=${password}&action=get_live_categories`, { timeout: 10000 });
             if (Array.isArray(apiRes.data)) {
                 return res.json({ categories: apiRes.data.map(cat => cat.category_name).sort() });
@@ -47,6 +148,10 @@ app.post('/api/get-groups', async (req, res) => {
             return res.status(400).json({ error: "Invalid provider structure response" });
         } else {
             if (!m3uUrl) return res.status(400).json({ error: "Missing M3U Stream URL" });
+            // Prevent SSRF: validate URL before fetching
+            if (!isSafeUrl(m3uUrl)) {
+                return res.status(400).json({ error: "Invalid M3U URL: private/internal addresses not allowed" });
+            }
             const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, timeout: 10000 });
             const lines = m3uRes.data.split('\n');
             const groups = new Set();
@@ -163,8 +268,8 @@ async function ensureCache(config, configObj) {
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: Date.now() }));
 
-// Comprehensive health check endpoint
-app.get('/health/detailed', async (req, res) => {
+// Comprehensive health check endpoint (with rate limiting)
+app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
     const configObj = extractConfig(req);
     const checks = {
         timestamp: Date.now(),
@@ -257,6 +362,9 @@ app.get('/health/detailed', async (req, res) => {
 
 // ============ USER AUTHENTICATION ENDPOINTS ============
 
+// Apply stricter rate limiting to auth endpoints
+app.use('/api/auth/', authLimiter);
+
 // Register new user
 app.post('/api/auth/register', async (req, res) => {
     try {
@@ -334,7 +442,7 @@ app.post('/api/auth/login', async (req, res) => {
         const safeConfig = { ...config };
         if (safeConfig.password) safeConfig.password = '[REDACTED]';
         if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
-        if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/.*@/, '://[REDACTED]@');
+        if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/[^@]*@/, '://[REDACTED]@');
         res.json({ success: true, userId: user.user_id, token, config: safeConfig });
     } catch (e) {
         console.error('[Auth] Login error:', e.message);
@@ -357,7 +465,7 @@ app.get('/api/auth/validate', (req, res) => {
     const safeConfig = { ...session.config };
     if (safeConfig.password) safeConfig.password = '[REDACTED]';
     if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
-    if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/.*@/, '://[REDACTED]@');
+    if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/[^@]*@/, '://[REDACTED]@');
     res.json({ valid: true, userId: session.userId, config: safeConfig });
 });
 
@@ -766,10 +874,15 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
     }
 });
 
-// Poster route - user system
-app.get('/:userId/poster/:id.png', async (req, res) => {
+// Poster route - user system (with rate limiting)
+app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
     const { configKey, configObj } = await getConfigFromReq(req);
     const id = decodeURIComponent(req.params.id);
+
+    // Validate channel ID to prevent path traversal (CodeQL: path injection)
+    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+        return res.status(400).send("Invalid channel ID");
+    }
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
@@ -864,10 +977,16 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
     }
 });
 
-app.get('/:config/poster/:id.png', async (req, res) => {
+// Poster route - legacy (with rate limiting)
+app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
     const config = req.params.config;
     const id = decodeURIComponent(req.params.id);
     const configObj = extractConfig(req);
+
+    // Validate channel ID to prevent path traversal (CodeQL: path injection)
+    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+        return res.status(400).send("Invalid channel ID");
+    }
 
     await ensureCache(config, configObj);
     const ud = userCaches.get(config);

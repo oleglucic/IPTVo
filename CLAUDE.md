@@ -175,5 +175,5 @@ Use helper in routes:
 const safeConfig = {...config};
 if (safeConfig.password) safeConfig.password = '[REDACTED]';
 if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
-if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/.*@/, '://[REDACTED]@');
+if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/[^@]*@/, '://[REDACTED]@');
 ```

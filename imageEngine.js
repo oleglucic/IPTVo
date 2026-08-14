@@ -337,6 +337,11 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
         channelName = arguments[4] || fallbackName; // channelName is 4th in new, 3rd in old
     }
 
+    // Validate channel ID to prevent path traversal (CodeQL: path injection)
+    if (!cId || !/^[a-zA-Z0-9_-]+$/.test(cId)) {
+        throw new Error("Invalid channel ID");
+    }
+
     const urlHash = primaryUrl ? crypto.createHash('md5').update(primaryUrl).digest('hex').substring(0, 8) : 'none';
     const cachePath = path.join(cacheDir, `${cId}_${urlHash}.png`);
 
