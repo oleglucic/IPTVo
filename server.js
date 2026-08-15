@@ -182,19 +182,28 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
     }
 });
 
-// Stremio Addon Configuration Parsing
+// ============ STREMIO ADDON ENDPOINTS ============
+
+// Updated extractConfig to support user UUID
 function extractConfig(req) {
     try {
+        // First check for user UUID in Authorization header or query param
+        const userId = req.params.userId || req.query.userId || req.headers['x-user-id'];
+        if (userId) {
+            // Will be resolved async in ensureCache
+            return { _userId: userId };
+        }
+
+        // Fallback to base64 config (legacy support)
         let rawB64 = (req.params.config || req.query.config || '');
-        console.log(`[extractConfig] rawB64 (first 80): ${sanitizeForLog(rawB64.substring(0, 80))}`);
-        rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
-        // Pad to a multiple of 4
-        while (rawB64.length % 4 !== 0) rawB64 += '=';
-        const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
-        console.log(`[extractConfig] decoded: ${sanitizeForLog(decoded)}`);
-        // Handle btoa(unescape(encodeURIComponent(...))) encoding from dashboard
-        try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
-        return JSON.parse(decoded);
+        if (rawB64) {
+            rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
+            while (rawB64.length % 4 !== 0) rawB64 += '=';
+            const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
+            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
+            return JSON.parse(decoded);
+        }
+        return null;
     } catch (e) {
         console.error('[extractConfig] Error:', e.message);
         return null;
@@ -1100,7 +1109,7 @@ const PORT = process.env.PORT || 3000;
                     const configObj = extractConfig({ params: { config: configKey }, query: {} });
                     if (configObj) {
                         console.log(`[ProactiveRefresh] configObj keys: ${Object.keys(configObj).join(', ')}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${configObj.ai}`);
-                        console.log(`[ProactiveRefresh] refreshing stale config=${configKey.substring(0,12)}...`);
+                        console.log(`[ProactiveRefresh] refreshing stale config=${sanitizeForLog(configKey.substring(0,12))}...`);
                         streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
                     }
                 } catch (e) {
@@ -1123,7 +1132,7 @@ const PORT = process.env.PORT || 3000;
                 for (const [, channel] of cached.channelMap.entries()) {
                     if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
                 }
-                console.log(`[Boot] Pre-warmed config=${key.substring(0,12)}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
+                console.log(`[Boot] Pre-warmed config=${sanitizeForLog(key.substring(0,12))}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
             }
         }
         console.log(`[Boot] Pre-warmed ${keys.length} config(s) from Redis.`);
