@@ -931,7 +931,13 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
 
     try {
         const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
-        res.sendFile(cachedPosterPath);
+        // Resolve path to prevent path injection - ensure it's within cache dir
+        const resolvedPath = path.resolve(cachedPosterPath);
+        const cacheDir = path.join(__dirname, 'cache');
+        if (!resolvedPath.startsWith(cacheDir)) {
+            return res.status(500).send("Invalid poster path");
+        }
+        res.sendFile(resolvedPath);
     } catch (error) {
         console.error("[Poster Generation Error]", sanitizeForLog(error.message));
         res.status(500).send("Error compiling image layer context");
@@ -1035,7 +1041,13 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
 
     try {
         const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
-        res.sendFile(cachedPosterPath);
+        // Resolve path to prevent path injection - ensure it's within cache dir
+        const resolvedPath = path.resolve(cachedPosterPath);
+        const cacheDir = path.join(__dirname, 'cache');
+        if (!resolvedPath.startsWith(cacheDir)) {
+            return res.status(500).send("Invalid poster path");
+        }
+        res.sendFile(resolvedPath);
     } catch (error) {
         console.error("[Poster Generation Error]", sanitizeForLog(error.message));
         res.status(500).send("Error compiling image layer context");
