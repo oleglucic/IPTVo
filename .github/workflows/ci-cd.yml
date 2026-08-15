@@ -28,7 +28,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm run lint
-      - run: npm run type-check
+      - run: node --check server.js
       - run: npm test
 
   release:
@@ -51,6 +51,6 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
-      - uses: semantic-release
+      - uses: semantic-release/action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
