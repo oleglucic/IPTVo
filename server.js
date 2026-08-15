@@ -576,7 +576,7 @@ app.put('/api/auth/config', async (req, res) => {
         session.config = config;
         sessions.set(token, session);
 
-        console.log(`[Auth] Config updated for user: ${session.userId}`);
+        console.log(`[Auth] Config updated for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
         console.error('[Auth] Config update error:', e.message);
@@ -625,7 +625,7 @@ app.put('/api/auth/password', async (req, res) => {
             await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE user_id = $2', [newHash, session.userId]);
         }
 
-        console.log(`[Auth] Password changed for user: ${session.userId}`);
+        console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
         console.error('[Auth] Password change error:', e.message);
@@ -669,7 +669,7 @@ app.delete('/api/auth/account', async (req, res) => {
         }
         sessions.delete(token);
 
-        console.log(`[Auth] Account deleted for user: ${session.userId}`);
+        console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
         console.error('[Auth] Account deletion error:', e.message);
@@ -677,33 +677,6 @@ app.delete('/api/auth/account', async (req, res) => {
     }
 });
 
-// ============ STREMIO ADDON ENDPOINTS ============
-
-// Updated extractConfig to support user UUID
-function extractConfig(req) {
-    try {
-        // First check for user UUID in Authorization header or query param
-        const userId = req.params.userId || req.query.userId || req.headers['x-user-id'];
-        if (userId) {
-            // Will be resolved async in ensureCache
-            return { _userId: userId };
-        }
-
-        // Fallback to base64 config (legacy support)
-        let rawB64 = (req.params.config || req.query.config || '');
-        if (rawB64) {
-            rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
-            while (rawB64.length % 4 !== 0) rawB64 += '=';
-            const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
-            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
-            return JSON.parse(decoded);
-        }
-        return null;
-    } catch (e) {
-        console.error('[extractConfig] Error:', e.message);
-        return null;
-    }
-}
 const builder = new addonBuilder({
     id: 'iptvo.oleglucic.com',
     version: '0.0.1',
@@ -736,7 +709,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
-    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${extra?.genre}, search=${extra?.search}`);
+    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extra?.genre)}, search=${sanitizeForLog(extra?.search)}`);
     if (!configObj) return { metas: [] };
 
     const ud = await ensureCache(configKey, configObj);
@@ -772,7 +745,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
             genres: [channel.meta.group]
         });
     }
-    console.log(`[Catalog] responding with ${metas.length} metas`);
+    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas`);
     return { metas };
 });
 
