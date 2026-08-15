@@ -205,7 +205,7 @@ function extractConfig(req) {
         }
         return null;
     } catch (e) {
-        console.error('[extractConfig] Error:', e.message);
+        console.error('[extractConfig] Error:', sanitizeForLog(e.message));
         return null;
     }
 }
@@ -245,14 +245,14 @@ async function ensureCache(config, configObj) {
 
             // Check if Redis cache is stale (older than 2 hours) - refresh in background
             if (Date.now() - redisCached.lastUpdated > 2 * 60 * 60 * 1000) {
-                streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] background refresh failed:', e.message));
+                streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] background refresh failed:', sanitizeForLog(e.message)));
             }
             return redisCached;
         }
 
         console.log(`[ensureCache] cold-start: starting background parse, returning placeholder...`);
         // Start background parse WITHOUT waiting - just kick it off
-        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] fetch failed:', e.message));
+        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] fetch failed:', sanitizeForLog(e.message)));
 
         // Return a minimal "loading" cache so catalog can return empty but not timeout
         const loadingCache = {
@@ -283,7 +283,7 @@ async function ensureCache(config, configObj) {
     // Ready but stale, or errored previously: refresh in the background, serve what we have now.
     if (cached.status === 'error' ||
         (cached.status === 'ready' && (Date.now() - cached.lastUpdated > 60 * 60 * 1000))) {
-        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] refresh failed:', e.message));
+        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] refresh failed:', sanitizeForLog(e.message)));
     }
 
     return cached;
@@ -424,7 +424,7 @@ app.post('/api/auth/register', async (req, res) => {
         console.log(`[Auth] User registered: ${sanitizeForLog(username)} (${user.user_id})`);
         res.json({ success: true, userId: user.user_id, token });
     } catch (e) {
-        console.error('[Auth] Register error:', e.message);
+        console.error('[Auth] Register error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Registration failed' });
     }
 });
@@ -486,7 +486,7 @@ app.post('/api/auth/login', async (req, res) => {
         }
         res.json({ success: true, userId: user.user_id, token, config: safeConfig });
     } catch (e) {
-        console.error('[Auth] Login error:', e.message);
+        console.error('[Auth] Login error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Login failed' });
     }
 });
@@ -581,7 +581,7 @@ console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}
 console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
-        console.error('[Auth] Config update error:', e.message);
+        console.error('[Auth] Config update error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Config update failed' });
     }
 });
@@ -630,7 +630,7 @@ app.put('/api/auth/password', async (req, res) => {
         console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
-        console.error('[Auth] Password change error:', e.message);
+        console.error('[Auth] Password change error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Password change failed' });
     }
 });
@@ -674,7 +674,7 @@ app.delete('/api/auth/account', async (req, res) => {
         console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
-        console.error('[Auth] Account deletion error:', e.message);
+        console.error('[Auth] Account deletion error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Account deletion failed' });
     }
 });
@@ -814,7 +814,7 @@ builder.defineStreamHandler(async ({ type, id, extra, config }) => {
         try {
             catchupEntries = await getCatchupStreams(id, channel.streams[0].url, 48);
         } catch (e) {
-            console.error('[Catchup] Failed to build catchup streams:', e.message);
+            console.error('[Catchup] Failed to build catchup streams:', sanitizeForLog(e.message));
         }
     }
 
@@ -933,7 +933,7 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
         const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
         res.sendFile(cachedPosterPath);
     } catch (error) {
-        console.error("[Poster Generation Error]", error.message);
+        console.error("[Poster Generation Error]", sanitizeForLog(error.message));
         res.status(500).send("Error compiling image layer context");
     }
 });
@@ -1037,7 +1037,7 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
         const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
         res.sendFile(cachedPosterPath);
     } catch (error) {
-        console.error("[Poster Generation Error]", error.message);
+        console.error("[Poster Generation Error]", sanitizeForLog(error.message));
         res.status(500).send("Error compiling image layer context");
     }
 });
@@ -1051,26 +1051,26 @@ const PORT = process.env.PORT || 3000;
     try {
         await initSchema();
     } catch (e) {
-        console.error('[DB Init] Failed:', e.message);
+        console.error('[DB Init] Failed:', sanitizeForLog(e.message));
     }
 
     startIptvOrgRefresh();
 
     // Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
     setInterval(() => {
-        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Cycle failed:', e.message));
+        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Cycle failed:', sanitizeForLog(e.message)));
     }, 6 * 60 * 60 * 1000); // 6 hours
     // Also run once on startup after a delay
     setTimeout(() => {
-        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', e.message));
+        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', sanitizeForLog(e.message)));
     }, 5 * 60 * 1000); // 5 min after startup
 
     // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
     setInterval(() => {
-        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', e.message));
+        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', sanitizeForLog(e.message)));
     }, 30 * 60 * 1000);
     setTimeout(() => {
-        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', e.message));
+        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', sanitizeForLog(e.message)));
     }, 2 * 60 * 1000);
 
     // Proactively refresh any cached config older than MAX_CACHE_AGE, independent of
@@ -1085,10 +1085,10 @@ const PORT = process.env.PORT || 3000;
                     if (configObj) {
                         console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${configObj.ai}`);
                         console.log(`[ProactiveRefresh] refreshing stale config=${sanitizeForLog(configKey.substring(0,12))}...`);
-                        streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
+                        streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', sanitizeForLog(e.message)));
                     }
                 } catch (e) {
-                    console.error(`[ProactiveRefresh] Failed to extract config for ${configKey}:`, e.message);
+                    console.error(`[ProactiveRefresh] Failed to extract config for ${sanitizeForLog(configKey)}:`, sanitizeForLog(e.message));
                 }
             }
         }
