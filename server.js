@@ -221,7 +221,7 @@ async function ensureCache(config, configObj) {
             if (resolvedConfig) {
                 config = configObj._userId; // Use userId as cache key
                 configObj = resolvedConfig;
-                console.log(`[ensureCache] Resolved config for user: ${configObj._userId}`);
+                console.log(`[ensureCache] Resolved config for user: ${sanitizeForLog(configObj._userId)}`);
             }
         }
     }
@@ -229,7 +229,7 @@ async function ensureCache(config, configObj) {
     console.log(`[ensureCache] called for config=${config ? config.substring(0,12) : 'null'}... configObj=${!!configObj}`);
     if (!configObj) { console.log('[ensureCache] no configObj, returning null'); return null; }
     let cached = userCaches.get(config);
-    console.log(`[ensureCache] cache state: ${cached ? cached.status : 'MISSING'}`);
+    console.log(`[ensureCache] cache state: ${sanitizeForLog(cached ? cached.status : 'MISSING')}`);
 
     // Total cache miss (cold start): check Redis first, then start background parse
     if (!cached) {
@@ -577,6 +577,8 @@ app.put('/api/auth/config', async (req, res) => {
         sessions.set(token, session);
 
         console.log(`[Auth] Config updated for user: ${sanitizeForLog(session.userId)}`);
+console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
+console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
         console.error('[Auth] Config update error:', e.message);
@@ -1081,7 +1083,7 @@ const PORT = process.env.PORT || 3000;
                 try {
                     const configObj = extractConfig({ params: { config: configKey }, query: {} });
                     if (configObj) {
-                        console.log(`[ProactiveRefresh] configObj keys: ${Object.keys(configObj).join(', ')}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${configObj.ai}`);
+                        console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${configObj.ai}`);
                         console.log(`[ProactiveRefresh] refreshing stale config=${sanitizeForLog(configKey.substring(0,12))}...`);
                         streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', e.message));
                     }
