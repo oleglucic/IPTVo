@@ -9,6 +9,20 @@ const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup')
 const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
 
 /**
+ * Sanitizes a string for safe logging (prevents log injection).
+ * Removes newlines, tabs, carriage returns, and limits length.
+ * @param {string} str - The string to sanitize
+ * @returns {string} - Sanitized string safe for logging
+ */
+function sanitizeForLog(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/[\r\n\t]/g, '?')
+        .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
+        .substring(0, 200);  // Limit length
+}
+
+/**
  * Validates a URL to prevent SSRF attacks.
  * Blocks private/internal IPs, localhost, and requires http/https scheme.
  * @param {string} url - The URL to validate
@@ -165,7 +179,7 @@ async function streamFetchIPTV(configKey, configObj) {
 
 async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
-    console.log(`[parseM3uData] START for configKey=${configKey ? configKey.substring(0,12) : 'null'}...`);
+    console.log(`[parseM3uData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
     console.log(`[parser] Preloaded ${overridesMap.size} override mappings from DB`);
@@ -386,7 +400,7 @@ async function parseXtreamData(configKey, configObj) {
 
         const apiBase = `${baseUrl}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
 
-        console.log(`[Xtream Engine] Querying data channels from endpoint: ${baseUrl}`);
+        console.log(`[Xtream Engine] Querying data channels from endpoint: ${sanitizeForLog(baseUrl)}`);
 
         const [catRes, streamRes] = await Promise.all([
             axios.get(`${apiBase}&action=get_live_categories`, { timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(() => ({ data: [] })),

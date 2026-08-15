@@ -63,6 +63,20 @@ const getGroupsLimiter = rateLimit({
 });
 
 /**
+ * Sanitizes a string for safe logging (prevents log injection).
+ * Removes newlines, tabs, carriage returns, and limits length.
+ * @param {string} str - The string to sanitize
+ * @returns {string} - Sanitized string safe for logging
+ */
+function sanitizeForLog(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/[\r\n\t]/g, '?')
+        .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
+        .substring(0, 200);  // Limit length
+}
+
+/**
  * Validates a URL to prevent SSRF attacks.
  * Blocks private/internal IPs, localhost, and requires http/https scheme.
  * @param {string} url - The URL to validate
@@ -172,12 +186,12 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
 function extractConfig(req) {
     try {
         let rawB64 = (req.params.config || req.query.config || '');
-        console.log(`[extractConfig] rawB64 (first 80): ${rawB64.substring(0, 80)}`);
+        console.log(`[extractConfig] rawB64 (first 80): ${sanitizeForLog(rawB64.substring(0, 80))}`);
         rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
         // Pad to a multiple of 4
         while (rawB64.length % 4 !== 0) rawB64 += '=';
         const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
-        console.log(`[extractConfig] decoded: ${decoded}`);
+        console.log(`[extractConfig] decoded: ${sanitizeForLog(decoded)}`);
         // Handle btoa(unescape(encodeURIComponent(...))) encoding from dashboard
         try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
         return JSON.parse(decoded);
@@ -398,7 +412,7 @@ app.post('/api/auth/register', async (req, res) => {
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days
         });
 
-        console.log(`[Auth] User registered: ${username} (${user.user_id})`);
+        console.log(`[Auth] User registered: ${sanitizeForLog(username)} (${user.user_id})`);
         res.json({ success: true, userId: user.user_id, token });
     } catch (e) {
         console.error('[Auth] Register error:', e.message);
@@ -437,7 +451,7 @@ app.post('/api/auth/login', async (req, res) => {
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
         });
 
-        console.log(`[Auth] User logged in: ${username} (${user.user_id})`);
+        console.log(`[Auth] User logged in: ${sanitizeForLog(username)} (${user.user_id})`);
         // Redact sensitive config fields in response
         const safeConfig = { ...config };
         if (safeConfig.password) safeConfig.password = '[REDACTED]';

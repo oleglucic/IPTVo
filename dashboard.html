@@ -2124,8 +2124,7 @@
         }
 
         // Generate manifest URL
-        base64Config = btoa(unescape(encodeURIComponent(JSON.stringify(config))));
-        base64Config = base64Config.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const base64Config = btoa(unescape(encodeURIComponent(JSON.stringify(config)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
         const manifestUrl = `stremio://${window.location.host}/${base64Config}/manifest.json`;
 

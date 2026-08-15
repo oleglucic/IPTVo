@@ -44,12 +44,11 @@ jobs:
       # Execute Codacy Analysis CLI and push results via GitHub App
       # This avoids SARIF upload category conflicts from GitHub API changes
       - name: Run Codacy Analysis CLI
-        uses: codacy/codacy-analysis-cli-action@562ee3e92b8e92df8b67e0a5ff8aa8e261919c08
+        uses: codacy/codacy-analysis-cli-action@v1
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
           verbose: true
           # Use GitHub App integration (default) - pushes results directly to Codacy/GitHub
           # Don't output SARIF file to avoid multi-run category conflicts
-          output: ""
           gh-code-scanning-compat: true
           max-allowed-issues: 2147483647
