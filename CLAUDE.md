@@ -177,3 +177,51 @@ if (safeConfig.password) safeConfig.password = '[REDACTED]';
 if (safeConfig.openrouterKey) safeConfig.openrouterKey = '[REDACTED]';
 if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:\/\/[^@]*@/, '://[REDACTED]@');
 ```
+
+## Available Skills
+
+**Global skills** (`~/.claude/skills/`) - available in all projects:
+| Skill | When to Use |
+|-------|-------------|
+| `frontend-design` | Creating/modifying UI (dashboard.html, new web components) - design tokens, typography, motion |
+| `code-simplifier` | Refactoring backend routes, database layers, complex logic - flatten async, HTTP timeouts, middleware |
+| `karpathy-guidelines` | Before any non-trivial implementation - think first, edit surgically |
+| `grill-me` | Before implementing new features - interrogate requirements |
+| `webapp-testing` | Verifying changes in running app, API testing, browser automation |
+| `handoff` | End of session - create HANDOFF.md for context preservation |
+| `vercel-react-best-practices` | If React components added (currently vanilla JS project) |
+| `redis/agent-skills` | Redis cache-aside patterns, TTL management, key naming, rate limiting for Stremio addons |
+| `react-best-practices` | Building `/configure` pages in React/Tailwind for Stremio/Nuvio addons |
+| `playwright-cli` | Browser automation for stream resolver testing, network capture, manifest extraction |
+
+**Project-specific skills** (`.claude/skills/`) - only in this repo:
+| Skill | When to Use |
+|-------|-------------|
+| `migrate-radix-to-base` | Migrating Radix UI → Base UI (if shadcn adopted) |
+| `shadcn` | Managing shadcn/ui components (if adopted) |
+
+### Skill Usage Workflow
+
+1. **Before starting work**: Check if any skill applies to the task
+2. **Invoke skill**: Use `Skill` tool with skill name (e.g., `Skill("redis/agent-skills")`)
+3. **Follow skill guidance**: Apply its principles/methods
+4. **Document decisions**: Use `handoff` skill at session end
+
+### Example Invocations
+
+```bash
+# Before implementing a new feature
+/grill-me "Add user channel favorites feature"
+
+# Before refactoring parser
+/code-simplifier
+
+# When working on dashboard UI
+/frontend-design
+
+# When adding Redis caching
+/redis/agent-skills
+
+# At end of session
+/handoff
+```
