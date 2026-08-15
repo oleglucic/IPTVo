@@ -46,5 +46,11 @@
   },
   "allowScripts": {
     "sharp@0.35.3": true
+  },
+  "overrides": {
+    "router": "^2.0.0",
+    "path-to-regexp": "^6.2.0",
+    "tmp": "^0.2.6",
+    "inquirer": "^9.3.7"
   }
 }
