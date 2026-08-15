@@ -1095,7 +1095,7 @@ const PORT = process.env.PORT || 3000;
                 try {
                     const configObj = extractConfig({ params: { config: configKey }, query: {} });
                     if (configObj) {
-                        console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${configObj.ai}`);
+                        console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${sanitizeForLog(configObj.ai)}`);
                         console.log(`[ProactiveRefresh] refreshing stale config=${sanitizeForLog(configKey.substring(0,12))}...`);
                         streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', sanitizeForLog(e.message)));
                     }
