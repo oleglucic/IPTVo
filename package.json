@@ -6,11 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "release": "standard-version && git push --follow-tags origin main",
-    "version:patch": "npm version patch --no-git-tag-version",
-    "version:minor": "npm version minor --no-git-tag-version",
-    "version:major": "npm version major --no-git-tag-version",
-    "changelog": "standard-version --release-as minor --dry-run"
+    "prepare": "husky install",
+    "commitlint": "commitlint --edit",
+    "release": "semantic-release"
   },
   "keywords": [
     "stremio",
@@ -39,7 +37,13 @@
     "stremio-addon-sdk": "^1.6.10"
   },
   "devDependencies": {
-    "standard-version": "^9.5.0"
+    "husky": "^9.0.0",
+    "commitlint": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "semantic-release": "^24.0.0",
+    "@semantic-release/changelog": "^6.0.0",
+    "@semantic-release/git": "^10.0.0",
+    "@semantic-release/github": "^10.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -52,5 +56,18 @@
     "path-to-regexp": "^6.2.0",
     "tmp": "^0.2.6",
     "inquirer": "^9.3.7"
+  },
+  "release": {
+    "branches": ["main"],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      ["@semantic-release/changelog", {"changelogFile": "CHANGELOG.md"}],
+      ["@semantic-release/github", {"assets": []}],
+      ["@semantic-release/git", {
+        "assets": ["CHANGELOG.md", "package.json"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }]
+    ]
   }
 }
