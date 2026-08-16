@@ -1,4 +1,4 @@
-name = "iptvo-logo-proxy"
+name = "nuvio-iptv"
 main = "logo-proxy.worker.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
