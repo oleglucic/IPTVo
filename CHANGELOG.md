@@ -1,3 +1,10 @@
+## [0.1.1](https://github.com/oleglucic/nuvio-iptv/compare/v0.1.0...v0.1.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* fix Docker build by installing all deps first then pruning dev deps ([45bee86](https://github.com/oleglucic/nuvio-iptv/commit/45bee86834a3508d962626b32e1d969321b17172))
+
 # [0.1.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.0.1...v0.1.0) (2026-08-16)
 
 
