@@ -50,9 +50,10 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       - run: npm install
-      - uses: semantic-release/action@v4
+      - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to Docker Hub
