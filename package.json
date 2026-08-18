@@ -48,7 +48,7 @@
     "eslint-plugin-html": "^8.0.0",
     "globals": "^17.11.0",
     "husky": "^9.0.0",
-    "semantic-release": "^24.0.0"
+    "semantic-release": "^25.0.9"
   },
   "engines": {
     "node": ">=18.0.0"
