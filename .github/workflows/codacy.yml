@@ -33,7 +33,7 @@ jobs:
     steps:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Setup Node.js 24 (avoid Node 20 deprecation warning)
       - name: Setup Node.js
