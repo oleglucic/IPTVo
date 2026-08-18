@@ -20,14 +20,7 @@ const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 2;
 const BASE_RETRY_DELAY_MS = 500;
 
-// Known problematic domains that need special handling
-const PROBLEMATIC_DOMAINS = new Set([
-    'upload.wikimedia.org',      // 403 on direct hotlink
-    'images-web.ug-be.cdn.united.cloud', // 404 rotation
-    'i.imgur.com',               // aggressive rate limiting
-    'imgur.com',                 // aggressive rate limiting
-    'photo-tmdb.com',            // 404 on stale stalker portal logos
-]);
+// Known problematic domains that need special handling (reserved for future use)
 
 // SVG placeholder generator
 function generatePlaceholderSvg(text = 'Live TV') {
@@ -61,14 +54,6 @@ function isValidHttpUrl(url) {
         return u.protocol === 'http:' || u.protocol === 'https:';
     } catch {
         return false;
-    }
-}
-
-function getDomain(url) {
-    try {
-        return new URL(url).hostname;
-    } catch {
-        return 'unknown';
     }
 }
 
@@ -196,7 +181,7 @@ async function tryFetchUrl(env, url) {
 
 // Main handler
 export default {
-    async fetch(request, env, ctx) {
+    async fetch(request, env, _ctx) {
         const url = new URL(request.url);
 
         // Health check

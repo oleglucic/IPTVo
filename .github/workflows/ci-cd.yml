@@ -13,6 +13,8 @@ permissions:
   id-token: write
   packages: write
   security-events: write
+  # Coderabbit needs pull-request review permissions
+  pull-requests: write
 
 jobs:
   ci:
@@ -28,6 +30,8 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm install
       - run: npm run lint
+      - run: npm test -- --coverage
+      - run: npm audit --production
       - run: node --check server.js
 
   release:

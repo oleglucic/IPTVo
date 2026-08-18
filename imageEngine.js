@@ -232,7 +232,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
     return await generateFallback(cachePath, fallbackName, sourceLog);
 }
 
-async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, contentType = 'image/png') {
+async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, _contentType = 'image/png') {
     // If we got an SVG, we can use it directly for high-quality scaling
     let processBuffer = logoBuffer;
     let isSvg = isSvgBuffer(logoBuffer);
@@ -344,6 +344,13 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
 
     const urlHash = primaryUrl ? crypto.createHash('md5').update(primaryUrl).digest('hex').substring(0, 8) : 'none';
     const cachePath = path.join(cacheDir, `${cId}_${urlHash}.png`);
+
+    // Defense-in-depth: validate resolved path stays within cache directory
+    const resolvedPath = path.resolve(cachePath);
+    const resolvedCacheDir = path.resolve(cacheDir);
+    if (!resolvedPath.startsWith(resolvedCacheDir)) {
+        throw new Error("Path traversal attempt detected");
+    }
 
     if (fs.existsSync(cachePath)) return cachePath;
 

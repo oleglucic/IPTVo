@@ -1,0 +1,11 @@
+{
+  "files": ["**/*.md", "**/*.markdown"],
+  "exclude": ["node_modules/**", "coverage/**"],
+  "httpTimeout": "10000",
+  "retryCount": "2",
+  "skip": [
+    "https://github.com/.*/issues/[0-9]+",
+    "https://github.com/.*/pull/[0-9]+"
+  ],
+  "quiet": false
+}

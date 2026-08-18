@@ -2,7 +2,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
+const { addonBuilder } = require('stremio-addon-sdk');
 const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE } = require('./iptvParser');
 const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
@@ -16,6 +16,10 @@ app.use(express.json());
 
 // Rate limiting middleware
 const rateLimit = require('express-rate-limit');
+
+// Enable trust proxy for rate limiter (needed when behind reverse proxy/docker)
+// Set to 1 to trust first proxy (e.g., Docker, nginx) - prevents rate limit bypass
+app.set('trust proxy', 1);
 
 // General API rate limiter (applied to all /api routes)
 const apiLimiter = rateLimit({
@@ -62,9 +66,19 @@ const getGroupsLimiter = rateLimit({
     legacyHeaders: false
 });
 
+// Rate limiter for dashboard routes (GET / and GET /:config/configure)
+const dashboardLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 50, // limit each IP to 50 dashboard requests per windowMs
+    message: { error: 'Too many dashboard requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 /**
  * Sanitizes a string for safe logging (prevents log injection).
  * Removes newlines, tabs, carriage returns, and limits length.
+ * Also escapes characters used in structured logging formats.
  * @param {string} str - The string to sanitize
  * @returns {string} - Sanitized string safe for logging
  */
@@ -73,6 +87,7 @@ function sanitizeForLog(str) {
     return String(str)
         .replace(/[\r\n\t]/g, '?')
         .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
+        .replace(/[%{}]/g, '?')  // Escape structured logging format chars
         .substring(0, 200);  // Limit length
 }
 
@@ -133,12 +148,21 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000);
 
-// Serve dashboard
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dashboard.html'));
+// Serve dashboard (new structure)
+app.get('/', dashboardLimiter, (req, res) => {
+    res.sendFile(path.join(__dirname, 'dashboard', 'index.html'));
 });
-app.get('/:config/configure', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dashboard.html'));
+app.get('/:config/configure', dashboardLimiter, (req, res) => {
+    res.sendFile(path.join(__dirname, 'dashboard', 'index.html'));
+});
+
+// Serve dashboard assets
+app.use('/dashboard', express.static(path.join(__dirname, 'dashboard')));
+
+// Version endpoint
+app.get('/api/version', (req, res) => {
+    const pkg = require('./package.json');
+    res.json({ version: pkg.version });
 });
 
 // Apply general API rate limiting to all /api routes
@@ -200,7 +224,7 @@ function extractConfig(req) {
             rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
             while (rawB64.length % 4 !== 0) rawB64 += '=';
             const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
-            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch (_) {}
+            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch {}
             return JSON.parse(decoded);
         }
         return null;
@@ -679,9 +703,11 @@ app.delete('/api/auth/account', async (req, res) => {
     }
 });
 
+const pkg = require('./package.json');
+
 const builder = new addonBuilder({
     id: 'iptvo.oleglucic.com',
-    version: '0.0.1',
+    version: pkg.version,
     name: 'IPTVo',
     description: 'AI Curation Stack & Intelligent Catalog Filter Layer for Live IPTV',
     resources: ['catalog', 'meta', 'stream'],
@@ -699,15 +725,8 @@ const builder = new addonBuilder({
     idPrefixes: ['global_', 'us_', 'uk_', 'gb_', 'de_', 'fr_', 'es_', 'it_', 'ca_', 'au_', 'nl_', 'be_', 'pt_', 'gr_', 'pl_', 'cz_', 'hu_', 'ro_', 'rs_', 'hr_', 'si_', 'sk_', 'lt_', 'lv_', 'ee_', 'fi_', 'se_', 'no_', 'dk_', 'at_', 'ch_', 'ie_', 'bg_', 'cy_', 'mt_', 'lu_', 'is_', 'li_', 'mc_', 'sm_', 'va_', 'ad_', 'me_', 'mk_', 'al_', 'ba_', 'xk_', 'md_', 'ge_', 'am_', 'az_', 'by_', 'ua_', 'ru_', 'kz_', 'uz_', 'kg_', 'tj_', 'tm_', 'mn_', 'cn_', 'jp_', 'kr_', 'kp_', 'tw_', 'hk_', 'mo_', 'sg_', 'my_', 'th_', 'vn_', 'ph_', 'id_', 'bn_', 'kh_', 'la_', 'mm_', 'np_', 'bd_', 'lk_', 'mv_', 'bt_', 'af_', 'pk_', 'ir_', 'iq_', 'il_', 'jo_', 'lb_', 'sy_', 'ps_', 'sa_', 'ye_', 'om_', 'ae_', 'qa_', 'bh_', 'kw_', 'tr_', 'eg_', 'ly_', 'tn_', 'dz_', 'ma_', 'mr_', 'ml_', 'ne_', 'td_', 'cf_', 'cm_', 'ga_', 'gq_', 'st_', 'ao_', 'zw_', 'zm_', 'mw_', 'mz_', 'na_', 'bw_', 'ls_', 'sz_', 'za_', 'ng_', 'gh_', 'ci_', 'sn_', 'sl_', 'lr_', 'gn_', 'gw_', 'cv_', 'sc_', 'mu_', 'mg_', 'km_', 'dj_', 'er_', 'et_', 'so_', 'ke_', 'ug_', 'rw_', 'bi_', 'tz_', 'cd_', 'cg_', 'rn_', 're_', 'yt_', 'tf_', 'hm_', 'bv_', 'sj_', 'aq_']
 });
 
-async function getChannelData(config, id, configObj) {
-    await ensureCache(config, configObj);
-    const ud = userCaches.get(config);
-    if (!ud || !ud.channelMap.has(id)) return null;
-    return ud.channelMap.get(id);
-}
-
 // Catalog handler (tv catalogs)
-builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
+builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
@@ -752,7 +771,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
 });
 
 // Meta handler
-builder.defineMetaHandler(async ({ type, id, extra, config }) => {
+builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
@@ -787,7 +806,7 @@ builder.defineMetaHandler(async ({ type, id, extra, config }) => {
 });
 
 // Stream handler
-builder.defineStreamHandler(async ({ type, id, extra, config }) => {
+builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
 

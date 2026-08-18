@@ -1,0 +1,49 @@
+name: Coderabbit PR Review
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Coderabbit PR Review
+        uses: coderabbitai/pr-review@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          model: "gpt-4o"
+          # Enable auto-merge after approval (optional)
+          # approve: true
+          # merge-after-approval: true
+          # Additional configuration
+          extra-instructions: |
+            Focus on:
+            1. Security vulnerabilities (especially path injection, SSRF, auth bypass)
+            2. Code quality and maintainability
+            3. Following project conventions in CLAUDE.md
+            4. Proper error handling and logging
+            5. Performance considerations
+            6. Test coverage improvements
+          # Skip draft PRs
+          skip-drafts: true
+          # Only review files that changed
+          only-changed-files: true

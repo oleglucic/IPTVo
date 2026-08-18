@@ -103,7 +103,7 @@ async function snapshotAllEpgToHistory(userCaches) {
     let totalSaved = 0;
     let channelsProcessed = 0;
 
-    for (const [configKey, ud] of userCaches.entries()) {
+    for (const [_configKey, ud] of userCaches.entries()) {
         if (!ud || ud.status !== 'ready' || !ud.epgData) continue;
 
         for (const [channelKey, programs] of Object.entries(ud.epgData)) {

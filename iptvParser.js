@@ -3,8 +3,8 @@ const readline = require('readline');
 const zlib = require('zlib');
 const sax = require('sax');
 const { Readable } = require('stream');
-const { startAiQueue, globalAiCache } = require('./aiCurator');
-const { getOverride, getAllOverrides } = require('./db');
+const { startAiQueue } = require('./aiCurator');
+const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
 const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
 
@@ -73,7 +73,7 @@ const SYNONYM_MAP = { jr: 'junior' };
 function applySynonyms(str) {
     return str.split(/\s+/).map(w => SYNONYM_MAP[w.toLowerCase()] || w).join(' ');
 }
-const { saveCacheToRedis, saveLogoUrl, loadLogoUrl, hasRedis } = require('./redisCache');
+const { saveCacheToRedis, saveLogoUrl } = require('./redisCache');
 const { getLogoUrl, setLogoUrl } = require('./db');
 
 const userCaches = new Map();
@@ -98,7 +98,7 @@ function parseXMLDate(x) {
         const time = new Date(isoStr).getTime();
         if (isNaN(time)) return 0;
         return time;
-    } catch (e) {
+    } catch (__e) {
         return 0;
     }
 }
@@ -182,7 +182,7 @@ async function parseM3uData(configKey, configObj) {
     console.log(`[parseM3uData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
-    console.log(`[parser] Preloaded ${overridesMap.size} override mappings from DB`);
+    console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration context object is missing.");
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
@@ -259,9 +259,12 @@ async function parseM3uData(configKey, configObj) {
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
 let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|vip|live|backup|alt|online)\b/gi, ' ');
+                // ReDoS-safe: use specific character classes without nested quantifiers
                 cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
-                cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
-                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
+                cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
+                cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
+                // Fixed: removed nested quantifier \s* followed by character class with *
+                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
                 cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
                 
                 const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
@@ -338,14 +341,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         for (const [, channel] of tMap.entries()) {
             if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
         }
-        console.log(`[iptv-org] Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+        console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
-        console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
-        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
+        console.log(`[parser] READY configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
+        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
-        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
 
         // Queue background logo pre-fetch for channels without iptv-org match
         const missingLogos = [];
@@ -359,14 +362,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             }
         }
         if (missingLogos.length > 0) {
-            console.log(`[LogoPrefetch] Queuing ${missingLogos.length} logos for background fetch...`);
-            queueLogoPrefetch(missingLogos).catch(e => console.error('[LogoPrefetch] Error:', e.message));
+            console.log(`[LogoPrefetch] Queuing ${sanitizeForLog(missingLogos.length)} logos for background fetch...`);
+            queueLogoPrefetch(missingLogos).catch(e => console.error('[LogoPrefetch] Error:', sanitizeForLog(e.message)));
         }
 
         // Always trigger async background AI process when dirty channels exist
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
             console.log(`[AI Curator] Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", err));
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
             console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${Object.keys(configObj).join(', ')}, ai=${configObj.ai}`);
         }
@@ -381,7 +384,7 @@ async function parseXtreamData(configKey, configObj) {
     console.log(`[parseXtreamData] START for configKey=${configKey ? configKey.substring(0,12) : 'null'}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
-    console.log(`[parser] Preloaded ${overridesMap.size} override mappings from DB`);
+    console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration mapping context payload is missing.");
 
@@ -473,9 +476,12 @@ async function parseXtreamData(configKey, configObj) {
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
 let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|vip|live|backup|alt|online)\b/gi, ' ');
+            // ReDoS-safe: use specific character classes without nested quantifiers
             cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
-            cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
-            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
+            cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
+            cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
+            // Fixed: removed nested quantifier \s* followed by character class with *
+            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
             cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
             const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
@@ -538,18 +544,18 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         for (const [, channel] of tMap.entries()) {
             if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
         }
-        console.log(`[iptv-org] Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+        console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
-        console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
-        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
-        console.log(`[Xtream Engine] Categorized and loaded ${tCat.length} streams inside memory.`);
+        console.log(`[parser] READY configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
+        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
+        console.log(`[Xtream Engine] Categorized and loaded ${sanitizeForLog(tCat.length)} streams inside memory.`);
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
-        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
 
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", err));
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
             console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config`);
         }
@@ -587,7 +593,6 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
             // Using sax parser streaming to parse XML memory-safely
             const saxStream = sax.createStream(true, { trim: true, normalize: true });
             let currentProgramme = null;
-            let currentTag = null;
             let currentText = '';
 
             saxStream.on('opentag', (node) => {
@@ -598,7 +603,6 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
                         channel: node.attributes.channel ? node.attributes.channel.toLowerCase().trim() : ""
                     };
                 }
-                currentTag = node.name;
                 currentText = '';
             });
 
@@ -685,7 +689,7 @@ async function saveLogoUrlsToRedis(configKey, tMap) {
         }
     }
     if (saved > 0) {
-        console.log(`[LogoCache] Saved ${saved} logo URLs for change tracking (Redis + DB)`);
+        console.log(`[LogoCache] Saved ${sanitizeForLog(saved)} logo URLs for change tracking (Redis + DB)`);
     }
 }
 
@@ -703,7 +707,7 @@ async function backgroundLogoRefresh() {
     let errors = 0;
 
     try {
-        for (const [configKey, cached] of userCaches.entries()) {
+        for (const [_configKey, cached] of userCaches.entries()) {
             if (!cached || cached.status !== 'ready' || !cached.channelMap) continue;
 
             for (const [cId, channel] of cached.channelMap.entries()) {
@@ -724,7 +728,7 @@ async function backgroundLogoRefresh() {
                 }
 
                 // URL changed or first time seeing this channel - need refresh
-                console.log(`[LogoRefresh] Logo URL changed/new for ${cId}, refreshing...`);
+                console.log(`[LogoRefresh] Logo URL changed/new for ${sanitizeForLog(cId)}, refreshing...`);
 
                 try {
                     // Fetch via imageEngine (which uses Worker proxy + Redis cache)
@@ -745,15 +749,15 @@ async function backgroundLogoRefresh() {
 
                 } catch (err) {
                     errors++;
-                    console.error(`[LogoRefresh] Failed for ${cId}: ${err.message}`);
+                    console.error(`[LogoRefresh] Failed for ${sanitizeForLog(cId)}: ${sanitizeForLog(err.message)}`);
                 }
             }
         }
 
-        console.log(`[LogoRefresh] Complete: checked=${checked}, refreshed=${refreshed}, unchanged=${unchanged}, errors=${errors}`);
+        console.log(`[LogoRefresh] Complete: checked=${sanitizeForLog(checked)}, refreshed=${sanitizeForLog(refreshed)}, unchanged=${sanitizeForLog(unchanged)}, errors=${sanitizeForLog(errors)}`);
 
     } catch (err) {
-        console.error('[LogoRefresh] Fatal error:', err.message);
+        console.error('[LogoRefresh] Fatal error:', sanitizeForLog(err.message));
     }
 }
 
@@ -779,7 +783,7 @@ async function queueLogoPrefetch(missingLogos) {
                 const primaryLogo = iptvOrgLogo || url;
                 const fallbackLogo = iptvOrgLogo ? url : null;
                 await getPremiumPoster(cId, primaryLogo, fallbackLogo, cId);
-            } catch (e) {
+            } catch (__e) {
                 // Ignore pre-fetch errors - they'll be retried on actual request
             }
         });

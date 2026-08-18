@@ -1,5 +1,4 @@
 const globals = require('globals');
-const pluginHtml = require('eslint-plugin-html');
 
 module.exports = [
   {
@@ -13,7 +12,7 @@ module.exports = [
       }
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_+', varsIgnorePattern: '^_+', caughtErrorsIgnorePattern: '^_+' }],
       'no-console': 'off'
     }
   },
@@ -28,7 +27,7 @@ module.exports = [
       }
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_+', varsIgnorePattern: '^_+', caughtErrorsIgnorePattern: '^_+' }],
       'no-console': 'off'
     }
   },

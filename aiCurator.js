@@ -1,6 +1,20 @@
 const axios = require('axios');
-const { getOverride, setOverride, getAllOverrides } = require('./db');
+const { setOverride, getAllOverrides } = require('./db');
 const { lookupChannel, lookupChannelFuzzy } = require('./iptvOrgRef');
+
+/**
+ * Sanitizes a string for safe logging (prevents log injection).
+ * Removes newlines, tabs, carriage returns, and limits length.
+ * @param {string} str - The string to sanitize
+ * @returns {string} - Sanitized string safe for logging
+ */
+function sanitizeForLog(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/[\r\n\t]/g, '?')
+        .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
+        .substring(0, 200);  // Limit length
+}
 
 // In-memory runtime cache for AI overrides
 const globalAiCache = new Map();
@@ -23,7 +37,7 @@ Return ONLY a raw JSON object where the key is the name and the value is the cle
 Input: ${JSON.stringify(batchItems)}`;
 
     try {
-        console.log(`[AI Curator] Resolving duplicates for a batch of ${batchItems.length} channels...`);
+        console.log(`[AI Curator] Resolving duplicates for a batch of ${sanitizeForLog(batchItems.length)} channels...`);
         const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: "openrouter/free",
             messages: [{ role: "user", content: prompt }]
@@ -43,7 +57,7 @@ Input: ${JSON.stringify(batchItems)}`;
         if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
             content = content.substring(jsonStart, jsonEnd + 1);
         } else {
-            console.error(`[AI Curator] No JSON object found in response. Raw snippet: ${content.substring(0, 300)}`);
+            console.error(`[AI Curator] No JSON object found in response. Raw snippet: ${sanitizeForLog(content.substring(0, 300))}`);
         }
 
         return JSON.parse(content);
@@ -53,7 +67,7 @@ Input: ${JSON.stringify(batchItems)}`;
             console.error(`[AI Curator] Rate limit or payment required (status ${status}) - stopping this cycle.`);
             return { __rateLimited: true };
         }
-        console.error("[AI Curator Error] Failed to process batch:", e.message);
+        console.error("[AI Curator Error] Failed to process batch:", sanitizeForLog(e.message));
         return {};
     }
 }
@@ -67,7 +81,7 @@ Input: ${JSON.stringify(batchItems)}`;
 async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
     if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
 
-    console.log(`[AI Curator] Background queue triggered for ${dirtyChannels.length} stream evaluations...`);
+    console.log(`[AI Curator] Background queue triggered for ${sanitizeForLog(dirtyChannels.length)} stream evaluations...`);
 
     // 1. Conflict & Filter Detection
     const rawNamesByBase = new Map();
@@ -127,17 +141,17 @@ async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
     }
     const uniqueToProcess = [...priorityMap.entries()].sort((a, b) => b[1] - a[1]).map(entry => ({ name: entry[0], scope: scopeMap.get(entry[0]) || 'global' }));
     if (uniqueToProcess.length === 0) {
-        console.log(`[AI Curator] No flagged channels requiring processing for ${configKey} (all handled by iptv-org).`);
+        console.log(`[AI Curator] No flagged channels requiring processing for ${sanitizeForLog(configKey)} (all handled by iptv-org).`);
         return;
     }
 
-    console.log(`[AI Curator] Flagged ${uniqueToProcess.length} channels for AI verification (no iptv-org match).`);
+    console.log(`[AI Curator] Flagged ${sanitizeForLog(uniqueToProcess.length)} channels for AI verification (no iptv-org match).`);
 
     for (let i = 0; i < uniqueToProcess.length; i += 100) {
         const batch = uniqueToProcess.slice(i, i + 100);
         const aiResults = await processAiBatch(batch, openrouterKey);
             if (aiResults.__rateLimited) {
-                console.log(`[AI Curator] Stopping early due to rate limit. Processed ${i} of ${uniqueToProcess.length} channels this cycle.`);
+                console.log(`[AI Curator] Stopping early due to rate limit. Processed ${sanitizeForLog(i)} of ${sanitizeForLog(uniqueToProcess.length)} channels this cycle.`);
                 break;
             }
 
@@ -155,7 +169,7 @@ async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
                 if (iptvOrgMatch) {
                     // AI-cleaned name now matches iptv-org! Use authoritative ID
                     finalId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}`;
-                    console.log(`[AI Curator] AI-cleaned "${raw}" -> "${sanitizedBase}" now matches iptv-org: ${iptvOrgMatch.officialId} (${iptvOrgMatch.countryScopeKey})`);
+                    console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" -> "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
                 } else {
                     // No iptv-org match yet, use AI-generated canonical ID
                     finalId = `${scope}_${sanitizedBase}`;
