@@ -1,3 +1,17 @@
+# [0.2.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.1.1...v0.2.0) (2026-08-19)
+
+
+### Bug Fixes
+
+* **release:** scope App token to repository so ruleset bypass applies ([dbe8a5a](https://github.com/oleglucic/nuvio-iptv/commit/dbe8a5accdce6a51055fd6e0344e9b078f84b68e))
+* **release:** use RELEASE_GITHUB_TOKEN PAT for semantic-release push to protected main ([977f07c](https://github.com/oleglucic/nuvio-iptv/commit/977f07cd784b479a12fc5995aae0efc235b6da27))
+* **workflows:** correct pinned Docker action SHAs in release job ([9cd6036](https://github.com/oleglucic/nuvio-iptv/commit/9cd60369688903f92667c0d181434796c9c8af35))
+
+
+### Features
+
+* implement dashboard rewrite, testing, CI/CD workflows, branch protection, and code quality improvements ([#22](https://github.com/oleglucic/nuvio-iptv/issues/22)) ([c4322e3](https://github.com/oleglucic/nuvio-iptv/commit/c4322e3595f08f9267613e3e235d2bf629ca7f42))
+
 ## [0.1.1](https://github.com/oleglucic/nuvio-iptv/compare/v0.1.0...v0.1.1) (2026-08-16)
 
 
