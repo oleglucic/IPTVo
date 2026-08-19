@@ -1,3 +1,10 @@
+# [0.3.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.4...v0.3.0) (2026-08-19)
+
+
+### Features
+
+* **dashboard:** mobile drawer, wizard prev/next nav, matching toggle fix ([d771512](https://github.com/oleglucic/nuvio-iptv/commit/d771512139b81877e69bd53ee3b2b75eb516382f))
+
 ## [0.2.4](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.3...v0.2.4) (2026-08-19)
 
 
