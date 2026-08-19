@@ -70,6 +70,11 @@ function isSafeUrl(url) {
 
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
+/**
+ * Replaces configured word synonyms in a string.
+ * @param {string} str - The text whose words should be normalized.
+ * @return {string} The text with recognized synonyms replaced.
+ */
 function applySynonyms(str) {
     return str.split(/\s+/).map(w => SYNONYM_MAP[w.toLowerCase()] || w).join(' ');
 }
@@ -89,6 +94,11 @@ function getUserCache(configKey) {
     return cached;
 }
 
+/**
+ * Converts an XMLTV timestamp into Unix time in milliseconds.
+ * @param {string} x - The XMLTV timestamp, including an optional timezone offset.
+ * @return {number} The timestamp in Unix milliseconds, or `0` for invalid input.
+ */
 function parseXMLDate(x) {
     if (!x || x.length < 14) return 0;
     try {
@@ -177,6 +187,11 @@ async function streamFetchIPTV(configKey, configObj) {
     }
 }
 
+/**
+ * Parses an M3U playlist and stores its channels, streams, logos, groups, and EPG data in the user cache.
+ * @param {string} configKey - The key identifying the playlist configuration and its cache entry.
+ * @param {Object} configObj - Playlist settings, including the M3U URL and optional filtering, EPG, matching, and AI configuration.
+ */
 async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
     console.log(`[parseM3uData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
@@ -379,6 +394,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
     }
 }
 
+/**
+ * Loads and normalizes live channel data from an Xtream server into the user cache.
+ * @param {string} configKey - The key identifying the configuration and its cache entry.
+ * @param {Object} configObj - Xtream connection and channel filtering configuration.
+ */
 async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
     console.log(`[parseXtreamData] START for configKey=${configKey ? configKey.substring(0,12) : 'null'}...`);
@@ -566,6 +586,13 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
     }
 }
 
+/**
+ * Parses a streamed XMLTV EPG feed and maps programme schedules to known channels.
+ * @param {string} epgUrl - The XMLTV feed URL.
+ * @param {Map} tMap - Map of known canonical channel IDs.
+ * @param {Map} epgMap - Map of EPG channel identifiers to canonical channel IDs.
+ * @returns {Object} A mapping of canonical channel IDs to programme schedules.
+ */
 async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     const tEpg = {};
     if (!epgUrl) return tEpg;
@@ -671,8 +698,8 @@ function getEpgText(chKey, epgData, offsetHours = 0) {
 module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh };
 
 /**
- * Save logo URLs to both Redis (fast access) and Database (persistent, no expiry).
- * Runs in background after parsing completes.
+ * Persists primary channel logo URLs for change tracking.
+ * @param {Map} tMap - Map of channel identifiers to channel metadata.
  */
 async function saveLogoUrlsToRedis(configKey, tMap) {
     let saved = 0;
@@ -694,10 +721,8 @@ async function saveLogoUrlsToRedis(configKey, tMap) {
 }
 
 /**
- * Background logo refresh - only refresh logos that have changed URLs
- * or are new (haven't been fetched before).
- * Uses Database for persistent URL tracking (survives restarts, no expiry).
- * Runs periodically to respect rate limits.
+ * Refreshes channel logos when their URLs are new or have changed.
+ * Tracks processed logo URLs persistently and pauses between refreshes to respect rate limits.
  */
 async function backgroundLogoRefresh() {
     console.log('[LogoRefresh] Starting background logo refresh...');
@@ -762,9 +787,8 @@ async function backgroundLogoRefresh() {
 }
 
 /**
- * Background logo pre-fetch queue - fetches logos for channels without iptv-org match
- * to warm up the Cloudflare Worker cache (which caches at edge for 30 days).
- * Fire-and-forget, runs during parsing.
+ * Prefetches channel logos in rate-limited batches to warm the image cache.
+ * @param {Array<{url: string, cId: string, iptvOrgLogo?: string}>} missingLogos - Channel logo details, including playlist and optional iptv-org URLs.
  */
 async function queueLogoPrefetch(missingLogos) {
     if (!missingLogos || missingLogos.length === 0) return;

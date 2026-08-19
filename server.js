@@ -76,11 +76,9 @@ const dashboardLimiter = rateLimit({
 });
 
 /**
- * Sanitizes a string for safe logging (prevents log injection).
- * Removes newlines, tabs, carriage returns, and limits length.
- * Also escapes characters used in structured logging formats.
- * @param {string} str - The string to sanitize
- * @returns {string} - Sanitized string safe for logging
+ * Produces a bounded, printable representation of a value for logging.
+ * @param {string} str - The value to sanitize.
+ * @returns {string} A printable string with control characters and structured-log delimiters replaced, limited to 200 characters.
  */
 function sanitizeForLog(str) {
     if (!str) return '';
@@ -208,7 +206,11 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
 
 // ============ STREMIO ADDON ENDPOINTS ============
 
-// Updated extractConfig to support user UUID
+/**
+ * Extracts user configuration from request parameters, headers, or a legacy encoded configuration.
+ * @param {Object} req - The request containing user ID or configuration data.
+ * @returns {Object|null} The extracted user ID reference or decoded configuration, or `null` when extraction fails or no configuration is provided.
+ */
 function extractConfig(req) {
     try {
         // First check for user UUID in Authorization header or query param

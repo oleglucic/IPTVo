@@ -9,6 +9,14 @@ const icons = {
     info: `<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`
 };
 
+/**
+ * Displays a toast notification with an icon, title, optional message, and dismissal controls.
+ * @param {string} type - The notification type, such as `success`, `error`, `warning`, or `info`.
+ * @param {string} title - The notification title.
+ * @param {string} [message] - Optional message text.
+ * @param {number} [duration=5000] - Time in milliseconds before automatic dismissal; values less than or equal to zero disable automatic dismissal.
+ * @return {HTMLElement|undefined} The created toast element, or `undefined` when the toast container is unavailable.
+ */
 export function showToast(type, title, message, duration = 5000) {
     if (!container) return;
 
@@ -56,11 +64,20 @@ export function showToast(type, title, message, duration = 5000) {
     return toast;
 }
 
+/**
+ * Removes a toast from the document with a reverse slide animation.
+ * @param {HTMLElement} toast - The toast element to remove.
+ */
 function removeToast(toast) {
     toast.style.animation = 'slideInRight 0.2s ease reverse';
     setTimeout(() => toast.remove(), 200);
 }
 
+/**
+ * Escapes text for safe use as HTML content.
+ * @param {string} text - The text to escape.
+ * @return {string} The HTML-escaped text.
+ */
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;

@@ -3,10 +3,9 @@ const { setOverride, getAllOverrides } = require('./db');
 const { lookupChannel, lookupChannelFuzzy } = require('./iptvOrgRef');
 
 /**
- * Sanitizes a string for safe logging (prevents log injection).
- * Removes newlines, tabs, carriage returns, and limits length.
- * @param {string} str - The string to sanitize
- * @returns {string} - Sanitized string safe for logging
+ * Sanitizes a value for safe logging.
+ * @param {string} str - The value to sanitize.
+ * @return {string} A printable ASCII string limited to 200 characters.
  */
 function sanitizeForLog(str) {
     if (!str) return '';
@@ -20,8 +19,10 @@ function sanitizeForLog(str) {
 const globalAiCache = new Map();
 
 /**
- * Asks OpenRouter AI to resolve messy channel strings into a unified canonical ID format.
- * @param {string} apiKey - OpenRouter API key (mandatory if AI enabled)
+ * Resolves channel names into canonical base names using OpenRouter.
+ * @param {Array<{name: string, scope: string}>} batchItems - Channel names and their parser-derived scopes.
+ * @param {string} apiKey - OpenRouter API key.
+ * @returns {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
  */
 async function processAiBatch(batchItems, apiKey) {
     if (!apiKey) return {};
@@ -73,10 +74,10 @@ Input: ${JSON.stringify(batchItems)}`;
 }
 
 /**
- * Background worker that processes unmapped or highly duplicated strings
- * @param {Array<{rawName: string, baseCleanName: string, cId: string}>} dirtyChannels
- * @param {string} configKey
- * @param {string} openrouterKey - Mandatory OpenRouter API key from user config
+ * Normalizes flagged channel names and persists their canonical ID overrides.
+ * @param {Array<{rawName: string, baseCleanName: string, cId: string, countryScopeKey?: string}>} dirtyChannels - Channels requiring normalization.
+ * @param {string} configKey - Configuration identifier used for processing context.
+ * @param {string} openrouterKey - OpenRouter API key used for AI normalization.
  */
 async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
     if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;

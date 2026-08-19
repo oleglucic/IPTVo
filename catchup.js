@@ -94,10 +94,8 @@ async function getCatchupStreams(channelKey, liveUrl, hoursBack = 48) {
 }
 
 /**
- * Snapshot all currently cached channels' EPG data into persistent history.
- * Intended to be called periodically (e.g. every 30 min) while the server
- * process stays warm, so history accumulates continuously over time.
- * @param {Map} userCaches - the in-memory cache map from iptvParser.js
+ * Saves available cached EPG programs to persistent history.
+ * @param {Map} userCaches - The in-memory user cache entries containing EPG data.
  */
 async function snapshotAllEpgToHistory(userCaches) {
     let totalSaved = 0;

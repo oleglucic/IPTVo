@@ -7,7 +7,9 @@ import { toast } from './toast.js';
 // DOM Elements
 const elements = {};
 
-// Initialize DOM references
+/**
+ * Cache references to the DOM elements used by the application.
+ */
 function cacheElements() {
     // Auth
     elements.authModal = document.getElementById('authModal');
@@ -71,7 +73,10 @@ function cacheElements() {
     elements.appVersion = document.getElementById('appVersion');
 }
 
-// Auth Modal Handlers
+/**
+ * Switches the authentication modal to the selected tab.
+ * @param {string} tab - The identifier of the tab to display.
+ */
 function showAuthTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
@@ -82,6 +87,10 @@ function showAuthTab(tab) {
     });
 }
 
+/**
+ * Authenticates the user and initializes the application with the returned account data.
+ * @param {SubmitEvent} e - The login form submission event.
+ */
 async function handleLogin(e) {
     e.preventDefault();
     const formData = new FormData(elements.loginForm);
@@ -103,6 +112,10 @@ async function handleLogin(e) {
     }
 }
 
+/**
+ * Registers a new user and initializes the authenticated application.
+ * @param {SubmitEvent} e - The registration form submission event.
+ */
 async function handleRegister(e) {
     e.preventDefault();
     const formData = new FormData(elements.registerForm);
@@ -131,6 +144,9 @@ async function handleRegister(e) {
     }
 }
 
+/**
+ * Opens the authentication modal and resets its forms and error messages.
+ */
 function openAuthModal() {
     elements.authModal.hidden = false;
     document.body.style.overflow = 'hidden';
@@ -141,6 +157,9 @@ function openAuthModal() {
     elements.registerError.hidden = true;
 }
 
+/**
+ * Closes the authentication modal for authenticated users.
+ */
 function closeAuthModal() {
     // Only allow closing the modal if user is authenticated
     if (!state.isAuthenticated) {
@@ -150,6 +169,9 @@ function closeAuthModal() {
     document.body.style.overflow = '';
 }
 
+/**
+ * Signs the user out and returns the interface to its unauthenticated state.
+ */
 async function handleLogout() {
     closeUserDropdown();
     try {
@@ -162,6 +184,9 @@ async function handleLogout() {
     toast.info('Signed out', 'You have been signed out successfully');
 }
 
+/**
+ * Changes the authenticated user's password after validating the new password length.
+ */
 async function handleChangePassword() {
     closeUserDropdown();
     const currentPassword = prompt('Enter your current password:');
@@ -181,6 +206,9 @@ async function handleChangePassword() {
     }
 }
 
+/**
+ * Permanently deletes the authenticated user's account after explicit confirmation.
+ */
 async function handleDeleteAccount() {
     closeUserDropdown();
     const confirm = prompt('This will permanently delete your account and all data. Type "DELETE" to confirm:');
@@ -202,19 +230,27 @@ async function handleDeleteAccount() {
     }
 }
 
-// User Dropdown
+/**
+ * Toggles the visibility of the user dropdown menu and updates its accessibility state.
+ */
 function toggleUserDropdown() {
     const isOpen = !elements.userDropdown.hidden;
     elements.userDropdown.hidden = isOpen;
     elements.userMenuBtn.setAttribute('aria-expanded', !isOpen);
 }
 
+/**
+ * Closes the user account dropdown menu.
+ */
 function closeUserDropdown() {
     elements.userDropdown.hidden = true;
     elements.userMenuBtn.setAttribute('aria-expanded', 'false');
 }
 
-// Navigation
+/**
+ * Switches the wizard to the specified configuration step and updates navigation state.
+ * @param {number} step - The step number to activate.
+ */
 function navigateToStep(step) {
     mutations.setCurrentStep(step);
 
@@ -243,7 +279,9 @@ function navigateToStep(step) {
     });
 }
 
-// Provider Form
+/**
+ * Updates provider-specific fields and the group-loading control to reflect the current configuration.
+ */
 function updateProviderFields() {
     const type = state.config.type;
     elements.m3uFields.hidden = type !== 'm3u';
@@ -251,6 +289,10 @@ function updateProviderFields() {
     elements.loadGroupsBtn.disabled = !getters.isProviderConfigured();
 }
 
+/**
+ * Updates the provider configuration from submitted form data.
+ * @param {SubmitEvent} e - The provider configuration form submission event.
+ */
 async function handleProviderSubmit(e) {
     e.preventDefault();
     const formData = new FormData(elements.providerForm);
@@ -266,6 +308,9 @@ async function handleProviderSubmit(e) {
     elements.connectionTestResult.hidden = true;
 }
 
+/**
+ * Tests the configured provider connection and displays the result.
+ */
 async function handleTestConnection() {
     if (!getters.isProviderConfigured()) return;
 
@@ -297,7 +342,9 @@ async function handleTestConnection() {
     }
 }
 
-// Groups
+/**
+ * Loads available groups from the configured provider and displays them.
+ */
 async function handleLoadGroups() {
     if (!getters.isProviderConfigured() || state.isLoadingGroups) return;
 
@@ -328,6 +375,9 @@ async function handleLoadGroups() {
     }
 }
 
+/**
+ * Renders the filtered groups with selectable checkboxes and channel counts.
+ */
 function renderGroups() {
     if (state.filteredGroups.length === 0) {
         elements.groupsList.textContent = '';
@@ -372,28 +422,42 @@ function renderGroups() {
     });
 }
 
+/**
+ * Filters the displayed groups using the current search value.
+ */
 function filterGroups() {
     mutations.setGroupSearch(elements.groupSearch.value);
     renderGroups();
 }
 
+/**
+ * Selects all currently available groups.
+ */
 function handleSelectAllGroups() {
     mutations.selectAllGroups();
     renderGroups();
 }
 
+/**
+ * Deselects all groups and refreshes the group list.
+ */
 function handleDeselectAllGroups() {
     mutations.deselectAllGroups();
     renderGroups();
 }
 
-// Matching & AI Settings
+/**
+ * Saves matching preferences and updates the displayed confidence percentage.
+ */
 function handleMatchingSettings() {
     mutations.setConfigField('iptvOrgEnabled', elements.iptvOrgEnabled.checked);
     mutations.setConfigField('matchConfidence', parseInt(elements.matchConfidence.value, 10));
     elements.matchConfidence.nextElementSibling.textContent = `${elements.matchConfidence.value}%`;
 }
 
+/**
+ * Updates AI configuration settings and displays the related fields when AI is enabled.
+ */
 function handleAISettings() {
     mutations.setConfigField('aiEnabled', elements.aiEnabled.checked);
     elements.openrouterFields.hidden = !elements.aiEnabled.checked;
@@ -405,7 +469,9 @@ function handleAISettings() {
     }
 }
 
-// Import/Export
+/**
+ * Exports the current configuration as a JSON file with sensitive values redacted.
+ */
 function handleExport() {
     const config = {
         ...state.config,
@@ -429,6 +495,10 @@ function handleImport() {
     elements.importFile.click();
 }
 
+/**
+ * Imports and applies a provider configuration from a selected JSON file.
+ * @param {Event} e - The file input change event containing the configuration file.
+ */
 async function handleImportFile(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -463,7 +533,10 @@ async function handleImportFile(e) {
     }
 }
 
-// Save & Install
+/**
+ * Saves the provider configuration and displays installation links when successful.
+ * Redirects to provider setup when the configuration is incomplete and displays an error when saving fails.
+ */
 async function handleSaveConfig() {
     if (!getters.isProviderConfigured()) {
         toast.error('Incomplete Configuration', 'Please configure your provider first');
@@ -510,6 +583,9 @@ async function handleSaveConfig() {
     }
 }
 
+/**
+ * Copies the addon URL to the clipboard and reports the result.
+ */
 async function handleCopyUrl() {
     try {
         await navigator.clipboard.writeText(elements.addonUrl.value);
@@ -519,7 +595,9 @@ async function handleCopyUrl() {
     }
 }
 
-// Initialize App after auth
+/**
+ * Initializes the authenticated application interface and loads the server version and user configuration.
+ */
 async function initializeApp() {
     showAuthState(true);
     elements.currentUser.textContent = state.user?.userId || 'User';
@@ -554,12 +632,19 @@ async function initializeApp() {
     }
 }
 
+/**
+ * Toggles the interface between authenticated and unauthenticated states.
+ * @param {boolean} authenticated - Whether the user is authenticated.
+ */
 function showAuthState(authenticated) {
     elements.authModal.hidden = authenticated;
     elements.mainApp.hidden = !authenticated;
     document.body.style.overflow = authenticated ? '' : 'hidden';
 }
 
+/**
+ * Synchronizes provider, matching, AI, group, export, and navigation controls with the current application state.
+ */
 function updateFormFromState() {
     // Provider
     const typeRadios = elements.providerForm.querySelectorAll('input[name="type"]');
@@ -600,13 +685,20 @@ function updateFormFromState() {
     navigateToStep(1);
 }
 
+/**
+ * Escapes special HTML characters in text for safe insertion into HTML.
+ * @param {*} text - The text to escape.
+ * @return {string} The HTML-escaped text.
+ */
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-// Event Listeners
+/**
+ * Registers event listeners for authentication, navigation, configuration, group management, import/export, saving, and keyboard shortcuts.
+ */
 function bindEvents() {
     // Auth
     elements.authTabs.addEventListener('click', (e) => {
@@ -698,7 +790,9 @@ function bindEvents() {
     });
 }
 
-// Initialize
+/**
+ * Initialize the application and restore the authenticated session when available.
+ */
 async function init() {
     cacheElements();
     bindEvents();

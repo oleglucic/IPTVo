@@ -189,11 +189,19 @@ export const mutations = {
 // Subscribe to state changes (simple observer pattern)
 const subscribers = new Set();
 
+/**
+ * Registers a callback to receive state updates after mutations.
+ * @param {Function} callback - The function invoked with the current state after each mutation.
+ * @return {Function} A function that unregisters the callback.
+ */
 export function subscribe(callback) {
     subscribers.add(callback);
     return () => subscribers.delete(callback);
 }
 
+/**
+ * Notifies all registered subscribers with the current application state.
+ */
 function notify() {
     subscribers.forEach(cb => cb(state));
 }
