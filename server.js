@@ -66,6 +66,15 @@ const getGroupsLimiter = rateLimit({
     legacyHeaders: false
 });
 
+// Rate limiter for /api/test-config (external API calls)
+const testConfigLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 10, // limit each IP to 10 connection tests per minute
+    message: { error: 'Too many connection test requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 // Rate limiter for dashboard routes (GET / and GET /:config/configure)
 const dashboardLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -201,6 +210,50 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
         }
     } catch (err) {
         return res.status(500).json({ error: "Connection to provider failed: " + err.message });
+    }
+});
+
+// Test provider connectivity (used by the dashboard "Test Connection" flow)
+app.post('/api/test-config', testConfigLimiter, async (req, res) => {
+    const { type, m3uUrl, xtreamUrl, username, password } = req.body;
+    try {
+        if (type === 'xtream') {
+            if (!xtreamUrl || !username || !password) return res.status(400).json({ error: 'Missing Credentials' });
+            const cleanUrl = xtreamUrl.replace(/\/$/, '');
+            if (!isSafeUrl(cleanUrl)) return res.status(400).json({ error: 'Invalid Xtream URL: private/internal addresses not allowed' });
+            // Never log credentials - only the panel host
+            console.log(`[TestConfig] Testing Xtream panel at ${new URL(cleanUrl).host}`);
+            const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`, { timeout: 20000 });
+            const streams = Array.isArray(apiRes.data) ? apiRes.data : [];
+            if (streams.length === 0) {
+                return res.status(400).json({ error: 'Connected, but no live channels returned (check credentials or panel URL)' });
+            }
+            const groupSet = new Set(streams.map(s => (s && (s.category_name || s.category_id)) || 'Uncategorized'));
+            console.log(`[TestConfig] OK: ${streams.length} channels, ${groupSet.size} groups (xtream)`);
+            return res.json({ channels: streams.length, groups: groupSet.size });
+        }
+        if (!m3uUrl) return res.status(400).json({ error: 'Missing M3U Stream URL' });
+        if (!isSafeUrl(m3uUrl)) return res.status(400).json({ error: 'Invalid M3U URL: private/internal addresses not allowed' });
+        console.log('[TestConfig] Fetching M3U playlist');
+        const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, responseType: 'arraybuffer', timeout: 20000 });
+        const text = Buffer.from(m3uRes.data).toString('utf8');
+        const lines = text.split('\n');
+        let channels = 0;
+        const groups = new Set();
+        for (const line of lines) {
+            if (line.startsWith('#EXTINF:')) {
+                channels++;
+                const match = line.match(/group-title=["']([^"']+)["']/i);
+                if (match && match[1]) groups.add(match[1]);
+            }
+        }
+        if (channels === 0) return res.status(400).json({ error: 'Connected, but no channels found in the playlist' });
+        console.log(`[TestConfig] OK: ${channels} channels, ${groups.size} groups (m3u)`);
+        return res.json({ channels, groups: groups.size });
+    } catch (err) {
+        const safeMsg = sanitizeForLog(err.message);
+        console.error(`[TestConfig] Failed: ${safeMsg}`);
+        return res.status(502).json({ error: `Connection failed: ${safeMsg || 'unable to reach provider'}` });
     }
 });
 
@@ -443,12 +496,13 @@ app.post('/api/auth/register', async (req, res) => {
         const token = generateSessionToken();
         sessions.set(token, {
             userId: user.user_id,
+            username,
             config: config || {},
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days
         });
 
         console.log(`[Auth] User registered: ${sanitizeForLog(username)} (${user.user_id})`);
-        res.json({ success: true, userId: user.user_id, token });
+        res.json({ success: true, username, userId: user.user_id, token });
     } catch (e) {
         console.error('[Auth] Register error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Registration failed' });
@@ -482,6 +536,7 @@ app.post('/api/auth/login', async (req, res) => {
         const token = generateSessionToken();
         sessions.set(token, {
             userId: user.user_id,
+            username: user.username,
             config,
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
         });
@@ -510,7 +565,7 @@ app.post('/api/auth/login', async (req, res) => {
                 }
             }
         }
-        res.json({ success: true, userId: user.user_id, token, config: safeConfig });
+        res.json({ success: true, username: user.username, userId: user.user_id, token, config: safeConfig });
     } catch (e) {
         console.error('[Auth] Login error:', sanitizeForLog(e.message));
         res.status(500).json({ error: 'Login failed' });
@@ -551,7 +606,7 @@ app.get('/api/auth/validate', (req, res) => {
                 }
             }
         }
-    res.json({ valid: true, userId: session.userId, config: safeConfig });
+    res.json({ valid: true, userId: session.userId, username: session.username, config: safeConfig });
 });
 
 // Logout
