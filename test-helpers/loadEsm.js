@@ -22,6 +22,22 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+// Built-ins and browser globals that modules commonly reference unqualified.
+// `vm.compileFunction` resolves free variables against a context-global that,
+// in some Node versions, does NOT alias the current realm's `globalThis`:
+// `instanceof TypeError` fails across realms and jest fake timers cannot drive
+// a module's `setTimeout`. Injecting these from `globalThis` as explicit
+// parameters pins them to the calling realm. Callers may still override any of
+// these via `options.globals` (injected afterwards).
+const REALM_GLOBALS = [
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+    'queueMicrotask', 'AbortController', 'TypeError', 'Error',
+    'RangeError', 'ReferenceError', 'SyntaxError', 'fetch',
+    'URL', 'URLSearchParams', 'Headers', 'Request', 'Response',
+    'FormData', 'Blob', 'File', 'TextEncoder', 'TextDecoder',
+    'crypto', 'performance', 'console'
+];
+
 /**
  * @param {string} filePath - Absolute path, or path relative to the repository root (e.g. "dashboard/js/api.js").
  * @param {Object} [options]
@@ -73,13 +89,17 @@ function loadEsmModule(filePath, options = {}) {
 
     const wrapped = `${code}\n${exportLines}\n${defaultLine}`;
 
-    const globalNames = Object.keys(globals);
-    const paramNames = ['module', 'exports', 'require', '__importMocks__', ...globalNames];
+    const customGlobalNames = Object.keys(globals);
+    const paramNames = ['module', 'exports', 'require', '__importMocks__', ...REALM_GLOBALS, ...customGlobalNames];
 
     const fn = vm.compileFunction(wrapped, paramNames, { filename: absPath });
 
     const moduleObj = { exports: {} };
-    const args = [moduleObj, moduleObj.exports, require, importMocks, ...globalNames.map(n => globals[n])];
+    const args = [
+        moduleObj, moduleObj.exports, require, importMocks,
+        ...REALM_GLOBALS.map(n => globalThis[n]),
+        ...customGlobalNames.map(n => globals[n])
+    ];
     fn(...args);
 
     return moduleObj.exports;

@@ -73,17 +73,6 @@ function removeToast(toast) {
     setTimeout(() => toast.remove(), 200);
 }
 
-/**
- * Escapes text for safe use as HTML content.
- * @param {string} text - The text to escape.
- * @return {string} The HTML-escaped text.
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 export const toast = {
     success: (title, message, duration) => showToast('success', title, message, duration),
     error: (title, message, duration) => showToast('error', title, message, duration),
