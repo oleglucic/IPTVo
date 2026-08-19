@@ -1,3 +1,11 @@
+## [0.2.4](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.3...v0.2.4) (2026-08-19)
+
+
+### Bug Fixes
+
+* **security:** gate external-fetch endpoints behind auth and block redirects ([f284d43](https://github.com/oleglucic/nuvio-iptv/commit/f284d4396df500a893ed701df500fcb79af88094))
+* **security:** revalidate redirect targets and fix SVG escaping ([a91ace5](https://github.com/oleglucic/nuvio-iptv/commit/a91ace59233ccaf6ccd2e15100b955216be02960))
+
 ## [0.2.3](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.2...v0.2.3) (2026-08-19)
 
 
