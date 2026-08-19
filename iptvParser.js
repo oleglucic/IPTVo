@@ -384,7 +384,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         // Always trigger async background AI process when dirty channels exist
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
             console.log(`[AI Curator] Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
             console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${Object.keys(configObj).join(', ')}, ai=${configObj.ai}`);
         }
@@ -575,7 +575,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
 
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
             console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config`);
         }

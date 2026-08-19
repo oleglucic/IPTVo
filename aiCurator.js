@@ -24,7 +24,7 @@ const globalAiCache = new Map();
  * @param {string} apiKey - OpenRouter API key.
  * @returns {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
  */
-async function processAiBatch(batchItems, apiKey) {
+async function processAiBatch(batchItems, apiKey, model) {
     if (!apiKey) return {};
 
     // batchItems: [{ name, scope }] — scope is parser-computed (from group-title), AI must NOT invent it
@@ -40,7 +40,7 @@ Input: ${JSON.stringify(batchItems)}`;
     try {
         console.log(`[AI Curator] Resolving duplicates for a batch of ${sanitizeForLog(batchItems.length)} channels...`);
         const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-            model: "openrouter/free",
+            model: model || "openrouter/free",
             messages: [{ role: "user", content: prompt }]
         }, {
             headers: {
@@ -79,7 +79,7 @@ Input: ${JSON.stringify(batchItems)}`;
  * @param {string} configKey - Configuration identifier used for processing context.
  * @param {string} openrouterKey - OpenRouter API key used for AI normalization.
  */
-async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
+async function startAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
 
     console.log(`[AI Curator] Background queue triggered for ${sanitizeForLog(dirtyChannels.length)} stream evaluations...`);
@@ -150,7 +150,7 @@ async function startAiQueue(dirtyChannels, configKey, openrouterKey) {
 
     for (let i = 0; i < uniqueToProcess.length; i += 100) {
         const batch = uniqueToProcess.slice(i, i + 100);
-        const aiResults = await processAiBatch(batch, openrouterKey);
+        const aiResults = await processAiBatch(batch, openrouterKey, model);
             if (aiResults.__rateLimited) {
                 console.log(`[AI Curator] Stopping early due to rate limit. Processed ${sanitizeForLog(i)} of ${sanitizeForLog(uniqueToProcess.length)} channels this cycle.`);
                 break;
