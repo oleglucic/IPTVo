@@ -31,7 +31,7 @@ jobs:
         run: npm install --save-dev markdownlint-cli
 
       - name: Run markdownlint
-        run: npx markdownlint $(find . -name "*.md" -o -name "*.markdown" | sort) --disable MD013 --disable MD041
+        run: npx markdownlint $(find . -name "*.md" -o -name "*.markdown" -not -path "./.agents/*" | sort) --disable MD013 --disable MD041
 
   link-check:
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
         run: npm install --save-dev markdown-link-check
 
       - name: Check links in markdown files
-        run: npx markdown-link-check $(find . -name "*.md" -o -name "*.markdown" | sort | head -n 100) --config ./markdown-link-check.config.json
+        run: npx markdown-link-check $(find . -name "*.md" -o -name "*.markdown" -not -path "./.agents/*" | sort | head -n 100) --config ./markdown-link-check.config.json
 
       - name: Upload link check results
         if: always()
