@@ -175,8 +175,25 @@ app.get('/api/version', (req, res) => {
 // Apply general API rate limiting to all /api routes
 app.use('/api/', apiLimiter);
 
+// Require a valid bearer session for external-fetch endpoints so the server
+// cannot be used as an anonymous fetch/SSRF proxy once open to the public.
+function requireAuth(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const token = authHeader.slice(7);
+    const session = sessions.get(token);
+    if (!session || session.expiresAt < Date.now()) {
+        if (session) sessions.delete(token);
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.session = session;
+    next();
+}
+
 // Shallow Category Discovery Route (with stricter rate limiting)
-app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
+app.post('/api/get-groups', requireAuth, getGroupsLimiter, async (req, res) => {
     const { type, m3uUrl, xtreamUrl, username, password } = req.body;
     try {
         if (type === 'xtream') {
@@ -186,7 +203,7 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
             if (!isSafeUrl(cleanUrl)) {
                 return res.status(400).json({ error: "Invalid Xtream URL: private/internal addresses not allowed" });
             }
-            const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${username}&password=${password}&action=get_live_categories`, { timeout: 10000 });
+            const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${username}&password=${password}&action=get_live_categories`, { timeout: 10000, maxRedirects: 0 });
             if (Array.isArray(apiRes.data)) {
                 return res.json({ categories: apiRes.data.map(cat => cat.category_name).sort() });
             }
@@ -197,7 +214,7 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
             if (!isSafeUrl(m3uUrl)) {
                 return res.status(400).json({ error: "Invalid M3U URL: private/internal addresses not allowed" });
             }
-            const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, timeout: 10000 });
+            const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, timeout: 10000, maxRedirects: 0 });
             const lines = m3uRes.data.split('\n');
             const groups = new Set();
             for (const line of lines) {
@@ -214,7 +231,7 @@ app.post('/api/get-groups', getGroupsLimiter, async (req, res) => {
 });
 
 // Test provider connectivity (used by the dashboard "Test Connection" flow)
-app.post('/api/test-config', testConfigLimiter, async (req, res) => {
+app.post('/api/test-config', requireAuth, testConfigLimiter, async (req, res) => {
     const { type, m3uUrl, xtreamUrl, username, password } = req.body;
     try {
         if (type === 'xtream') {
@@ -223,7 +240,7 @@ app.post('/api/test-config', testConfigLimiter, async (req, res) => {
             if (!isSafeUrl(cleanUrl)) return res.status(400).json({ error: 'Invalid Xtream URL: private/internal addresses not allowed' });
             // Never log credentials - only the panel host
             console.log(`[TestConfig] Testing Xtream panel at ${new URL(cleanUrl).host}`);
-            const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`, { timeout: 20000 });
+            const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`, { timeout: 20000, maxRedirects: 0 });
             const streams = Array.isArray(apiRes.data) ? apiRes.data : [];
             if (streams.length === 0) {
                 return res.status(400).json({ error: 'Connected, but no live channels returned (check credentials or panel URL)' });
@@ -235,7 +252,7 @@ app.post('/api/test-config', testConfigLimiter, async (req, res) => {
         if (!m3uUrl) return res.status(400).json({ error: 'Missing M3U Stream URL' });
         if (!isSafeUrl(m3uUrl)) return res.status(400).json({ error: 'Invalid M3U URL: private/internal addresses not allowed' });
         console.log('[TestConfig] Fetching M3U playlist');
-        const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, responseType: 'arraybuffer', timeout: 20000 });
+        const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, responseType: 'arraybuffer', timeout: 20000, maxRedirects: 0 });
         const text = Buffer.from(m3uRes.data).toString('utf8');
         const lines = text.split('\n');
         let channels = 0;
