@@ -1,6 +1,6 @@
 /* Main Application Entry Point */
 
-import { state, getters, mutations } from './state.js';
+import state, { getters, mutations } from './state.js';
 import { api } from './api.js';
 import { toast } from './toast.js';
 
