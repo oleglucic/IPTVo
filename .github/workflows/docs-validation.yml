@@ -64,13 +64,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
+      # codespell is a Python tool. The npm package named "codespell" is an
+      # unrelated interactive TUI and hangs in CI, so install via pip instead.
       - name: Install codespell
-        run: npm install --save-dev codespell
+        run: pip install --user codespell && echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      # Docs-only scope: scanning source files (`.js`/`.json` etc.) flags code
+      # identifiers as typos and is out of scope for documentation validation.
       - name: Check spelling
-        run: npx codespell $(find . \( -name "*.md" -o -name "*.markdown" -o -name "*.txt" -o -name "*.js" -o -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.html" -o -name "*.css" \) -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.agents/*" -not -path "./.claude/*" -not -path "./.remember/*" -not -path "./graphify-out/*" -not -path "./CHANGELOG.md" -not -path "./package-lock.json" | sort | head -n 100)
+        run: codespell $(find . \( -name "*.md" -o -name "*.markdown" -o -name "*.txt" \) -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.claude/*" -not -path "./.remember/*" -not -path "./graphify-out/*" -not -path "./CHANGELOG.md" | sort)
