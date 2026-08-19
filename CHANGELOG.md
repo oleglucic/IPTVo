@@ -1,3 +1,10 @@
+## [0.2.2](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.1...v0.2.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* **dashboard:** load assets from /dashboard so the root page is interactive ([b5df5ce](https://github.com/oleglucic/nuvio-iptv/commit/b5df5ce702b77a9017cba5417501dc52c947d65e))
+
 ## [0.2.1](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.0...v0.2.1) (2026-08-19)
 
 
