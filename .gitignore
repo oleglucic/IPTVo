@@ -42,3 +42,5 @@ db.js.supabase-backup
 
 # Test output
 test-output/
+# Playwright MCP test artifacts
+.playwright-mcp/
