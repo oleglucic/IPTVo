@@ -44,9 +44,18 @@ jobs:
       id-token: write
       packages: write
     steps:
+      # persist-credentials: false — do NOT leave the default github-actions[bot]
+      # token in git's credential config. @semantic-release/git shells out to a
+      # real `git push <url>` process, and that process authenticates from git's
+      # own credential/extraheader config — NOT the GITHUB_TOKEN env var. A
+      # persisted bot credential makes the push authenticate as the bot, which is
+      # not a bypass actor on the `main` ruleset, hence GH013. Only the App
+      # installation token (registered as git's credential in the step below) is a
+      # bypass actor.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -59,17 +68,28 @@ jobs:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           # Scope the token to this single repository. The `iptvo-release`
-          # App is a bypass actor on the `main` ruleset, but the bypass only
+          # App is a bypass actor on the `main` ruleset, and the bypass only
           # applies when the token is scoped to the specific repository
           # (an unscoped multi-installation token is not granted bypass).
           owner: oleglucic
           repositories: nuvio-iptv
+      # git authenticates the raw `git push` that @semantic-release/git runs from
+      # its own http.extraheader config, not from the GITHUB_TOKEN env. Register
+      # the App installation token there so the push is authenticated as the
+      # iptvo-release App — a bypass actor on the `main` branch ruleset.
+      - name: Configure git authentication with App token
+        run: |
+          git config --global user.name "iptvo-release[bot]"
+          git config --global user.email "4651159+iptvo-release[bot]@users.noreply.github.com"
+          git config --global http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${{ steps.app-token.outputs.token }}" | base64 -w0)"
       - name: Release
         env:
-          # Token minted from the `iptvo-release` GitHub App. The App is a
-          # bypass actor on the `main` branch ruleset, so @semantic-release/git
-          # can push the version-bump commit to the protected branch. The
-          # default GITHUB_TOKEN (github-actions[bot]) cannot bypass protection.
+          # Used by @semantic-release/* plugins that call the GitHub API
+          # (release creation, etc.). The `git push` uses the credential header
+          # set above; the App token is a bypass actor on the `main` ruleset, so
+          # @semantic-release/git can push the version-bump commit to the
+          # protected branch. github-actions[bot] cannot bypass protection.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: npx semantic-release
       - name: Setup Docker Buildx
