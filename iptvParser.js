@@ -68,6 +68,21 @@ function isSafeUrl(url) {
     return true;
 }
 
+/**
+ * Re-validates the URL an axios response actually landed on. isSafeUrl() checks
+ * only the requested URL; a redirect can bounce the fetch to a private/loopback,
+ * link-local or cloud-metadata host on a public server. If a stream is being
+ * consumed it is destroyed so an under-read response is not leaked.
+ */
+function revalidateResponseUrl(res, stream) {
+    const resNode = res && res.request && res.request.res;
+    const finalUrl = (res && res.responseUrl) || (resNode && resNode.responseUrl) || (res && res.config && res.config.url);
+    if (finalUrl && !isSafeUrl(finalUrl)) {
+        if (stream && typeof stream.destroy === 'function') stream.destroy();
+        throw new Error("Redirect target is not allowed: private/internal addresses not allowed");
+    }
+}
+
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
 /**
@@ -209,6 +224,7 @@ async function parseM3uData(configKey, configObj) {
         }
 
         const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000 }); // 10 min for large playlists
+        revalidateResponseUrl(res, res.data);
         let mStream = res.data;
         if (res.headers['content-encoding'] === 'gzip' || m3uTargetUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
         const rl = readline.createInterface({ input: mStream, crlfDelay: Infinity });
@@ -430,6 +446,9 @@ async function parseXtreamData(configKey, configObj) {
             axios.get(`${apiBase}&action=get_live_streams`, { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } })
         ]);
 
+        revalidateResponseUrl(streamRes);
+        revalidateResponseUrl(catRes);
+
         if (!streamRes.data || !Array.isArray(streamRes.data)) {
             throw new Error("Invalid stream response payload from Xtream server.");
         }
@@ -606,6 +625,7 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     return new Promise(async (resolve) => {
         try {
             const epgRes = await axios({ method: 'get', url: epgUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 300000 });
+            revalidateResponseUrl(epgRes, epgRes.data);
             let rawStream = epgRes.data;
             
             const firstChunk = await new Promise((resChunk) => { rawStream.once('data', (chunk) => resChunk(chunk)); });
@@ -695,7 +715,7 @@ function getEpgText(chKey, epgData, offsetHours = 0) {
     return text;
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl };
 
 /**
  * Persists primary channel logo URLs for change tracking.
@@ -817,4 +837,4 @@ async function queueLogoPrefetch(missingLogos) {
     }
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl };
