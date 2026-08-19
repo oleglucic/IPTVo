@@ -25,21 +25,42 @@ class APIClient {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
 
+        // Add timeout using AbortController
+        const timeoutMs = options.timeout || 15000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
         const config = {
             ...options,
-            headers
+            headers,
+            signal: controller.signal
         };
 
         try {
             const response = await fetch(url, config);
-            const data = await response.json();
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
-                throw new Error(data.error || `HTTP ${response.status}`);
+                // Try to parse error response, fallback to statusText
+                let errorMessage;
+                try {
+                    const data = await response.json();
+                    errorMessage = data.error || response.statusText || `HTTP ${response.status}`;
+                } catch {
+                    // Response body is not JSON or empty
+                    errorMessage = response.statusText || `HTTP ${response.status}`;
+                }
+                throw new Error(errorMessage);
             }
 
+            const data = await response.json();
             return data;
         } catch (error) {
+            clearTimeout(timeoutId);
+
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout - please try again');
+            }
             if (error instanceof TypeError && error.message.includes('fetch')) {
                 throw new Error('Network error - check your connection');
             }

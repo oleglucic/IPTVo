@@ -1,6 +1,4 @@
 // Basic test structure for iptvParser
-const fs = require('fs');
-const path = require('path');
 
 // Mock the required modules
 jest.mock('../aiCurator', () => ({

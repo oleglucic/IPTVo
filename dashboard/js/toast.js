@@ -17,7 +17,9 @@ export function showToast(type, title, message, duration = 5000) {
 
     const iconSpan = document.createElement('span');
     iconSpan.className = 'toast-icon';
-    iconSpan.innerHTML = icons[type].replace('class="toast-icon"', '');
+    // Fallback to info icon if type is unknown
+    const iconSvg = icons[type] || icons.info;
+    iconSpan.innerHTML = iconSvg.replace('class="toast-icon"', '');
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'toast-content';

@@ -1,6 +1,6 @@
 /* Main Application Entry Point */
 
-import { state, getters, mutations, subscribe } from './state.js';
+import { state, getters, mutations } from './state.js';
 import { api } from './api.js';
 import { toast } from './toast.js';
 
@@ -142,6 +142,10 @@ function openAuthModal() {
 }
 
 function closeAuthModal() {
+    // Only allow closing the modal if user is authenticated
+    if (!state.isAuthenticated) {
+        return;
+    }
     elements.authModal.hidden = true;
     document.body.style.overflow = '';
 }
@@ -484,7 +488,8 @@ async function handleSaveConfig() {
             : `${protocol}//${host}/configure`;
 
         elements.addonUrl.value = addonUrl;
-        elements.stremioLink.href = `stremio://${encodeURIComponent(addonUrl)}`;
+        // Replace http(s):// with stremio:// for deep link
+        elements.stremioLink.href = addonUrl.replace(/^https?:\/\//, 'stremio://');
         elements.installSection.hidden = false;
 
         elements.saveStatus.className = 'save-status success';
@@ -612,11 +617,7 @@ function bindEvents() {
     elements.loginForm.addEventListener('submit', handleLogin);
     elements.registerForm.addEventListener('submit', handleRegister);
 
-    elements.authModal.addEventListener('click', (e) => {
-        if (e.target.dataset.action === 'close-auth' || e.target === elements.authModal.querySelector('.modal-backdrop')) {
-            closeAuthModal();
-        }
-    });
+    // Auth modal backdrop/close handling removed - modal should not be dismissible when unauthenticated
 
     // User Menu
     elements.userMenuBtn.addEventListener('click', toggleUserDropdown);
