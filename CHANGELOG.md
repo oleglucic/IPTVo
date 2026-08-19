@@ -1,3 +1,12 @@
+## [0.2.3](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.2...v0.2.3) (2026-08-19)
+
+
+### Bug Fixes
+
+* **curator:** thread per-user AI model through the curation queue ([7eae56f](https://github.com/oleglucic/nuvio-iptv/commit/7eae56f90152d81ad638f57db75aed6f563cc4b6))
+* **dashboard:** auto-detect timezone, honor AI toggles/model, show username ([6c1219a](https://github.com/oleglucic/nuvio-iptv/commit/6c1219a193c5b84c192dcbf17462db8206de5bf0))
+* **server:** add /api/test-config endpoint and surface username in auth responses ([c2d10de](https://github.com/oleglucic/nuvio-iptv/commit/c2d10deaecf1f004f6464b0713de6bc95356b1fa))
+
 ## [0.2.2](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.1...v0.2.2) (2026-08-19)
 
 
