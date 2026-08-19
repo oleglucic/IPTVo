@@ -14,7 +14,10 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/__tests__/**/*.js", "**/?(*.)+(spec|test).[tj]s?(x)"],
+    "testMatch": [
+      "**/__tests__/**/*.js",
+      "**/?(*.)+(spec|test).[tj]s?(x)"
+    ],
     "coverageDirectory": "./coverage",
     "collectCoverageFrom": [
       "**/*.js",
@@ -56,6 +59,7 @@
     "@semantic-release/changelog": "^6.0.0",
     "@semantic-release/git": "^10.0.0",
     "@semantic-release/github": "^10.0.0",
+    "@semantic-release/npm": "12.0.2",
     "commitlint": "^19.0.0",
     "eslint": "^10.8.1",
     "eslint-plugin-html": "^8.0.0",
@@ -90,6 +94,12 @@
         }
       ],
       [
+        "@semantic-release/npm",
+        {
+          "npmPublish": false
+        }
+      ],
+      [
         "@semantic-release/github",
         {
           "assets": []
@@ -100,7 +110,8 @@
         {
           "assets": [
             "CHANGELOG.md",
-            "package.json"
+            "package.json",
+            "package-lock.json"
           ],
           "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
         }
