@@ -11,6 +11,11 @@ const elements = {};
  * Cache references to the DOM elements used by the application.
  */
 function cacheElements() {
+    // Intro / welcome
+    elements.introView = document.getElementById('introView');
+    elements.introVersion = document.getElementById('introVersion');
+    elements.introYear = document.getElementById('introYear');
+
     // Auth
     elements.authModal = document.getElementById('authModal');
     elements.authTabs = document.getElementById('authTabs');
@@ -19,9 +24,13 @@ function cacheElements() {
     elements.loginError = document.getElementById('loginError');
     elements.registerError = document.getElementById('registerError');
 
+    // Changelog
+    elements.changelogModal = document.getElementById('changelogModal');
+
     // Main App
     elements.mainApp = document.getElementById('mainApp');
     elements.currentUser = document.getElementById('currentUser');
+    elements.userAvatar = document.getElementById('userAvatar');
     elements.userMenuBtn = document.querySelector('[data-action="toggle-user-menu"]');
     elements.userDropdown = document.querySelector('.user-dropdown');
 
@@ -282,16 +291,29 @@ function navigateToStep(step) {
             }
         }
     });
+
+    // Re-evaluate action buttons so controls reflect the current config
+    // (e.g. "Load Groups" enables once a provider URL is entered).
+    updateProviderFields();
 }
 
 /**
- * Updates provider-specific fields and the group-loading control to reflect the current configuration.
+ * Syncs provider-specific fields and every action button (Load Groups,
+ * Export, Save, Select/Deselect All) with the current configuration.
+ * Called on navigation, form input, and after async operations so the
+ * wizard never leaves an actionable control stuck disabled.
  */
 function updateProviderFields() {
     const type = state.config.type;
     elements.m3uFields.hidden = type !== 'm3u';
     elements.xtreamFields.hidden = type !== 'xtream';
-    elements.loadGroupsBtn.disabled = !getters.isProviderConfigured();
+
+    const configured = getters.isProviderConfigured();
+    elements.loadGroupsBtn.disabled = !configured;
+    elements.exportBtn.disabled = !configured;
+    elements.saveConfigBtn.disabled = !configured;
+    elements.selectAllGroups.disabled = state.filteredGroups.length === 0;
+    elements.deselectAllGroups.disabled = state.filteredGroups.length === 0;
 }
 
 /**
@@ -344,6 +366,7 @@ async function handleTestConnection() {
     } finally {
         mutations.setTestingConnection(false);
         elements.testConnectionBtn.disabled = false;
+        updateProviderFields();
     }
 }
 
@@ -364,6 +387,7 @@ async function handleLoadGroups() {
         const groups = categories.map(name => ({ name, count: 0 }));
         mutations.setAvailableGroups(groups);
         mutations.setGroupSearch('');
+        mutations.setGroupsLoaded(true);
 
         renderGroups();
         elements.selectAllGroups.disabled = false;
@@ -371,11 +395,12 @@ async function handleLoadGroups() {
 
         toast.success('Groups Loaded', `${groups.length} groups found`);
     } catch (error) {
+        mutations.setGroupsLoaded(true);
         toast.error('Failed to Load Groups', error.message);
         elements.groupsList.innerHTML = `<p class="empty-state">Error loading groups: ${escapeHtml(error.message)}</p>`;
     } finally {
         mutations.setLoadingGroups(false);
-        elements.loadGroupsBtn.disabled = !getters.isProviderConfigured();
+        updateProviderFields();
         elements.loadGroupsBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg><span>Load Groups</span>`;
     }
 }
@@ -384,6 +409,12 @@ async function handleLoadGroups() {
  * Renders the filtered groups with selectable checkboxes and channel counts.
  */
 function renderGroups() {
+    // Before the user has loaded groups, keep the static guidance block
+    // ("Go to Provider" CTA) intact — "No groups match your filter" would
+    // be misleading when no provider has been configured yet.
+    if (!state.groupsLoaded) {
+        return;
+    }
     if (state.filteredGroups.length === 0) {
         elements.groupsList.textContent = '';
         const emptyState = document.createElement('p');
@@ -606,15 +637,19 @@ async function handleCopyUrl() {
  */
 async function initializeApp() {
     showAuthState(true);
-    elements.currentUser.textContent = state.user?.username || state.user?.userId || 'User';
+    const username = state.user?.username || state.user?.userId || 'User';
+    elements.currentUser.textContent = username;
+    elements.userAvatar.textContent = username.charAt(0).toUpperCase();
 
     // Fetch version from server
     try {
         const { version } = await api.request('/api/version');
         state.version = version;
         elements.appVersion.textContent = `v${version}`;
+        elements.introVersion.textContent = `v${version}`;
     } catch {
         elements.appVersion.textContent = `v${state.version}`;
+        elements.introVersion.textContent = `v${state.version}`;
     }
 
     // Load user config from server
@@ -647,9 +682,10 @@ async function initializeApp() {
  * @param {boolean} authenticated - Whether the user is authenticated.
  */
 function showAuthState(authenticated) {
-    elements.authModal.hidden = authenticated;
+    elements.introView.hidden = authenticated;
     elements.mainApp.hidden = !authenticated;
-    document.body.style.overflow = authenticated ? '' : 'hidden';
+    elements.authModal.hidden = true;
+    document.body.style.overflow = '';
 }
 
 /**
@@ -696,6 +732,24 @@ function updateFormFromState() {
 }
 
 /**
+ * Opens the changelog modal.
+ */
+function openChangelog() {
+    elements.changelogModal.hidden = false;
+    document.body.style.overflow = 'hidden';
+}
+
+/**
+ * Closes the changelog modal and restores body scrolling.
+ */
+function closeChangelog() {
+    elements.changelogModal.hidden = true;
+    if (elements.authModal.hidden) {
+        document.body.style.overflow = '';
+    }
+}
+
+/**
  * Escapes special HTML characters in text for safe insertion into HTML.
  * @param {*} text - The text to escape.
  * @return {string} The HTML-escaped text.
@@ -718,6 +772,20 @@ function bindEvents() {
 
     elements.loginForm.addEventListener('submit', handleLogin);
     elements.registerForm.addEventListener('submit', handleRegister);
+
+    // Intro / welcome actions
+    document.querySelectorAll('[data-action="intro-get-started"], [data-action="intro-sign-in"]')
+        .forEach(btn => btn.addEventListener('click', openAuthModal));
+
+    // Changelog open/close (intro header, intro footer, in-app footer)
+    document.querySelectorAll('[data-action="open-changelog"]')
+        .forEach(btn => btn.addEventListener('click', openChangelog));
+    document.querySelectorAll('[data-action="close-changelog"]')
+        .forEach(btn => btn.addEventListener('click', closeChangelog));
+
+    // Groups empty-state CTA → jump back to provider step
+    document.querySelectorAll('[data-action="jump-step-1"]')
+        .forEach(btn => btn.addEventListener('click', () => navigateToStep(1)));
 
     // Auth modal backdrop/close handling removed - modal should not be dismissible when unauthenticated
 
@@ -789,6 +857,7 @@ function bindEvents() {
         if (['m3uUrl', 'xtreamUrl', 'username', 'password', 'timezoneOffset'].includes(e.target.name)) {
             const value = e.target.type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value;
             mutations.setConfigField(e.target.name, value);
+            updateProviderFields();
         }
     });
 
@@ -824,6 +893,7 @@ function bindEvents() {
         if (e.key === 'Escape') {
             closeAuthModal();
             closeUserDropdown();
+            closeChangelog();
         }
         if (e.ctrlKey || e.metaKey) {
             if (e.key === 's') {
@@ -846,7 +916,7 @@ async function init() {
         await initializeApp();
     } else {
         showAuthState(false);
-        openAuthModal();
+        if (elements.introYear) elements.introYear.textContent = new Date().getFullYear();
     }
 }
 

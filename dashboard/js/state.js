@@ -34,6 +34,7 @@ const state = {
     isLoadingGroups: false,
     isSaving: false,
     isTestingConnection: false,
+    groupsLoaded: false,
 
     // Version
     version: '0.0.1'
@@ -146,6 +147,10 @@ export const mutations = {
         state.isLoadingGroups = loading;
     },
 
+    setGroupsLoaded(loaded) {
+        state.groupsLoaded = loaded;
+    },
+
     setSaving(saving) {
         state.isSaving = saving;
     },
@@ -172,6 +177,7 @@ export const mutations = {
         state.availableGroups = [];
         state.filteredGroups = [];
         state.connectionTestResult = null;
+        state.groupsLoaded = false;
     },
 
     loadPersistedAuth() {
