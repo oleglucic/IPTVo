@@ -328,6 +328,10 @@ async function setLogoUrl(channelId, logoUrl, source = 'unknown') {
 
 module.exports = {
     // Primary API
+    // Exported so dbInit.js can check that the pool exists before running
+    // schema init. Without this export, require('./db').pool is undefined even
+    // when DATABASE_URL is set, and init + every query silently no-ops.
+    pool,
     getOverride,
     setOverride,
     incrementConfidence,
