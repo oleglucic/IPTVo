@@ -696,6 +696,12 @@ See `CHANGELOG.md` — follows [Keep a Changelog](https://keepachangelog.com/en/
 | `GET /health/detailed` | Readiness with DB/Redis/Worker checks |
 | `GET /health/startup` | Startup probe (longer timeout) |
 
+## Support
+
+IPTVo is developed and maintained by [Oleg Lučić](https://github.com/oleglucic). If this project saves you time or money, consider supporting future development:
+
+- [Buy me a coffee on Ko-fi](https://ko-fi.com/oleglucic)
+
 ## License
 
 MIT
