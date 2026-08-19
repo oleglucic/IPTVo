@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.0...v0.2.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* **db:** export pool so schema init and queries actually run ([2542c8f](https://github.com/oleglucic/nuvio-iptv/commit/2542c8f03c92694fcb5cf259c70916b7af1a80a0))
+
 # [0.2.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.1.1...v0.2.0) (2026-08-19)
 
 
