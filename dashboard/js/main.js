@@ -1,6 +1,6 @@
 /* Main Application Entry Point */
 
-import state, { getters, mutations } from './state.js';
+import state, { getters, mutations, detectTimezoneOffset } from './state.js';
 import { api } from './api.js';
 import { toast } from './toast.js';
 
@@ -459,14 +459,15 @@ function handleMatchingSettings() {
  * Updates AI configuration settings and displays the related fields when AI is enabled.
  */
 function handleAISettings() {
-    mutations.setConfigField('aiEnabled', elements.aiEnabled.checked);
-    elements.openrouterFields.hidden = !elements.aiEnabled.checked;
-    elements.aiModelFields.hidden = !elements.aiEnabled.checked;
+    const enabled = elements.aiEnabled.checked;
+    mutations.setConfigField('aiEnabled', enabled);
+    elements.openrouterFields.hidden = !enabled;
+    elements.aiModelFields.hidden = !enabled;
 
-    if (elements.aiEnabled.checked) {
-        mutations.setConfigField('openrouterKey', elements.openrouterKey.value);
-        mutations.setConfigField('aiModel', elements.aiModel.value);
-    }
+    // Always capture both fields so enabling AI later keeps the user's chosen model,
+    // and disabling AI doesn't silently drop the previous selection.
+    mutations.setConfigField('openrouterKey', elements.openrouterKey.value);
+    mutations.setConfigField('aiModel', elements.aiModel.value || 'openai/gpt-4o-mini');
 }
 
 /**
@@ -600,7 +601,7 @@ async function handleCopyUrl() {
  */
 async function initializeApp() {
     showAuthState(true);
-    elements.currentUser.textContent = state.user?.userId || 'User';
+    elements.currentUser.textContent = state.user?.username || state.user?.userId || 'User';
 
     // Fetch version from server
     try {
@@ -658,7 +659,7 @@ function updateFormFromState() {
     document.getElementById('xtreamUrl').value = state.config.xtreamUrl || '';
     document.getElementById('xtreamUsername').value = state.config.username || '';
     document.getElementById('xtreamPassword').value = state.config.password || '';
-    document.getElementById('timezoneOffset').value = state.config.timezoneOffset || 0;
+    document.getElementById('timezoneOffset').value = state.config.timezoneOffset || detectTimezoneOffset();
 
     // Matching
     elements.iptvOrgEnabled.checked = state.config.iptvOrgEnabled;

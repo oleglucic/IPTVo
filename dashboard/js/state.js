@@ -39,6 +39,11 @@ const state = {
     version: '0.0.1'
 };
 
+// Detect the browser's UTC offset in hours (matches the timezoneOffset field used by EPG).
+export function detectTimezoneOffset() {
+    return -new Date().getTimezoneOffset() / 60;
+}
+
 // Derived state getters
 export const getters = {
     getConfigForAPI() {
