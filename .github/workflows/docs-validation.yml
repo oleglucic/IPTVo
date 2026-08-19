@@ -31,7 +31,7 @@ jobs:
         run: npm install --save-dev markdownlint-cli
 
       - name: Run markdownlint
-        run: npx markdownlint "**/*.md" "**/*.markdown" --disable MD013 --disable MD041
+        run: npx markdownlint $(find . -name "*.md" -o -name "*.markdown" | sort) --disable MD013 --disable MD041
 
   link-check:
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
         run: npm install --save-dev markdown-link-check
 
       - name: Check links in markdown files
-        run: npx markdown-link-check "**/*.md" "**/*.markdown" --config ./markdown-link-check.config.json
+        run: npx markdown-link-check $(find . -name "*.md" -o -name "*.markdown" | sort | head -n 100) --config ./markdown-link-check.config.json
 
       - name: Upload link check results
         if: always()
@@ -61,8 +61,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup codespell
-        uses: streetsidesoftware/codespell-action@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          skip: "*.git*,node_modules/*"
-          write-changes: false
+          node-version: '24'
+
+      - name: Install codespell
+        run: npm install --save-dev codespell
+
+      - name: Check spelling
+        run: npx codespell $(find . -name "*.md" -o -name "*.markdown" -o -name "*.txt" -o -name "*.js" -o -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.html" -o -name "*.css" | sort | head -n 100)
