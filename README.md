@@ -94,6 +94,7 @@ volumes:
 ```
 
 **Usage:**
+
 ```bash
 # Create .env file
 cat > .env << 'EOF'
@@ -109,11 +110,12 @@ docker-compose up -d
 #### Option B: Managed Services (Railway, Neon, Upstash, etc.)
 
 | Service | Provider Examples | Connection String Format |
-|---------|------------------|-------------------------|
+| --------- | ------------------ | ------------------------- |
 | **PostgreSQL** | Neon, Supabase, Railway, Render, Aiven, Timescale | `postgresql://user:pass@host:5432/dbname?sslmode=require` |
 | **Redis** | Upstash, Railway, Redis Cloud, Aiven, Render | `redis://default:pass@host:port` or `rediss://...` (TLS) |
 
 **Example `.env` for managed services:**
+
 ```bash
 ENCRYPTION_KEY=your-32-char-secret-key-here
 DATABASE_URL=postgresql://user:pass@ep-xyz.us-east-1.neon.tech/iptvo?sslmode=require
@@ -167,7 +169,7 @@ node server.js
 
 The pre-built image **requires external Postgres & Redis** — it does not include them.
 
-**Option 1: Standalone Container (with external DB/Redis)**
+### Option 1: Standalone Container (with external DB/Redis)
 
 ```bash
 docker run -d \
@@ -180,7 +182,7 @@ docker run -d \
   itsoleglucic/iptvo:latest
 ```
 
-**Option 2: Portainer Stack (pre-built image + external DB/Redis)**
+### Option 2: Portainer Stack (pre-built image + external DB/Redis)
 
 In Portainer → Stacks → Add stack → Web editor:
 
@@ -199,7 +201,7 @@ services:
     restart: unless-stopped
 ```
 
-**Option 3: Portainer Stack (pre-built image + local Postgres/Redis)**
+### Option 3: Portainer Stack (pre-built image + local Postgres/Redis)
 
 ```yaml
 version: '3.8'
@@ -253,7 +255,8 @@ volumes:
 ```
 
 Set these in Portainer stack **Environment variables**:
-```
+
+```text
 ENCRYPTION_KEY=<32-char-secret>
 POSTGRES_PASSWORD=<secure-password>
 LOGO_PROXY_URL=https://assets.oleglucic.com/logo
@@ -311,7 +314,7 @@ IPTVo includes a complete user authentication system with encrypted configuratio
 
 ### Architecture
 
-```
+```text
 ��─────────────────────────────────────────────────────────────────��
 │                        CLIENTS                                   │
 │  Stremio / Nuvio / Web Dashboard                                │
@@ -342,7 +345,7 @@ IPTVo includes a complete user authentication system with encrypted configuratio
 
 ### Auth Flow
 
-```
+```text
 Register:     POST /api/auth/register {username, password, config?} → {userId, token, config}
 Login:        POST /api/auth/login {username, password} → {userId, token, config}
 Validate:     GET  /api/auth/validate (Bearer token) → {valid, userId, config}
@@ -417,7 +420,7 @@ CREATE TABLE logo_urls (
 
 Each user gets a unique addon URL based on their `userId`:
 
-```
+```text
 Manifest:     /:userId/manifest.json
 Catalog:      /:userId/catalog/tv/iptvo_live.json
 Meta:         /:userId/meta/tv/:id.json
@@ -429,7 +432,7 @@ Poster:       /:userId/poster/:id.png
 
 ### Legacy: Base64 Config (Backwards Compatible)
 
-```
+```text
 Manifest:     /:config/manifest.json
 Catalog:      /:config/catalog/tv/iptvo_live.json
 Meta:         /:config/meta/tv/:id.json
@@ -454,7 +457,7 @@ The web dashboard at `/` provides an **Apple HIG / Liquid Glass** (iOS 26/macOS 
 ### Tabs Detail
 
 | Tab | Purpose |
-|-----|---------|
+| ----- | --------- |
 | **Provider** | M3U/Xtream selection, URLs, credentials, EPG, timezone |
 | **Matching & AI** | iptv-org toggle, AI toggle, OpenRouter key, confidence slider |
 | **Filters** | Group discovery, search, include/exclude toggles, auto-sync |
@@ -491,7 +494,7 @@ In Stremio (legacy), paste the base64-encoded config into the addon configuratio
 
 For each raw channel from the provider:
 
-```
+```text
 1. Extract country prefix from group-title (regex + exclusions blocklist)
 2. Clean channel name (strip hd/4k/vip/raw/hevc/1080p/etc — NOT "premium")
 3. Extract +N timeshift suffix -> _plusN
@@ -520,7 +523,7 @@ The parser extracts country codes from group names using a regex pattern (e.g., 
 
 ## Logo Pipeline
 
-```
+```text
 getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
   │
   ├─�� 1. In-memory cache (30 min) — fastest
@@ -540,7 +543,7 @@ getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
 ## Key Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `server.js` | Express routes, auth, Stremio addon, health endpoints, cold-start pre-warm |
 | `iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline, country extraction, AI queue |
 | `iptvOrgRef.js` | iptv-org data fetch + exact/fuzzy lookup (daily refresh) |
@@ -609,7 +612,7 @@ Font packages are required for Sharp text rendering (poster initials badge).
 ## Environment Variables
 
 | Variable | Required | Description |
-|----------|----------|-------------|
+| ---------- | ---------- | ------------- |
 | `PORT` | No | Server port (default: 3000) |
 | `ENCRYPTION_KEY` | Yes | 32+ char secret for AES-GCM config encryption |
 | `DATABASE_URL` | Yes | Postgres connection string |
@@ -660,6 +663,7 @@ git push origin v1.2.3
 The release workflow only runs on version tags (`v*`). Push to `main` no longer triggers releases.
 
 To preview what the changelog would contain:
+
 ```bash
 npm run changelog
 ```
@@ -667,7 +671,7 @@ npm run changelog
 ### Required Secrets (GitHub Repository Settings)
 
 | Secret | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `DOCKERHUB_USERNAME` | Docker Hub username |
 | `DOCKERHUB_TOKEN` | Docker Hub access token |
 | `GITHUB_TOKEN` | Auto-provided, no setup needed |
@@ -687,7 +691,7 @@ See `CHANGELOG.md` — follows [Keep a Changelog](https://keepachangelog.com/en/
 ## Health Checks
 
 | Endpoint | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `GET /health` | Basic liveness (Docker) |
 | `GET /health/detailed` | Readiness with DB/Redis/Worker checks |
 | `GET /health/startup` | Startup probe (longer timeout) |

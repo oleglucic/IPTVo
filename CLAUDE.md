@@ -3,6 +3,7 @@
 ## Project Overview
 
 IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
+
 - AI-powered channel curation and deduplication via OpenRouter
 - iptv-org authoritative channel matching (47k+ channels)
 - Cloudflare Worker logo proxy with edge caching (30-day TTL)
@@ -14,7 +15,7 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        CLIENTS                                   │
 │  Stremio / Nuvio / Web Dashboard                                │
@@ -46,7 +47,7 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 ## Key Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `server.js` | Express server, auth, Stremio addon, health endpoints |
 | `iptvParser.js` | M3U/Xtream parsing, iptv-org matching, AI queue |
 | `imageEngine.js` | Poster generation, logo caching (memory→Redis→Worker→SVG) |
@@ -80,11 +81,13 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 ## Common Tasks
 
 ### Add New DB Table
+
 1. Add `CREATE TABLE` in `dbInit.js` statements array
 2. Add query functions in `db.js`
 3. Export new functions from `db.js`
 
 ### Add Auth-Protected Endpoint
+
 ```javascript
 app.get('/api/protected', async (req, res) => {
     const authHeader = req.headers.authorization;
@@ -97,7 +100,8 @@ app.get('/api/protected', async (req, res) => {
 ```
 
 ### Login/Register Flow
-```
+
+```text
 POST /api/auth/register {username, password, config?} → {userId, token}
 POST /api/auth/login {username, password} → {userId, token, config}
 GET  /api/auth/validate (Bearer token) → {valid, userId, config}
@@ -105,7 +109,8 @@ PUT  /api/auth/config (Bearer token) {config} → {success}
 ```
 
 ### Stremio Addon URLs (User System)
-```
+
+```text
 Manifest:     /:userId/manifest.json
 Catalog:      /:userId/catalog/tv/iptvo_live.json
 Meta:         /:userId/meta/tv/:id.json
@@ -114,7 +119,8 @@ Poster:       /:userId/poster/:id.png
 ```
 
 ### Legacy Addon URLs (Base64 Config)
-```
+
+```text
 /:config/manifest.json → supports existing installations
 ```
 
@@ -138,7 +144,7 @@ docker-compose up -d
 ## Environment Variables
 
 | Variable | Required | Description |
-|----------|----------|-------------|
+| ---------- | ---------- | ------------- |
 | `ENCRYPTION_KEY` | Yes | 32+ char secret for AES-GCM config encryption |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `REDIS_URL` | Yes | Redis connection string |
@@ -164,6 +170,7 @@ curl -X POST http://localhost:3000/api/test-config \
 ## Sensitive Data Redaction Rules
 
 Never log these in plain text:
+
 - Passwords (xtream, m3u auth)
 - openrouterKey
 - Authorization headers
@@ -171,6 +178,7 @@ Never log these in plain text:
 - URLs with embedded credentials (replace `://user:pass@` → `://[REDACTED]@`)
 
 Use helper in routes:
+
 ```javascript
 const safeConfig = {...config};
 if (safeConfig.password) safeConfig.password = '[REDACTED]';
@@ -181,8 +189,9 @@ if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:
 ## Available Skills
 
 **Global skills** (`~/.claude/skills/`) - available in all projects:
+
 | Skill | When to Use |
-|-------|-------------|
+| ------- | ------------- |
 | `frontend-design` | Creating/modifying UI (dashboard.html, new web components) - design tokens, typography, motion |
 | `code-simplifier` | Refactoring backend routes, database layers, complex logic - flatten async, HTTP timeouts, middleware |
 | `karpathy-guidelines` | Before any non-trivial implementation - think first, edit surgically |
@@ -195,8 +204,9 @@ if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:
 | `playwright-cli` | Browser automation for stream resolver testing, network capture, manifest extraction |
 
 **Project-specific skills** (`.claude/skills/`) - only in this repo:
+
 | Skill | When to Use |
-|-------|-------------|
+| ------- | ------------- |
 | `migrate-radix-to-base` | Migrating Radix UI → Base UI (if shadcn adopted) |
 | `shadcn` | Managing shadcn/ui components (if adopted) |
 
@@ -229,6 +239,7 @@ if (safeConfig.xtreamUrl) safeConfig.xtreamUrl = safeConfig.xtreamUrl.replace(/:
 ## MCP Integration
 
 All MCP servers are configured in the developer's instance. Available servers:
+
 - **github**: PRs, issues, code review, repo management
 - **postgres**: Schema inspection, queries, migrations
 - **redis**: Cache inspection, key management, TTL checks
@@ -238,6 +249,7 @@ All MCP servers are configured in the developer's instance. Available servers:
 - **playwright**: E2E testing, browser automation, network capture
 
 ### Usage
+
 - Reference MCPs in prompts: "Use github MCP to create PR"
 - MCPs auto-connect via developer instance - no local config needed
 - Document MCP usage patterns in project-specific docs
@@ -253,8 +265,9 @@ All MCP servers are configured in the developer's instance. Available servers:
 **Docker registry**: Correct (itsoleglucic/iptvo, ghcr.io/oleglucic/iptvo)
 
 ### Branch Naming Conventions
+
 | Branch Type | Pattern | From | Merge To | Version Bump |
-|-------------|---------|------|----------|--------------|
+| ------------- | --------- | ------ | ---------- | -------------- |
 | Feature | `feat/<short-desc>` | `main` | `main` (via PR) | Auto (minor/major) |
 | Bug Fix | `fix/<short-desc>` | `main` | `main` (via PR) | Auto (patch) |
 | Hotfix | `hotfix/<version>` | tag `vX.Y.Z` | `main` + backport | Auto (patch) |
@@ -263,24 +276,25 @@ All MCP servers are configured in the developer's instance. Available servers:
 | Chore/Refactor | `chore/<short-desc>` | `main` | `main` | None |
 
 ### Branch Protection
+
 - Protect `main`: 1 approval, required checks (ci, codeql, codacy), linear history, no force push
 - No auto-merge - manual merge after approval
 
 ## Release Process
 
-**Change-based releases**: Release on every merge to `main`
-- Pre-1.0: First `feat:` → 1.0.0 (major), then minor/patch
-- Post-1.0: Standard semver (feat→minor, fix→patch, breaking→major)
-- No time-based releases
+**Change-based releases**: Release on every merge to `main` — no time-based releases.
 
-**Automation**: Push to `main` → Auto-version → Auto-tag → Auto-release
-- **Automation**: Conventional Commits → Auto-version → Auto-tag → Auto-release
+- **Zero-touch releases**: Push to `main` → Auto-version → Auto-tag → Auto-release (via semantic-release over Conventional Commits)
+- **Release cadence**: Change-based (on merge to `main`)
 - **Release types**: Patch (fix), Minor (feat), Major (breaking)
+- **Pre-1.0**: First `feat:` → 1.0.0 (major), then minor/patch
+- **Post-1.0**: Standard semver (feat→minor, fix→patch, breaking→major)
 
 ## Commit Message Convention
 
 **Conventional Commits** (enforced via Husky + Commitlint):
-```
+
+```text
 <type>[optional scope]: <description>
 
 [optional body]
@@ -293,22 +307,13 @@ All MCP servers are configured in the developer's instance. Available servers:
 **Breaking Changes**: Add `BREAKING CHANGE:` to footer
 
 **Examples**:
-```
+
+```text
 feat(auth): add user registration endpoint
 fix(parser): handle malformed M3U entries
 ci(docker): update base image to node:24
 BREAKING CHANGE: drop support for Node 18
 ```
-
-## Release Process
-
-**Automation**: semantic-release on push to `main`
-- **Zero-touch releases**: Push to `main` → Auto-version → Auto-tag → Auto-release
-- **Release cadence**: Change-based (on merge to `main`)
-- **Release types**: Patch (fix), Minor (feat), Major (breaking)
-
-**Pre-1.0**: First `feat:` → 1.0.0 (major), then minor/patch
-**Post-1.0**: Standard semver (feat→minor, fix→patch, breaking→major)
 
 ## Versioning
 
@@ -317,6 +322,7 @@ BREAKING CHANGE: drop support for Node 18
 
 **Graduation to 1.0.0**: When ready (no strict timeline)
 Criteria:
+
 - [ ] All critical CodeQL alerts resolved (✅ path injection, ✅ log injection, ✅ SSRF, ✅ rate limiting, ✅ poster path injection)
 - [ ] Test coverage ≥ 80%
 - [ ] E2E tests for critical paths (auth, catalog, stream, poster)
@@ -324,6 +330,7 @@ Criteria:
 - [ ] Performance benchmarks met (< 1.5s catalog response)
 
 Process:
+
 1. Create `release/v1.0` branch from `main` when ready
 2. Stabilization period (bug bash, no new features)
 3. Tag `v1.0.0` from `release/v1.0` → triggers major release

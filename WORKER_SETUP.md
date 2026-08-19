@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-1. **Cloudflare account** — Sign up at https://cloudflare.com (free tier is sufficient)
+1. **Cloudflare account** — Sign up at <https://cloudflare.com> (free tier is sufficient)
 2. **Node.js 18+** installed locally
 3. **Wrangler CLI** — Cloudflare's deployment tool
 
@@ -26,7 +26,8 @@ wrangler kv:namespace create "LOGO_KV" --preview
 ```
 
 **Output example:**
-```
+
+```text
 🌀 Creating namespace with title "iptvo-logo-proxy-LOGO_KV"
 ✅ Success!
 Add the following to your configuration file:
@@ -54,12 +55,14 @@ wrangler deploy
 ```
 
 **Expected output:**
-```
+
+```text
 ✅ Successfully deployed to https://iptvo-logo-proxy.<your-account>.workers.dev
 ```
 
 **Note your Worker URL** — it will be something like:
-```
+
+```text
 https://iptvo-logo-proxy.oleglucic.workers.dev
 ```
 
@@ -79,7 +82,8 @@ LOGO_PROXY_URL=https://iptvo-logo-proxy.oleglucic.workers.dev/logo
 ```
 
 The URL **must end with `/logo`** — the full endpoint is:
-```
+
+```text
 https://your-worker.workers.dev/logo?url=<base64url>&fallback=<base64url>&name=ChannelName
 ```
 
@@ -95,6 +99,7 @@ curl "https://iptvo-logo-proxy.oleglucic.workers.dev/logo?url=$(node -e "console
 Should return an image (or SVG placeholder if the logo fails).
 
 Check health endpoint:
+
 ```bash
 curl https://iptvo-logo-proxy.oleglucic.workers.dev/health
 # {"status":"ok","timestamp":1234567890}
@@ -103,7 +108,7 @@ curl https://iptvo-logo-proxy.oleglucic.workers.dev/health
 ## Free Tier Limits
 
 | Resource | Limit |
-|----------|-------|
+| ---------- | ------- |
 | Requests/day | 100,000 |
 | CPU time/request | 10ms (50ms with unbound) |
 | KV reads/day | 100,000 |
@@ -124,7 +129,7 @@ wrangler dev
 ## Troubleshooting
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | `KV namespace not found` | Run `wrangler kv:namespace create` again, update `wrangler.toml` |
 | `Worker not found` | Check `wrangler.toml` name matches deployed name |
 | CORS errors | Worker returns `Access-Control-Allow-Origin: *` — should work |
