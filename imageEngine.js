@@ -142,6 +142,15 @@ async function fetchLogoDirect(logoUrl) {
     return { buffer: Buffer.from(response.data), contentType };
 }
 
+/**
+ * Generates a promotional poster using a cached or fetched channel logo, falling back to a generated poster when necessary.
+ * @param {string} cId - The channel identifier used for diagnostic logging.
+ * @param {string} logoUrl - The primary logo URL.
+ * @param {string} fallbackUrl - An optional fallback logo URL.
+ * @param {string} fallbackName - The channel name displayed on the fallback poster.
+ * @param {string} cachePath - The path where the generated poster is saved.
+ * @return {Promise<string>} The path to the generated poster.
+ */
 async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) {
     const sourceLog = [];
 
@@ -232,7 +241,14 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
     return await generateFallback(cachePath, fallbackName, sourceLog);
 }
 
-async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, contentType = 'image/png') {
+/**
+ * Generates a promotional poster from a logo image and saves it to the cache.
+ * @param {Buffer} logoBuffer - The source logo image data.
+ * @param {string} cachePath - The destination path for the generated poster.
+ * @param {string[]} sourceLog - The log of image sources used during generation.
+ * @return {string} The path of the generated poster.
+ */
+async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, _contentType = 'image/png') {
     // If we got an SVG, we can use it directly for high-quality scaling
     let processBuffer = logoBuffer;
     let isSvg = isSvgBuffer(logoBuffer);
@@ -323,6 +339,14 @@ function evictOldestIfOverCap() {
     }
 }
 
+/**
+ * Retrieves or generates a cached promotional poster for a channel.
+ * @param {string} cId - The channel identifier.
+ * @param {string} [logoUrl] - The primary logo URL.
+ * @param {string} [fallbackName] - The channel name used for fallback poster generation.
+ * @returns {string} The path to the cached poster.
+ * @throws {Error} If the channel identifier is invalid or the cache path is unsafe.
+ */
 async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // Support fallback URL as optional 4th parameter (for parser to pass playlist logo)
     // For backward compatibility with server.js call, we check if logoUrl is an object
@@ -344,6 +368,13 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
 
     const urlHash = primaryUrl ? crypto.createHash('md5').update(primaryUrl).digest('hex').substring(0, 8) : 'none';
     const cachePath = path.join(cacheDir, `${cId}_${urlHash}.png`);
+
+    // Defense-in-depth: validate resolved path stays within cache directory
+    const resolvedPath = path.resolve(cachePath);
+    const resolvedCacheDir = path.resolve(cacheDir);
+    if (!resolvedPath.startsWith(resolvedCacheDir)) {
+        throw new Error("Path traversal attempt detected");
+    }
 
     if (fs.existsSync(cachePath)) return cachePath;
 

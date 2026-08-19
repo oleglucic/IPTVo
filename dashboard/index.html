@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="IPTVo Dashboard - Configure your IPTV provider">
+    <title>IPTVo Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/layout.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Auth Modal -->
+        <div id="authModal" class="modal" role="dialog" aria-labelledby="authTitle" aria-modal="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content auth-modal">
+                <h2 id="authTitle" class="sr-only">Sign In</h2>
+                <div id="authTabs" class="tabs" role="tablist">
+                    <button class="tab-btn active" role="tab" aria-selected="true" data-tab="login">Sign In</button>
+                    <button class="tab-btn" role="tab" aria-selected="false" data-tab="register">Create Account</button>
+                </div>
+                <div id="loginPanel" class="tab-panel active" role="tabpanel">
+                    <form id="loginForm" novalidate>
+                        <div class="form-group">
+                            <label for="loginUsername">Username</label>
+                            <input type="text" id="loginUsername" name="username" required autocomplete="username">
+                        </div>
+                        <div class="form-group">
+                            <label for="loginPassword">Password</label>
+                            <input type="password" id="loginPassword" name="password" required autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+                        <p class="form-error" id="loginError" hidden></p>
+                    </form>
+                </div>
+                <div id="registerPanel" class="tab-panel" role="tabpanel" hidden>
+                    <form id="registerForm" novalidate>
+                        <div class="form-group">
+                            <label for="regUsername">Username</label>
+                            <input type="text" id="regUsername" name="username" required minlength="3" maxlength="50" autocomplete="username">
+                        </div>
+                        <div class="form-group">
+                            <label for="regPassword">Password</label>
+                            <input type="password" id="regPassword" name="password" required minlength="8" autocomplete="new-password">
+                            <small class="form-hint">Minimum 8 characters</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="regPasswordConfirm">Confirm Password</label>
+                            <input type="password" id="regPasswordConfirm" name="passwordConfirm" required autocomplete="new-password">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+                        <p class="form-error" id="registerError" hidden></p>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App (hidden until auth) -->
+        <div id="mainApp" class="main-app" hidden>
+            <header class="header">
+                <div class="header-left">
+                    <h1 class="app-title">IPTVo</h1>
+                    <span class="app-subtitle">IPTV Configuration</span>
+                    <span class="app-version" id="appVersion">v0.0.1</span>
+                </div>
+                <div class="header-right">
+                    <div class="user-menu">
+                        <button class="btn btn-ghost user-menu-btn" data-action="toggle-user-menu" aria-expanded="false" aria-haspopup="true">
+                            <span id="currentUser"></span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 21 6 15"></polyline></svg>
+                        </button>
+                        <div class="user-dropdown" hidden>
+                            <button class="dropdown-item" data-action="change-password">Change Password</button>
+                            <button class="dropdown-item" data-action="delete-account">Delete Account</button>
+                            <hr class="dropdown-divider">
+                            <button class="dropdown-item btn-danger" data-action="logout">Sign Out</button>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <main class="main-content">
+                <nav class="sidebar" aria-label="Configuration steps">
+                    <ul class="step-list">
+                        <li class="step-item" data-step="1">
+                            <a class="step-link active" href="#step1" data-action="navigate-step">
+                                <span class="step-number">1</span>
+                                <span class="step-label">Provider</span>
+                            </a>
+                        </li>
+                        <li class="step-item" data-step="2">
+                            <a class="step-link" href="#step2" data-action="navigate-step">
+                                <span class="step-number">2</span>
+                                <span class="step-label">Groups</span>
+                            </a>
+                        </li>
+                        <li class="step-item" data-step="3">
+                            <a class="step-link" href="#step3" data-action="navigate-step">
+                                <span class="step-number">3</span>
+                                <span class="step-label">Matching</span>
+                            </a>
+                        </li>
+                        <li class="step-item" data-step="4">
+                            <a class="step-link" href="#step4" data-action="navigate-step">
+                                <span class="step-number">4</span>
+                                <span class="step-label">Import/Export</span>
+                            </a>
+                        </li>
+                        <li class="step-item" data-step="5">
+                            <a class="step-link" href="#step5" data-action="navigate-step">
+                                <span class="step-number">5</span>
+                                <span class="step-label">Save & Install</span>
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+
+                <div class="content-area">
+                    <!-- Step 1: Provider Configuration -->
+                    <section id="step1" class="step-panel active" aria-labelledby="step1-title">
+                        <header class="step-header">
+                            <h2 id="step1-title">Provider Configuration</h2>
+                            <p class="step-description">Enter your IPTV provider details. Choose M3U playlist or Xtream Codes API.</p>
+                        </header>
+                        <form id="providerForm" novalidate>
+                            <div class="provider-type-selector">
+                                <label class="provider-type-option">
+                                    <input type="radio" name="type" value="m3u" required>
+                                    <span class="option-content">
+                                        <svg class="option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                                        <span>M3U Playlist</span>
+                                    </span>
+                                </label>
+                                <label class="provider-type-option">
+                                    <input type="radio" name="type" value="xtream" required>
+                                    <span class="option-content">
+                                        <svg class="option-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.51"></line></svg>
+                                        <span>Xtream Codes</span>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <!-- M3U Fields -->
+                            <div id="m3uFields" class="fields-container">
+                                <div class="form-group">
+                                    <label for="m3uUrl">M3U Playlist URL <span class="required">*</span></label>
+                                    <input type="url" id="m3uUrl" name="m3uUrl" placeholder="https://example.com/playlist.m3u" autocomplete="off">
+                                    <small class="form-hint">Direct link to your provider's M3U playlist</small>
+                                </div>
+                            </div>
+
+                            <!-- Xtream Fields -->
+                            <div id="xtreamFields" class="fields-container" hidden>
+                                <div class="form-group">
+                                    <label for="xtreamUrl">Xtream Panel URL <span class="required">*</span></label>
+                                    <input type="url" id="xtreamUrl" name="xtreamUrl" placeholder="https://panel.example.com" autocomplete="off">
+                                    <small class="form-hint">Base URL of your Xtream panel (e.g. https://iptv.provider.com)</small>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="xtreamUsername">Username <span class="required">*</span></label>
+                                        <input type="text" id="xtreamUsername" name="username" autocomplete="username">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="xtreamPassword">Password <span class="required">*</span></label>
+                                        <input type="password" id="xtreamPassword" name="password" autocomplete="current-password">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="timezoneOffset">Timezone Offset (hours)</label>
+                                <input type="number" id="timezoneOffset" name="timezoneOffset" value="0" min="-12" max="14" step="0.5">
+                                <small class="form-hint">Adjust EPG times to your local timezone</small>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary btn-test" data-action="test-connection">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                                <span>Test Connection</span>
+                            </button>
+                            <div class="test-result" id="connectionTestResult" hidden></div>
+                        </form>
+                    </section>
+
+                    <!-- Step 2: Group Selection -->
+                    <section id="step2" class="step-panel" aria-labelledby="step2-title">
+                        <header class="step-header">
+                            <h2 id="step2-title">Channel Groups</h2>
+                            <p class="step-description">Select which channel groups to include. Load groups from your provider first.</p>
+                        </header>
+                        <div class="panel-toolbar">
+                            <button type="button" class="btn btn-secondary" id="loadGroupsBtn" data-action="load-groups" disabled>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                                <span>Load Groups</span>
+                            </button>
+                            <div class="toolbar-spacer"></div>
+                            <button type="button" class="btn btn-ghost" id="selectAllGroups" data-action="select-all-groups" disabled>Select All</button>
+                            <button type="button" class="btn btn-ghost" id="deselectAllGroups" data-action="deselect-all-groups" disabled>Deselect All</button>
+                        </div>
+                        <div class="search-box">
+                            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                            <input type="search" id="groupSearch" placeholder="Filter groups..." aria-label="Filter groups">
+                        </div>
+                        <div class="groups-list" id="groupsList" role="listbox" aria-label="Channel groups">
+                            <p class="empty-state">Enter provider details and click "Load Groups" to fetch available channel groups.</p>
+                        </div>
+                    </section>
+
+                    <!-- Step 3: Matching & AI Settings -->
+                    <section id="step3" class="step-panel" aria-labelledby="step3-title">
+                        <header class="step-header">
+                            <h2 id="step3-title">Matching & AI Settings</h2>
+                            <p class="step-description">Configure how channels are matched to iptv-org reference data and AI curation.</p>
+                        </header>
+                        <div class="settings-section">
+                            <h3 class="settings-title">iptv-org Matching</h3>
+                            <div class="form-group form-group-inline">
+                                <label class="toggle">
+                                    <input type="checkbox" id="iptvOrgEnabled" name="iptvOrgEnabled" checked>
+                                    <span class="toggle-slider"></span>
+                                    <span class="toggle-label">Enable iptv-org matching</span>
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="matchConfidence">Minimum Match Confidence (%)</label>
+                                <input type="range" id="matchConfidence" name="matchConfidence" min="50" max="100" value="85">
+                                <output class="range-value" for="matchConfidence">85%</output>
+                            </div>
+                            <p class="setting-description">Channels with confidence below this threshold won't be auto-matched to iptv-org database.</p>
+                        </div>
+
+                        <div class="settings-section">
+                            <h3 class="settings-title">AI Curation (OpenRouter)</h3>
+                            <div class="form-group form-group-inline">
+                                <label class="toggle">
+                                    <input type="checkbox" id="aiEnabled" name="aiEnabled">
+                                    <span class="toggle-slider"></span>
+                                    <span class="toggle-label">Enable AI curation for unmatched channels</span>
+                                </label>
+                            </div>
+                            <div class="form-group" id="openrouterFields" hidden>
+                                <label for="openrouterKey">OpenRouter API Key <span class="required">*</span></label>
+                                <input type="password" id="openrouterKey" name="openrouterKey" placeholder="sk-or-v1-..." autocomplete="off">
+                                <small class="form-hint">Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></small>
+                            </div>
+                            <div class="form-group" id="aiModelFields" hidden>
+                                <label for="aiModel">AI Model</label>
+                                <select id="aiModel" name="aiModel">
+                                    <option value="openai/gpt-4o-mini">GPT-4o Mini (recommended)</option>
+                                    <option value="openai/gpt-4o">GPT-4o</option>
+                                    <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                                    <option value="google/gemini-1.5-flash">Gemini 1.5 Flash</option>
+                                </select>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Step 4: Import/Export -->
+                    <section id="step4" class="step-panel" aria-labelledby="step4-title">
+                        <header class="step-header">
+                            <h2 id="step4-title">Import / Export Configuration</h2>
+                            <p class="step-description">Backup your configuration or import from another instance.</p>
+                        </header>
+                        <div class="action-cards">
+                            <div class="action-card">
+                                <div class="action-card-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                </div>
+                                <h3 class="action-card-title">Export Configuration</h3>
+                                <p class="action-card-desc">Download your current configuration as a JSON file.</p>
+                                <button type="button" class="btn btn-primary" id="exportBtn" data-action="export-config" disabled>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    Export JSON
+                                </button>
+                            </div>
+                            <div class="action-card">
+                                <div class="action-card-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                </div>
+                                <h3 class="action-card-title">Import Configuration</h3>
+                                <p class="action-card-desc">Load a previously exported configuration file.</p>
+                                <div class="file-input-wrapper">
+                                    <input type="file" id="importFile" accept=".json" hidden>
+                                    <button type="button" class="btn btn-secondary" data-action="trigger-import">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                        Choose File
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Step 5: Save & Install -->
+                    <section id="step5" class="step-panel" aria-labelledby="step5-title">
+                        <header class="step-header">
+                            <h2 id="step5-title">Save & Install</h2>
+                            <p class="step-description">Save your configuration and get the Stremio addon URL.</p>
+                        </header>
+                        <div class="save-section">
+                            <button type="button" class="btn btn-primary btn-lg" id="saveConfigBtn" data-action="save-config" disabled>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                <span>Save Configuration</span>
+                            </button>
+                            <p class="save-status" id="saveStatus" hidden></p>
+                        </div>
+                        <div class="install-section" id="installSection" hidden>
+                            <h3 class="section-title">Addon URL</h3>
+                            <div class="url-box">
+                                <input type="text" id="addonUrl" readonly>
+                                <button type="button" class="btn btn-ghost" id="copyUrlBtn" data-action="copy-url" aria-label="Copy addon URL">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                            </div>
+                            <p class="install-hint">Copy this URL and paste it into Stremio's addon installation field, or click "Open in Stremio" if you have the app installed.</p>
+                            <a href="#" id="stremioLink" class="btn btn-secondary" target="_blank" rel="noopener">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+                                Open in Stremio
+                            </a>
+                        </div>
+                    </section>
+                </div>
+            </main>
+        </div>
+
+        <!-- Toast Container -->
+        <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

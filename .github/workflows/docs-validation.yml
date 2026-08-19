@@ -1,0 +1,75 @@
+name: Documentation Validation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.md'
+      - '**.markdown'
+      - 'README*'
+      - 'docs/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.md'
+      - '**.markdown'
+      - 'README*'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install markdown lint
+        run: npm install --save-dev markdownlint-cli
+
+      - name: Run markdownlint
+        run: npx markdownlint $(find . \( -name "*.md" -o -name "*.markdown" \) -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.agents/*" -not -path "./.claude/*" -not -path "./.remember/*" -not -path "./graphify-out/*" -not -path "./CHANGELOG.md" | sort) --disable MD013 --disable MD041
+
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install markdown link check
+        run: npm install --save-dev markdown-link-check
+
+      - name: Check links in markdown files
+        run: npx markdown-link-check $(find . \( -name "*.md" -o -name "*.markdown" \) -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.agents/*" -not -path "./.claude/*" -not -path "./.remember/*" -not -path "./graphify-out/*" -not -path "./CHANGELOG.md" | sort | head -n 100) --config ./markdown-link-check.config.json
+
+      - name: Upload link check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: link-check-results
+          path: linkcheck_report*.html
+
+  spell-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # codespell is a Python tool. The npm package named "codespell" is an
+      # unrelated interactive TUI and hangs in CI, so install via pip instead.
+      - name: Install codespell
+        run: pip install --user codespell && echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # Docs-only scope: scanning source files (`.js`/`.json` etc.) flags code
+      # identifiers as typos and is out of scope for documentation validation.
+      - name: Check spelling
+        run: codespell $(find . \( -name "*.md" -o -name "*.markdown" -o -name "*.txt" \) -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.claude/*" -not -path "./.remember/*" -not -path "./graphify-out/*" -not -path "./CHANGELOG.md" | sort)

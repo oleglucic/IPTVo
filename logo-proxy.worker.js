@@ -20,16 +20,13 @@ const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 2;
 const BASE_RETRY_DELAY_MS = 500;
 
-// Known problematic domains that need special handling
-const PROBLEMATIC_DOMAINS = new Set([
-    'upload.wikimedia.org',      // 403 on direct hotlink
-    'images-web.ug-be.cdn.united.cloud', // 404 rotation
-    'i.imgur.com',               // aggressive rate limiting
-    'imgur.com',                 // aggressive rate limiting
-    'photo-tmdb.com',            // 404 on stale stalker portal logos
-]);
+// Known problematic domains that need special handling (reserved for future use)
 
-// SVG placeholder generator
+/**
+ * Creates an SVG placeholder labeled with the specified text.
+ * @param {string} [text='Live TV'] - The label displayed in the placeholder.
+ * @return {string} The generated 600×900 SVG markup.
+ */
 function generatePlaceholderSvg(text = 'Live TV') {
     return `<svg width="600" height="900" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -55,6 +52,11 @@ function escapeHtml(text) {
         .replace(/'/g, '&apos;');
 }
 
+/**
+ * Determines whether a value is a valid HTTP or HTTPS URL.
+ * @param {*} url - The value to validate as a URL.
+ * @return {boolean} `true` if the value is a valid HTTP or HTTPS URL, `false` otherwise.
+ */
 function isValidHttpUrl(url) {
     try {
         const u = new URL(url);
@@ -64,15 +66,11 @@ function isValidHttpUrl(url) {
     }
 }
 
-function getDomain(url) {
-    try {
-        return new URL(url).hostname;
-    } catch {
-        return 'unknown';
-    }
-}
-
-// Base64URL encode/decode (no padding, URL-safe)
+/**
+ * Encodes text as an unpadded, URL-safe Base64 string.
+ * @param {string} str - The text to encode.
+ * @return {string} The URL-safe Base64-encoded text.
+ */
 function base64urlEncode(str) {
     return btoa(unescape(encodeURIComponent(str)))
         .replace(/\+/g, '-')
@@ -196,7 +194,7 @@ async function tryFetchUrl(env, url) {
 
 // Main handler
 export default {
-    async fetch(request, env, ctx) {
+    async fetch(request, env, _ctx) {
         const url = new URL(request.url);
 
         // Health check

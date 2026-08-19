@@ -21,6 +21,7 @@ Thank you for your interest in contributing! This project follows standard open-
 ## Two-Pass M3U Parsing
 
 Any variable computed on the `#EXTINF:` pass must be added to **both**:
+
 - The `cItem` construction on the `#EXTINF:` line
 - The destructuring on the URL-line pass
 
@@ -31,6 +32,7 @@ XTream parsing is single-pass — no scope issues there.
 No local Docker — all Docker-dependent testing happens via git push + Portainer rebuild.
 
 Use standalone scripts for verification:
+
 ```bash
 node -e "require('./iptvParser').streamFetchIPTV('test', {...})"
 ```
@@ -38,6 +40,7 @@ node -e "require('./iptvParser').streamFetchIPTV('test', {...})"
 ## Commit Messages
 
 Use conventional commit format:
+
 - `feat:` new features
 - `fix:` bug fixes
 - `chore:` maintenance, deps, config

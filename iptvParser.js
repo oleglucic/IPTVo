@@ -3,8 +3,8 @@ const readline = require('readline');
 const zlib = require('zlib');
 const sax = require('sax');
 const { Readable } = require('stream');
-const { startAiQueue, globalAiCache } = require('./aiCurator');
-const { getOverride, getAllOverrides } = require('./db');
+const { startAiQueue } = require('./aiCurator');
+const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
 const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
 
@@ -70,10 +70,15 @@ function isSafeUrl(url) {
 
 // --- Synonym normalization (jr/junior etc) ---
 const SYNONYM_MAP = { jr: 'junior' };
+/**
+ * Replaces configured word synonyms in a string.
+ * @param {string} str - The text whose words should be normalized.
+ * @return {string} The text with recognized synonyms replaced.
+ */
 function applySynonyms(str) {
     return str.split(/\s+/).map(w => SYNONYM_MAP[w.toLowerCase()] || w).join(' ');
 }
-const { saveCacheToRedis, saveLogoUrl, loadLogoUrl, hasRedis } = require('./redisCache');
+const { saveCacheToRedis, saveLogoUrl } = require('./redisCache');
 const { getLogoUrl, setLogoUrl } = require('./db');
 
 const userCaches = new Map();
@@ -89,6 +94,11 @@ function getUserCache(configKey) {
     return cached;
 }
 
+/**
+ * Converts an XMLTV timestamp into Unix time in milliseconds.
+ * @param {string} x - The XMLTV timestamp, including an optional timezone offset.
+ * @return {number} The timestamp in Unix milliseconds, or `0` for invalid input.
+ */
 function parseXMLDate(x) {
     if (!x || x.length < 14) return 0;
     try {
@@ -98,7 +108,7 @@ function parseXMLDate(x) {
         const time = new Date(isoStr).getTime();
         if (isNaN(time)) return 0;
         return time;
-    } catch (e) {
+    } catch (__e) {
         return 0;
     }
 }
@@ -177,12 +187,17 @@ async function streamFetchIPTV(configKey, configObj) {
     }
 }
 
+/**
+ * Parses an M3U playlist and stores its channels, streams, logos, groups, and EPG data in the user cache.
+ * @param {string} configKey - The key identifying the playlist configuration and its cache entry.
+ * @param {Object} configObj - Playlist settings, including the M3U URL and optional filtering, EPG, matching, and AI configuration.
+ */
 async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
     console.log(`[parseM3uData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
-    console.log(`[parser] Preloaded ${overridesMap.size} override mappings from DB`);
+    console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration context object is missing.");
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
@@ -259,9 +274,12 @@ async function parseM3uData(configKey, configObj) {
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
 let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|vip|live|backup|alt|online)\b/gi, ' ');
+                // ReDoS-safe: use specific character classes without nested quantifiers
                 cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
-                cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
-                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
+                cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
+                cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
+                // Fixed: removed nested quantifier \s* followed by character class with *
+                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
                 cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
                 
                 const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
@@ -338,14 +356,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         for (const [, channel] of tMap.entries()) {
             if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
         }
-        console.log(`[iptv-org] Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+        console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
-        console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
-        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
+        console.log(`[parser] READY configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
+        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
-        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
 
         // Queue background logo pre-fetch for channels without iptv-org match
         const missingLogos = [];
@@ -359,14 +377,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             }
         }
         if (missingLogos.length > 0) {
-            console.log(`[LogoPrefetch] Queuing ${missingLogos.length} logos for background fetch...`);
-            queueLogoPrefetch(missingLogos).catch(e => console.error('[LogoPrefetch] Error:', e.message));
+            console.log(`[LogoPrefetch] Queuing ${sanitizeForLog(missingLogos.length)} logos for background fetch...`);
+            queueLogoPrefetch(missingLogos).catch(e => console.error('[LogoPrefetch] Error:', sanitizeForLog(e.message)));
         }
 
         // Always trigger async background AI process when dirty channels exist
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
             console.log(`[AI Curator] Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", err));
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
             console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${Object.keys(configObj).join(', ')}, ai=${configObj.ai}`);
         }
@@ -376,12 +394,17 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
     }
 }
 
+/**
+ * Loads and normalizes live channel data from an Xtream server into the user cache.
+ * @param {string} configKey - The key identifying the configuration and its cache entry.
+ * @param {Object} configObj - Xtream connection and channel filtering configuration.
+ */
 async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
     console.log(`[parseXtreamData] START for configKey=${configKey ? configKey.substring(0,12) : 'null'}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
-    console.log(`[parser] Preloaded ${overridesMap.size} override mappings from DB`);
+    console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration mapping context payload is missing.");
 
@@ -473,9 +496,12 @@ async function parseXtreamData(configKey, configObj) {
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
 let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|vip|live|backup|alt|online)\b/gi, ' ');
+            // ReDoS-safe: use specific character classes without nested quantifiers
             cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
-            cName = cName.replace(/\b\d+[pi]\b|\b\d+\s*fps\b/gi, ' ');
-            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\|\s]*/gi, ' ');
+            cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
+            cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
+            // Fixed: removed nested quantifier \s* followed by character class with *
+            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
             cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
             const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
@@ -538,18 +564,18 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         for (const [, channel] of tMap.entries()) {
             if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
         }
-        console.log(`[iptv-org] Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+        console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
-        console.log(`[parser] READY configKey=${configKey ? configKey.substring(0,12) : 'null'}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
-        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', e.message));
-        console.log(`[Xtream Engine] Categorized and loaded ${tCat.length} streams inside memory.`);
+        console.log(`[parser] READY configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
+        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
+        console.log(`[Xtream Engine] Categorized and loaded ${sanitizeForLog(tCat.length)} streams inside memory.`);
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
-        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', e.message));
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
 
         if (dirtyChannels.length > 0 && configObj.openrouterKey) {
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", err));
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
             console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config`);
         }
@@ -560,6 +586,13 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
     }
 }
 
+/**
+ * Parses a streamed XMLTV EPG feed and maps programme schedules to known channels.
+ * @param {string} epgUrl - The XMLTV feed URL.
+ * @param {Map} tMap - Map of known canonical channel IDs.
+ * @param {Map} epgMap - Map of EPG channel identifiers to canonical channel IDs.
+ * @returns {Object} A mapping of canonical channel IDs to programme schedules.
+ */
 async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     const tEpg = {};
     if (!epgUrl) return tEpg;
@@ -587,7 +620,6 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
             // Using sax parser streaming to parse XML memory-safely
             const saxStream = sax.createStream(true, { trim: true, normalize: true });
             let currentProgramme = null;
-            let currentTag = null;
             let currentText = '';
 
             saxStream.on('opentag', (node) => {
@@ -598,7 +630,6 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
                         channel: node.attributes.channel ? node.attributes.channel.toLowerCase().trim() : ""
                     };
                 }
-                currentTag = node.name;
                 currentText = '';
             });
 
@@ -667,8 +698,8 @@ function getEpgText(chKey, epgData, offsetHours = 0) {
 module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh };
 
 /**
- * Save logo URLs to both Redis (fast access) and Database (persistent, no expiry).
- * Runs in background after parsing completes.
+ * Persists primary channel logo URLs for change tracking.
+ * @param {Map} tMap - Map of channel identifiers to channel metadata.
  */
 async function saveLogoUrlsToRedis(configKey, tMap) {
     let saved = 0;
@@ -685,15 +716,13 @@ async function saveLogoUrlsToRedis(configKey, tMap) {
         }
     }
     if (saved > 0) {
-        console.log(`[LogoCache] Saved ${saved} logo URLs for change tracking (Redis + DB)`);
+        console.log(`[LogoCache] Saved ${sanitizeForLog(saved)} logo URLs for change tracking (Redis + DB)`);
     }
 }
 
 /**
- * Background logo refresh - only refresh logos that have changed URLs
- * or are new (haven't been fetched before).
- * Uses Database for persistent URL tracking (survives restarts, no expiry).
- * Runs periodically to respect rate limits.
+ * Refreshes channel logos when their URLs are new or have changed.
+ * Tracks processed logo URLs persistently and pauses between refreshes to respect rate limits.
  */
 async function backgroundLogoRefresh() {
     console.log('[LogoRefresh] Starting background logo refresh...');
@@ -703,7 +732,7 @@ async function backgroundLogoRefresh() {
     let errors = 0;
 
     try {
-        for (const [configKey, cached] of userCaches.entries()) {
+        for (const [_configKey, cached] of userCaches.entries()) {
             if (!cached || cached.status !== 'ready' || !cached.channelMap) continue;
 
             for (const [cId, channel] of cached.channelMap.entries()) {
@@ -724,7 +753,7 @@ async function backgroundLogoRefresh() {
                 }
 
                 // URL changed or first time seeing this channel - need refresh
-                console.log(`[LogoRefresh] Logo URL changed/new for ${cId}, refreshing...`);
+                console.log(`[LogoRefresh] Logo URL changed/new for ${sanitizeForLog(cId)}, refreshing...`);
 
                 try {
                     // Fetch via imageEngine (which uses Worker proxy + Redis cache)
@@ -745,22 +774,21 @@ async function backgroundLogoRefresh() {
 
                 } catch (err) {
                     errors++;
-                    console.error(`[LogoRefresh] Failed for ${cId}: ${err.message}`);
+                    console.error(`[LogoRefresh] Failed for ${sanitizeForLog(cId)}: ${sanitizeForLog(err.message)}`);
                 }
             }
         }
 
-        console.log(`[LogoRefresh] Complete: checked=${checked}, refreshed=${refreshed}, unchanged=${unchanged}, errors=${errors}`);
+        console.log(`[LogoRefresh] Complete: checked=${sanitizeForLog(checked)}, refreshed=${sanitizeForLog(refreshed)}, unchanged=${sanitizeForLog(unchanged)}, errors=${sanitizeForLog(errors)}`);
 
     } catch (err) {
-        console.error('[LogoRefresh] Fatal error:', err.message);
+        console.error('[LogoRefresh] Fatal error:', sanitizeForLog(err.message));
     }
 }
 
 /**
- * Background logo pre-fetch queue - fetches logos for channels without iptv-org match
- * to warm up the Cloudflare Worker cache (which caches at edge for 30 days).
- * Fire-and-forget, runs during parsing.
+ * Prefetches channel logos in rate-limited batches to warm the image cache.
+ * @param {Array<{url: string, cId: string, iptvOrgLogo?: string}>} missingLogos - Channel logo details, including playlist and optional iptv-org URLs.
  */
 async function queueLogoPrefetch(missingLogos) {
     if (!missingLogos || missingLogos.length === 0) return;
@@ -779,7 +807,7 @@ async function queueLogoPrefetch(missingLogos) {
                 const primaryLogo = iptvOrgLogo || url;
                 const fallbackLogo = iptvOrgLogo ? url : null;
                 await getPremiumPoster(cId, primaryLogo, fallbackLogo, cId);
-            } catch (e) {
+            } catch (__e) {
                 // Ignore pre-fetch errors - they'll be retried on actual request
             }
         });

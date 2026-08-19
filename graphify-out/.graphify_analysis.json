@@ -1,0 +1,442 @@
+{
+  "communities": {
+    "0": [
+      "cryptoutils",
+      "cryptoutils_crypto",
+      "cryptoutils_decryptconfig",
+      "cryptoutils_derivekey",
+      "cryptoutils_encryptconfig",
+      "cryptoutils_generatesessiontoken",
+      "cryptoutils_getmasterkey",
+      "cryptoutils_hashpassword",
+      "cryptoutils_verifypassword",
+      "db_createuser",
+      "db_updateuserconfig",
+      "iptvparser_streamfetchiptv",
+      "server",
+      "server_addonbuilder_servehttp",
+      "server_addoninterface",
+      "server_apilimiter",
+      "server_app",
+      "server_authlimiter",
+      "server_axios",
+      "server_backgroundlogorefresh",
+      "server_builder",
+      "server_cors",
+      "server_dashboardlimiter",
+      "server_ensurecache",
+      "server_express",
+      "server_extractconfig",
+      "server_getcatchupstreams_snapshotallepgtohistory",
+      "server_getchanneldata",
+      "server_getconfigfromreq",
+      "server_getgroupslimiter",
+      "server_getpremiumposter",
+      "server_hashpassword_verifypassword_generatesessiontoken_decryptconfig",
+      "server_healthdetailedlimiter",
+      "server_initschema",
+      "server_issafeurl",
+      "server_loadcachefromredis_listcachedconfigkeys",
+      "server_path",
+      "server_posterlimiter",
+      "server_ratelimit",
+      "server_sanitizeforlog",
+      "server_sessions",
+      "server_startautorefresh_startiptvorgrefresh",
+      "server_streamfetchiptv_getepgtext_usercaches_max_cache_age"
+    ],
+    "1": [
+      "package",
+      "package_allowscripts",
+      "package_allowscripts_sharp_0_35_3",
+      "package_author",
+      "package_description",
+      "package_engines",
+      "package_engines_node",
+      "package_keywords",
+      "package_license",
+      "package_main",
+      "package_name",
+      "package_overrides",
+      "package_overrides_inquirer",
+      "package_overrides_path_to_regexp",
+      "package_overrides_router",
+      "package_overrides_tmp",
+      "package_release",
+      "package_release_branches",
+      "package_release_plugins",
+      "package_scripts",
+      "package_scripts_commitlint",
+      "package_scripts_dev",
+      "package_scripts_lint",
+      "package_scripts_release",
+      "package_scripts_start",
+      "package_scripts_test",
+      "package_scripts_type_check",
+      "package_version",
+      "ref_addon",
+      "ref_ai_curation",
+      "ref_cloudflare",
+      "ref_iptv",
+      "ref_live",
+      "ref_main",
+      "ref_nuvio",
+      "ref_postgresql",
+      "ref_redis",
+      "ref_semantic_release_commit_analyzer",
+      "ref_semantic_release_release_notes_generator",
+      "ref_stremio",
+      "ref_tv"
+    ],
+    "2": [
+      "imageengine",
+      "imageengine_axios",
+      "imageengine_base64urlencode",
+      "imageengine_cachedir",
+      "imageengine_crypto",
+      "imageengine_deadurlcache",
+      "imageengine_evictoldestifovercap",
+      "imageengine_fetchlogodirect",
+      "imageengine_fetchlogoviaproxy",
+      "imageengine_fs",
+      "imageengine_generatefallback",
+      "imageengine_generateposterfrombuffer",
+      "imageengine_getfromlogocache",
+      "imageengine_getpremiumposter",
+      "imageengine_inflight",
+      "imageengine_isdeadurl",
+      "imageengine_issvgbuffer",
+      "imageengine_loadlogobuffer_savelogobuffer_hasredis",
+      "imageengine_logocache",
+      "imageengine_markdeadurl",
+      "imageengine_path",
+      "imageengine_renderposter",
+      "imageengine_setlogocache",
+      "imageengine_sharp",
+      "iptvparser_queuelogoprefetch",
+      "rediscache",
+      "rediscache_crypto",
+      "rediscache_deserializecache",
+      "rediscache_listcachedconfigkeys",
+      "rediscache_loadcachefromredis",
+      "rediscache_loadlogobuffer",
+      "rediscache_loadlogourl",
+      "rediscache_redis",
+      "rediscache_savelogobuffer"
+    ],
+    "3": [
+      "db_getlogourl",
+      "db_setlogourl",
+      "iptvparser",
+      "iptvparser_applysynonyms",
+      "iptvparser_axios",
+      "iptvparser_backgroundlogorefresh",
+      "iptvparser_extractm3ucatchupinfo_extractxtreamcatchupinfo",
+      "iptvparser_getepgtext",
+      "iptvparser_getlogourl_setlogourl",
+      "iptvparser_getoverride_getalloverrides",
+      "iptvparser_getusercache",
+      "iptvparser_handlexmltvepg",
+      "iptvparser_issafeurl",
+      "iptvparser_lookupchannel_lookupchannelfuzzy_isvalidcountrycode",
+      "iptvparser_normaliseformat",
+      "iptvparser_parsem3udata",
+      "iptvparser_parsestreaminfo",
+      "iptvparser_parsexmldate",
+      "iptvparser_parsextreamdata",
+      "iptvparser_readable",
+      "iptvparser_readline",
+      "iptvparser_sanitizeforlog",
+      "iptvparser_savecachetoredis_savelogourl_loadlogourl_hasredis",
+      "iptvparser_savelogourlstoredis",
+      "iptvparser_sax",
+      "iptvparser_startaiqueue_globalaicache",
+      "iptvparser_synonym_map",
+      "iptvparser_usercaches",
+      "iptvparser_zlib",
+      "rediscache_savecachetoredis",
+      "rediscache_savelogourl",
+      "rediscache_serializecache"
+    ],
+    "4": [
+      "aicurator",
+      "aicurator_axios",
+      "aicurator_getoverride_setoverride_getalloverrides",
+      "aicurator_globalaicache",
+      "aicurator_lookupchannel_lookupchannelfuzzy",
+      "aicurator_processaibatch",
+      "aicurator_sanitizeforlog",
+      "aicurator_startaiqueue",
+      "db",
+      "db_adjustconfidence",
+      "db_decrementconfidence",
+      "db_getalloverrides",
+      "db_getoverride",
+      "db_getuserbyid",
+      "db_getuserbyusername",
+      "db_incrementconfidence",
+      "db_incrementusage",
+      "db_pool",
+      "db_setoverride",
+      "dbinit",
+      "dbinit_initschema",
+      "iptvorgref_lookupchannelfuzzy"
+    ],
+    "5": [
+      "axios",
+      "cors",
+      "express",
+      "express_rate_limit",
+      "fuse_js",
+      "ioredis",
+      "package_dependencies",
+      "package_dependencies_axios",
+      "package_dependencies_cors",
+      "package_dependencies_express",
+      "package_dependencies_express_rate_limit",
+      "package_dependencies_fuse_js",
+      "package_dependencies_ioredis",
+      "package_dependencies_pg",
+      "package_dependencies_sax",
+      "package_dependencies_sharp",
+      "package_dependencies_stremio_addon_sdk",
+      "pg",
+      "sax",
+      "sharp",
+      "stremio_addon_sdk"
+    ],
+    "6": [
+      "commitlint",
+      "commitlint_config_conventional",
+      "eslint",
+      "eslint_plugin_html",
+      "globals",
+      "husky",
+      "package_devdependencies",
+      "package_devdependencies_commitlint",
+      "package_devdependencies_commitlint_config_conventional",
+      "package_devdependencies_eslint",
+      "package_devdependencies_eslint_plugin_html",
+      "package_devdependencies_globals",
+      "package_devdependencies_husky",
+      "package_devdependencies_semantic_release",
+      "package_devdependencies_semantic_release_changelog",
+      "package_devdependencies_semantic_release_git",
+      "package_devdependencies_semantic_release_github",
+      "semantic_release",
+      "semantic_release_changelog",
+      "semantic_release_git",
+      "semantic_release_github"
+    ],
+    "7": [
+      "iptvorgref",
+      "iptvorgref_axios",
+      "iptvorgref_buildmatchresult",
+      "iptvorgref_channelidtologo",
+      "iptvorgref_exactmatchmap",
+      "iptvorgref_fuse",
+      "iptvorgref_isvalidcountrycode",
+      "iptvorgref_lastrefreshed",
+      "iptvorgref_lookupchannel",
+      "iptvorgref_normalize",
+      "iptvorgref_normalizecache",
+      "iptvorgref_refresh",
+      "iptvorgref_startautorefresh",
+      "iptvorgref_validcountrycodes"
+    ],
+    "8": [
+      "logo_proxy_worker",
+      "logo_proxy_worker_base64urldecode",
+      "logo_proxy_worker_base64urlencode",
+      "logo_proxy_worker_escapehtml",
+      "logo_proxy_worker_fetch",
+      "logo_proxy_worker_fetchwithretry",
+      "logo_proxy_worker_generateplaceholdersvg",
+      "logo_proxy_worker_getdomain",
+      "logo_proxy_worker_isdeadurlkv",
+      "logo_proxy_worker_isvalidhttpurl",
+      "logo_proxy_worker_markdeadurlkv",
+      "logo_proxy_worker_problematic_domains",
+      "logo_proxy_worker_tryfetchurl"
+    ],
+    "9": [
+      "catchup",
+      "catchup_buildcatchupurl",
+      "catchup_extractm3ucatchupinfo",
+      "catchup_extractxtreamcatchupinfo",
+      "catchup_getcatchupstreams",
+      "catchup_saveepgsnapshot_getepghistory",
+      "catchup_snapshotallepgtohistory",
+      "db_getepghistory",
+      "db_saveepgsnapshot"
+    ],
+    "10": [
+      "eslint_config",
+      "eslint_config_globals",
+      "eslint_config_pluginhtml"
+    ],
+    "11": [
+      "commitlint_config"
+    ]
+  },
+  "cohesion": {
+    "0": 0.06755260243632337,
+    "1": 0.04878048780487805,
+    "2": 0.0962566844919786,
+    "3": 0.11895161290322581,
+    "4": 0.14285714285714285,
+    "5": 0.09523809523809523,
+    "6": 0.09523809523809523,
+    "7": 0.17582417582417584,
+    "8": 0.3076923076923077,
+    "9": 0.3055555555555556,
+    "10": 0.6666666666666666,
+    "11": 1.0
+  },
+  "gods": [
+    {
+      "id": "iptvparser_parsem3udata",
+      "label": "parseM3uData()",
+      "degree": 18
+    },
+    {
+      "id": "iptvparser_parsextreamdata",
+      "label": "parseXtreamData()",
+      "degree": 16
+    },
+    {
+      "id": "imageengine_renderposter",
+      "label": "renderPoster()",
+      "degree": 13
+    },
+    {
+      "id": "package_keywords",
+      "label": "keywords",
+      "degree": 11
+    },
+    {
+      "id": "aicurator_startaiqueue",
+      "label": "startAiQueue()",
+      "degree": 10
+    },
+    {
+      "id": "iptvparser_backgroundlogorefresh",
+      "label": "backgroundLogoRefresh()",
+      "degree": 8
+    },
+    {
+      "id": "package_scripts",
+      "label": "scripts",
+      "degree": 8
+    },
+    {
+      "id": "server_ensurecache",
+      "label": "ensureCache()",
+      "degree": 7
+    },
+    {
+      "id": "iptvorgref_lookupchannel",
+      "label": "lookupChannel()",
+      "degree": 7
+    },
+    {
+      "id": "imageengine_getpremiumposter",
+      "label": "getPremiumPoster()",
+      "degree": 6
+    }
+  ],
+  "surprises": [
+    {
+      "source": "ensureCache()",
+      "target": "loadCacheFromRedis()",
+      "source_files": [
+        "server.js",
+        "redisCache.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "parseM3uData()",
+      "target": "startAiQueue()",
+      "source_files": [
+        "iptvParser.js",
+        "aiCurator.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "parseM3uData()",
+      "target": "extractM3uCatchupInfo()",
+      "source_files": [
+        "iptvParser.js",
+        "catchup.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "parseM3uData()",
+      "target": "getAllOverrides()",
+      "source_files": [
+        "iptvParser.js",
+        "db.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "parseM3uData()",
+      "target": "isValidCountryCode()",
+      "source_files": [
+        "iptvParser.js",
+        "iptvOrgRef.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `dependencies` connect `dependencies` to `package.json`?",
+      "why": "High betweenness centrality (0.045) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `devDependencies` connect `devDependencies` to `package.json`?",
+      "why": "High betweenness centrality (0.045) - this node is a cross-community bridge."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `crypto`, `{ addonBuilder, serveHTTP }`, `addonInterface` to the rest of the system?",
+      "why": "112 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `server.js` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.06755260243632337 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `package.json` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.04878048780487805 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `imageEngine.js` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.0962566844919786 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `iptvParser.js` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.11895161290322581 - nodes in this community are weakly interconnected."
+    }
+  ]
+}

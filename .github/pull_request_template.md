@@ -2,6 +2,7 @@
 <!-- What does this PR do? -->
 
 ## Type
+
 - [ ] feat: New feature
 - [ ] fix: Bug fix
 - [ ] docs: Documentation
@@ -16,10 +17,12 @@
 - [ ] security: Security fix
 
 ## Breaking Changes
+
 - [ ] Yes (add `BREAKING CHANGE:` to commit footer)
 - [ ] No
 
 ## Checklist
+
 - [ ] Tests pass
 - [ ] Lint passes
 - [ ] Type check passes
