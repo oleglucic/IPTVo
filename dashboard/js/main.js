@@ -28,6 +28,11 @@ function cacheElements() {
     // Navigation
     elements.stepLinks = document.querySelectorAll('[data-action="navigate-step"]');
     elements.stepPanels = document.querySelectorAll('.step-panel');
+    elements.sidebarToggle = document.getElementById('sidebarToggle');
+    elements.configSidebar = document.getElementById('configSidebar');
+    elements.sidebarOverlay = document.getElementById('sidebarOverlay');
+    elements.stepPrevBtns = document.querySelectorAll('[data-action="prev-step"]');
+    elements.stepNextBtns = document.querySelectorAll('[data-action="next-step"]');
 
     // Provider Form
     elements.providerForm = document.getElementById('providerForm');
@@ -101,8 +106,8 @@ async function handleLogin(e) {
     elements.loginError.textContent = '';
 
     try {
-        const { userId, token, config } = await api.login(username, password);
-        mutations.setAuth({ userId, config }, token);
+        const { userId, username: userDisplay, token, config } = await api.login(username, password);
+        mutations.setAuth({ userId, username: userDisplay, config }, token);
         closeAuthModal();
         await initializeApp();
         toast.success('Welcome back!', `Signed in as ${username}`);
@@ -133,8 +138,8 @@ async function handleRegister(e) {
     }
 
     try {
-        const { userId, token } = await api.register(username, password);
-        mutations.setAuth({ userId, config: {} }, token);
+        const { userId, username: userDisplay, token } = await api.register(username, password);
+        mutations.setAuth({ userId, username: userDisplay, config: {} }, token);
         closeAuthModal();
         await initializeApp();
         toast.success('Account created!', `Welcome, ${username}`);
@@ -467,7 +472,7 @@ function handleAISettings() {
     // Always capture both fields so enabling AI later keeps the user's chosen model,
     // and disabling AI doesn't silently drop the previous selection.
     mutations.setConfigField('openrouterKey', elements.openrouterKey.value);
-    mutations.setConfigField('aiModel', elements.aiModel.value || 'openai/gpt-4o-mini');
+    mutations.setConfigField('aiModel', elements.aiModel.value || 'openrouter/free');
 }
 
 /**
@@ -614,7 +619,11 @@ async function initializeApp() {
 
     // Load user config from server
     try {
-        const { config } = await api.validate();
+        const { config, username } = await api.validate();
+        if (username) {
+            state.user = { ...state.user, username };
+            elements.currentUser.textContent = username;
+        }
         if (config) {
             // Merge with defaults, preserving sensitive fields
             const mergedConfig = { ...state.config, ...config };
@@ -671,7 +680,7 @@ function updateFormFromState() {
     elements.openrouterFields.hidden = !state.config.aiEnabled;
     elements.aiModelFields.hidden = !state.config.aiEnabled;
     elements.openrouterKey.value = state.config.openrouterKey || '';
-    elements.aiModel.value = state.config.aiModel || 'openai/gpt-4o-mini';
+    elements.aiModel.value = state.config.aiModel || 'openrouter/free';
 
     // Groups
     renderGroups();
@@ -731,7 +740,41 @@ function bindEvents() {
             e.preventDefault();
             const step = parseInt(link.getAttribute('href').replace('#step', ''), 10);
             navigateToStep(step);
+            closeSidebarDrawer();
         });
+    });
+
+    // Mobile drawer: hamburger opens/closes the sidebar
+    const openSidebarDrawer = () => {
+        elements.configSidebar.classList.add('open');
+        elements.sidebarOverlay.classList.add('visible');
+        elements.sidebarOverlay.hidden = false;
+        elements.sidebarToggle.setAttribute('aria-expanded', 'true');
+    };
+    const closeSidebarDrawer = () => {
+        elements.configSidebar.classList.remove('open');
+        elements.sidebarOverlay.classList.remove('visible');
+        elements.sidebarOverlay.hidden = true;
+        elements.sidebarToggle.setAttribute('aria-expanded', 'false');
+    };
+    elements.sidebarToggle.addEventListener('click', () => {
+        if (elements.configSidebar.classList.contains('open')) {
+            closeSidebarDrawer();
+        } else {
+            openSidebarDrawer();
+        }
+    });
+    elements.sidebarOverlay.addEventListener('click', closeSidebarDrawer);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeSidebarDrawer();
+    });
+
+    // Prev/Next step navigation
+    elements.stepPrevBtns.forEach(btn => {
+        btn.addEventListener('click', () => navigateToStep(state.currentStep - 1));
+    });
+    elements.stepNextBtns.forEach(btn => {
+        btn.addEventListener('click', () => navigateToStep(state.currentStep + 1));
     });
 
     // Provider Form

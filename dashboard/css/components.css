@@ -187,6 +187,16 @@
     user-select: none;
 }
 
+/* Keep toggles laid out inline-row even inside .form-group, which
+   would otherwise force display:block onto the label and stack the
+   slider on top of its text. */
+.form-group .toggle {
+    display: inline-flex;
+    align-items: center;
+    margin-bottom: 0;
+    font-weight: var(--font-regular);
+}
+
 .toggle input {
     position: absolute;
     opacity: 0;
@@ -852,6 +862,33 @@
 
 .toolbar-spacer {
     flex: 1;
+}
+
+.step-nav {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-top: var(--space-6);
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--color-border);
+}
+
+.step-nav .btn:only-child {
+    margin-left: auto;
+}
+
+@media (max-width: 600px) {
+    .step-nav {
+        flex-direction: column-reverse;
+    }
+
+    .step-nav .btn {
+        width: 100%;
+    }
+
+    .step-nav .btn:only-child {
+        margin-left: 0;
+    }
 }
 
 /* ==================== Fields Container ==================== */

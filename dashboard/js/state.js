@@ -21,7 +21,7 @@ const state = {
         matchConfidence: 85,
         aiEnabled: false,
         openrouterKey: '',
-        aiModel: 'openai/gpt-4o-mini',
+        aiModel: 'openrouter/free',
         selectedGroups: []
     },
 
@@ -166,7 +166,7 @@ export const mutations = {
             matchConfidence: 85,
             aiEnabled: false,
             openrouterKey: '',
-            aiModel: 'openai/gpt-4o-mini',
+            aiModel: 'openrouter/free',
             selectedGroups: []
         };
         state.availableGroups = [];

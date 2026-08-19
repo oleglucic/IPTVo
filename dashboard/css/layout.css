@@ -26,6 +26,28 @@
     gap: var(--space-3);
 }
 
+/* Hamburger shown only when the sidebar collapses into a drawer */
+.menu-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    color: var(--color-text-secondary);
+    border-radius: var(--radius-md);
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.menu-toggle:hover {
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+}
+
+.menu-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--color-brand-muted);
+}
+
 .app-title {
     font-size: var(--text-xl);
     font-weight: var(--font-bold);
@@ -162,6 +184,10 @@
 
 /* ==================== Responsive ==================== */
 @media (max-width: 1024px) {
+    .menu-toggle {
+        display: inline-flex;
+    }
+
     .sidebar {
         position: fixed;
         left: 0;

@@ -64,6 +64,9 @@
         <div id="mainApp" class="main-app" hidden>
             <header class="header">
                 <div class="header-left">
+                    <button class="menu-toggle" id="sidebarToggle" type="button" aria-label="Open configuration menu" aria-expanded="false" aria-controls="configSidebar">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                    </button>
                     <h1 class="app-title">IPTVo</h1>
                     <span class="app-subtitle">IPTV Configuration</span>
                     <span class="app-version" id="appVersion">v0.0.1</span>
@@ -85,7 +88,7 @@
             </header>
 
             <main class="main-content">
-                <nav class="sidebar" aria-label="Configuration steps">
+                <nav class="sidebar" id="configSidebar" aria-label="Configuration steps">
                     <ul class="step-list">
                         <li class="step-item" data-step="1">
                             <a class="step-link active" href="#step1" data-action="navigate-step">
@@ -119,6 +122,8 @@
                         </li>
                     </ul>
                 </nav>
+
+                <div class="sidebar-overlay" id="sidebarOverlay" hidden></div>
 
                 <div class="content-area">
                     <!-- Step 1: Provider Configuration -->
@@ -185,6 +190,9 @@
                             </button>
                             <div class="test-result" id="connectionTestResult" hidden></div>
                         </form>
+                        <footer class="step-nav">
+                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Groups</button>
+                        </footer>
                     </section>
 
                     <!-- Step 2: Group Selection -->
@@ -209,6 +217,10 @@
                         <div class="groups-list" id="groupsList" role="listbox" aria-label="Channel groups">
                             <p class="empty-state">Enter provider details and click "Load Groups" to fetch available channel groups.</p>
                         </div>
+                        <footer class="step-nav">
+                            <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
+                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Matching</button>
+                        </footer>
                     </section>
 
                     <!-- Step 3: Matching & AI Settings -->
@@ -250,14 +262,14 @@
                             </div>
                             <div class="form-group" id="aiModelFields" hidden>
                                 <label for="aiModel">AI Model</label>
-                                <select id="aiModel" name="aiModel">
-                                    <option value="openai/gpt-4o-mini">GPT-4o Mini (recommended)</option>
-                                    <option value="openai/gpt-4o">GPT-4o</option>
-                                    <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                                    <option value="google/gemini-1.5-flash">Gemini 1.5 Flash</option>
-                                </select>
+                                <input type="text" id="aiModel" name="aiModel" placeholder="openrouter/free" autocomplete="off" spellcheck="false">
+                                <small class="form-hint">Defaults to the free endpoint. Override with any OpenRouter model, e.g. <code>anthropic/claude-3.5-sonnet</code> or <code>openrouter/auto</code>.</small>
                             </div>
                         </div>
+                        <footer class="step-nav">
+                            <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
+                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Import/Export</button>
+                        </footer>
                     </section>
 
                     <!-- Step 4: Import/Export -->
@@ -293,6 +305,10 @@
                                 </div>
                             </div>
                         </div>
+                        <footer class="step-nav">
+                            <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
+                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Save & Install</button>
+                        </footer>
                     </section>
 
                     <!-- Step 5: Save & Install -->
@@ -322,6 +338,9 @@
                                 Open in Stremio
                             </a>
                         </div>
+                        <footer class="step-nav">
+                            <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
+                        </footer>
                     </section>
                 </div>
             </main>
