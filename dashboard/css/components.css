@@ -19,6 +19,11 @@
     cursor: not-allowed;
 }
 
+/* Respond on pointer-down: an instant, subtle press (Apple fluid interfaces) */
+.btn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
 .btn-primary {
     background: var(--color-brand);
     color: var(--color-text-inverse);

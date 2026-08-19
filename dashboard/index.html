@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="IPTVo Dashboard - Configure your IPTV provider">
-    <title>IPTVo Dashboard</title>
+    <meta name="description" content="IPTVo — turn any IPTV playlist into a tidy, deduplicated TV guide for Stremio and Nuvio. Self-hosted, encrypted, open source.">
+    <title>IPTVo — Tidy IPTV for Stremio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/dashboard/css/variables.css">
     <link rel="stylesheet" href="/dashboard/css/base.css">
     <link rel="stylesheet" href="/dashboard/css/components.css">
@@ -15,11 +15,143 @@
 </head>
 <body>
     <div class="app">
-        <!-- Auth Modal -->
-        <div id="authModal" class="modal" role="dialog" aria-labelledby="authTitle" aria-modal="true">
+
+        <!-- ============ Intro / Welcome (shown when signed out) ============ -->
+        <div id="introView" class="intro" hidden>
+            <div class="intro-glow" aria-hidden="true"></div>
+            <header class="intro-header">
+                <div class="intro-brand">
+                    <span class="logo-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.2"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4"></path><path d="M16.2 7.8a6 6 0 0 1 0 8.4"></path><path d="M4.9 4.9a10 10 0 0 0 0 14.2"></path><path d="M19.1 4.9a10 10 0 0 1 0 14.2"></path></svg>
+                    </span>
+                    <span class="intro-brand-name">IPTVo</span>
+                    <span class="app-version" id="introVersion">v0.0.1</span>
+                </div>
+                <nav class="intro-actions">
+                    <a href="https://github.com/oleglucic/iptvo" target="_blank" rel="noopener" class="btn btn-ghost" aria-label="IPTVo on GitHub">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.57.1.78-.25.78-.55v-2c-3.2.7-3.87-1.37-3.87-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.66.41.35.77 1.05.77 2.12v3.15c0 .3.2.66.78.55A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"></path></svg>
+                        GitHub
+                    </a>
+                    <a href="https://ko-fi.com/oleglucic" target="_blank" rel="noopener" class="btn btn-ghost" aria-label="Support IPTVo on Ko-fi">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+                        Support
+                    </a>
+                    <button type="button" class="btn btn-ghost" data-action="open-changelog" aria-label="What's new">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="13" y2="17"></line></svg>
+                        What's new
+                    </button>
+                </nav>
+            </header>
+
+            <main class="intro-main">
+                <div class="intro-hero">
+                    <p class="eyebrow">Self-hosted IPTV, made human</p>
+                    <h1 class="display-hero">Your channels, beautifully organized.</h1>
+                    <p class="intro-sub">
+                        IPTVo takes that messy provider playlist and turns it into a clean,
+                        deduplicated TV guide for Stremio and Nuvio — without the clutter,
+                        without the tracking, and without your credentials ever leaving your glass.
+                    </p>
+                    <div class="intro-cta">
+                        <button type="button" class="btn btn-primary btn-lg" data-action="intro-get-started">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+                            <span>Get started — it's free</span>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-lg" data-action="intro-sign-in">Sign in</button>
+                    </div>
+                    <p class="intro-trust">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        End-to-end encryption built in &middot; Self-hosted &middot; Open source
+                    </p>
+                </div>
+
+                <div class="intro-how">
+                    <h2 class="display-sub">It takes about a minute.</h2>
+                    <div class="intro-steps">
+                        <div class="intro-step">
+                            <span class="intro-step-ring" aria-hidden="true">1</span>
+                            <div>
+                                <h3>Add your provider</h3>
+                                <p>Paste your M3U or Xtream link — same credentials you already use.</p>
+                            </div>
+                        </div>
+                        <div class="intro-step">
+                            <span class="intro-step-ring" aria-hidden="true">2</span>
+                            <div>
+                                <h3>We tidy it up</h3>
+                                <p>Channels get matched to a reference guide, deduplicated, and neatly grouped.</p>
+                            </div>
+                        </div>
+                        <div class="intro-step">
+                            <span class="intro-step-ring" aria-hidden="true">3</span>
+                            <div>
+                                <h3>Watch on your TV</h3>
+                                <p>Grab one clean addon link and add it to Stremio or Nuvio.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="intro-cards">
+                    <div class="intro-card">
+                        <span class="intro-card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                        </span>
+                        <h3>Yours, encrypted</h3>
+                        <p>Your passwords and provider URLs are encrypted before they're stored (AES-256-GCM) and hashed with PBKDF2 — we can't read them back, and we never log them.</p>
+                    </div>
+                    <div class="intro-card">
+                        <span class="intro-card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        </span>
+                        <h3>Calm, not cluttered</h3>
+                        <p>Reference matching against a guide of thousands of channels, AI dedup powered by OpenRouter — only if you switch it on.</p>
+                    </div>
+                    <div class="intro-card">
+                        <span class="intro-card-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                        </span>
+                        <h3>On every screen</h3>
+                        <p>Install once in Stremio, Nuvio, or any addon-compatible app. One link, everywhere, with your channels the way you chose them.</p>
+                    </div>
+                </div>
+
+                <div class="intro-privacy glass">
+                    <span class="intro-card-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                    </span>
+                    <div>
+                        <h3>Privacy, spelled out.</h3>
+                        <ul>
+                            <li>Your config is encrypted with AES-256-GCM using a unique key per account — at rest and in transit.</li>
+                            <li>If you enable AI curation, only channel names are sent to OpenRouter via your server, using your own key.</li>
+                            <li>This is self-hosted and open source. Whoever runs the server is the only one who ever sees the data — that's the point.</li>
+                        </ul>
+                    </div>
+                </div>
+            </main>
+
+            <footer class="intro-footer">
+                <p>Made with care, openly. &copy; <span id="introYear"></span> IPTVo</p>
+                <nav class="footer-links">
+                    <a href="https://github.com/oleglucic/iptvo" target="_blank" rel="noopener">GitHub</a>
+                    <a href="https://ko-fi.com/oleglucic" target="_blank" rel="noopener">Support on Ko-fi</a>
+                    <button type="button" class="link-like" data-action="open-changelog">Changelog</button>
+                </nav>
+            </footer>
+        </div>
+
+        <!-- ============ Auth Modal ============ -->
+        <div id="authModal" class="modal" role="dialog" aria-labelledby="authTitle" aria-modal="true" hidden>
             <div class="modal-backdrop"></div>
             <div class="modal-content auth-modal">
-                <h2 id="authTitle" class="sr-only">Sign In</h2>
+                <div class="auth-head">
+                    <span class="logo-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.2"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4"></path><path d="M16.2 7.8a6 6 0 0 1 0 8.4"></path></svg>
+                    </span>
+                    <h2 id="authTitle">Welcome back</h2>
+                    <p class="form-hint">One account keeps your setup encrypted and ready on any device.</p>
+                </div>
                 <div id="authTabs" class="tabs" role="tablist">
                     <button class="tab-btn active" role="tab" aria-selected="true" data-tab="login">Sign In</button>
                     <button class="tab-btn" role="tab" aria-selected="false" data-tab="register">Create Account</button>
@@ -28,11 +160,12 @@
                     <form id="loginForm" novalidate>
                         <div class="form-group">
                             <label for="loginUsername">Username</label>
-                            <input type="text" id="loginUsername" name="username" required autocomplete="username">
+                            <input type="text" id="loginUsername" name="username" required autocomplete="username" placeholder="Your username">
                         </div>
                         <div class="form-group">
                             <label for="loginPassword">Password</label>
-                            <input type="password" id="loginPassword" name="password" required autocomplete="current-password">
+                            <input type="password" id="loginPassword" name="password" required autocomplete="current-password" placeholder="Your password">
+                            <small class="form-hint">Stored only as a secure hash — we can't read it, and neither can anyone else.</small>
                         </div>
                         <button type="submit" class="btn btn-primary btn-block">Sign In</button>
                         <p class="form-error" id="loginError" hidden></p>
@@ -42,38 +175,49 @@
                     <form id="registerForm" novalidate>
                         <div class="form-group">
                             <label for="regUsername">Username</label>
-                            <input type="text" id="regUsername" name="username" required minlength="3" maxlength="50" autocomplete="username">
+                            <input type="text" id="regUsername" name="username" required minlength="3" maxlength="50" autocomplete="username" placeholder="3 characters or more">
                         </div>
                         <div class="form-group">
                             <label for="regPassword">Password</label>
-                            <input type="password" id="regPassword" name="password" required minlength="8" autocomplete="new-password">
-                            <small class="form-hint">Minimum 8 characters</small>
+                            <input type="password" id="regPassword" name="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
+                            <small class="form-hint">Hashed with PBKDF2 (100,000 iterations) — never stored in plain text.</small>
                         </div>
                         <div class="form-group">
                             <label for="regPasswordConfirm">Confirm Password</label>
-                            <input type="password" id="regPasswordConfirm" name="passwordConfirm" required autocomplete="new-password">
+                            <input type="password" id="regPasswordConfirm" name="passwordConfirm" required autocomplete="new-password" placeholder="One more time">
                         </div>
                         <button type="submit" class="btn btn-primary btn-block">Create Account</button>
                         <p class="form-error" id="registerError" hidden></p>
                     </form>
                 </div>
+                <p class="auth-foot">By signing in you agree that nothing here is sold, shared, or tracked.</p>
             </div>
         </div>
 
-        <!-- Main App (hidden until auth) -->
+        <!-- ============ Main App (wizard, shown when signed in) ============ -->
         <div id="mainApp" class="main-app" hidden>
-            <header class="header">
+            <header class="header glass">
                 <div class="header-left">
                     <button class="menu-toggle" id="sidebarToggle" type="button" aria-label="Open configuration menu" aria-expanded="false" aria-controls="configSidebar">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                     </button>
+                    <span class="logo-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.2"></circle><path d="M7.8 7.8a6 6 0 0 0 0 8.4"></path><path d="M16.2 7.8a6 6 0 0 1 0 8.4"></path></svg>
+                    </span>
                     <h1 class="app-title">IPTVo</h1>
-                    <span class="app-subtitle">IPTV Configuration</span>
+                    <span class="app-subtitle">Tidy IPTV for Stremio</span>
                     <span class="app-version" id="appVersion">v0.0.1</span>
                 </div>
                 <div class="header-right">
+                    <a href="https://github.com/oleglucic/iptvo" target="_blank" rel="noopener" class="btn btn-ghost header-link" aria-label="IPTVo on GitHub">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.57.1.78-.25.78-.55v-2c-3.2.7-3.87-1.37-3.87-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.66.41.35.77 1.05.77 2.12v3.15c0 .3.2.66.78.55A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"></path></svg>
+                    </a>
+                    <a href="https://ko-fi.com/oleglucic" target="_blank" rel="noopener" class="btn btn-ghost header-link" aria-label="Support IPTVo on Ko-fi">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+                    </a>
                     <div class="user-menu">
                         <button class="btn btn-ghost user-menu-btn" data-action="toggle-user-menu" aria-expanded="false" aria-haspopup="true">
+                            <span class="user-avatar" id="userAvatar" aria-hidden="true"></span>
                             <span id="currentUser"></span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 21 6 15"></polyline></svg>
                         </button>
@@ -88,49 +232,71 @@
             </header>
 
             <main class="main-content">
-                <nav class="sidebar" id="configSidebar" aria-label="Configuration steps">
+                <nav class="sidebar glass" id="configSidebar" aria-label="Configuration steps">
                     <ul class="step-list">
                         <li class="step-item" data-step="1">
                             <a class="step-link active" href="#step1" data-action="navigate-step">
-                                <span class="step-number">1</span>
+                                <span class="step-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                                </span>
+                                <span class="step-number" aria-hidden="true">1</span>
                                 <span class="step-label">Provider</span>
                             </a>
                         </li>
                         <li class="step-item" data-step="2">
                             <a class="step-link" href="#step2" data-action="navigate-step">
-                                <span class="step-number">2</span>
+                                <span class="step-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+                                </span>
+                                <span class="step-number" aria-hidden="true">2</span>
                                 <span class="step-label">Groups</span>
                             </a>
                         </li>
                         <li class="step-item" data-step="3">
                             <a class="step-link" href="#step3" data-action="navigate-step">
-                                <span class="step-number">3</span>
+                                <span class="step-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                </span>
+                                <span class="step-number" aria-hidden="true">3</span>
                                 <span class="step-label">Matching</span>
                             </a>
                         </li>
                         <li class="step-item" data-step="4">
                             <a class="step-link" href="#step4" data-action="navigate-step">
-                                <span class="step-number">4</span>
-                                <span class="step-label">Import/Export</span>
+                                <span class="step-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                </span>
+                                <span class="step-number" aria-hidden="true">4</span>
+                                <span class="step-label">Backup</span>
                             </a>
                         </li>
                         <li class="step-item" data-step="5">
                             <a class="step-link" href="#step5" data-action="navigate-step">
-                                <span class="step-number">5</span>
-                                <span class="step-label">Save & Install</span>
+                                <span class="step-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                </span>
+                                <span class="step-number" aria-hidden="true">5</span>
+                                <span class="step-label">Save &amp; Install</span>
                             </a>
                         </li>
                     </ul>
+                    <div class="sidebar-foot">
+                        <span class="privacy-mini">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                            Your config is encrypted
+                        </span>
+                    </div>
                 </nav>
 
                 <div class="sidebar-overlay" id="sidebarOverlay" hidden></div>
 
                 <div class="content-area">
-                    <!-- Step 1: Provider Configuration -->
+                    <!-- ============ Step 1: Provider ============ -->
                     <section id="step1" class="step-panel active" aria-labelledby="step1-title">
                         <header class="step-header">
-                            <h2 id="step1-title">Provider Configuration</h2>
-                            <p class="step-description">Enter your IPTV provider details. Choose M3U playlist or Xtream Codes API.</p>
+                            <p class="eyebrow">Step 1 of 5</p>
+                            <h2 id="step1-title">Let's connect your provider</h2>
+                            <p class="step-description">Paste the link your IPTV provider gave you. In under a minute your channels will be here, neatly listed.</p>
                         </header>
                         <form id="providerForm" novalidate>
                             <div class="provider-type-selector">
@@ -150,21 +316,19 @@
                                 </label>
                             </div>
 
-                            <!-- M3U Fields -->
                             <div id="m3uFields" class="fields-container">
                                 <div class="form-group">
                                     <label for="m3uUrl">M3U Playlist URL <span class="required">*</span></label>
-                                    <input type="url" id="m3uUrl" name="m3uUrl" placeholder="https://example.com/playlist.m3u" autocomplete="off">
-                                    <small class="form-hint">Direct link to your provider's M3U playlist</small>
+                                    <input type="url" id="m3uUrl" name="m3uUrl" placeholder="https://your-provider.com/playlist.m3u" autocomplete="off">
+                                    <small class="form-hint">The direct .m3u link from your provider. It stays encrypted in your account.</small>
                                 </div>
                             </div>
 
-                            <!-- Xtream Fields -->
                             <div id="xtreamFields" class="fields-container" hidden>
                                 <div class="form-group">
                                     <label for="xtreamUrl">Xtream Panel URL <span class="required">*</span></label>
-                                    <input type="url" id="xtreamUrl" name="xtreamUrl" placeholder="https://panel.example.com" autocomplete="off">
-                                    <small class="form-hint">Base URL of your Xtream panel (e.g. https://iptv.provider.com)</small>
+                                    <input type="url" id="xtreamUrl" name="xtreamUrl" placeholder="https://iptv.provider.com" autocomplete="off">
+                                    <small class="form-hint">The base address of your panel — usually the same place you got your login from.</small>
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group">
@@ -181,7 +345,7 @@
                             <div class="form-group">
                                 <label for="timezoneOffset">Timezone Offset (hours)</label>
                                 <input type="number" id="timezoneOffset" name="timezoneOffset" value="0" min="-12" max="14" step="0.5">
-                                <small class="form-hint">Adjust EPG times to your local timezone</small>
+                                <small class="form-hint">Filled in for you already — it makes sure the TV guide shows the right local times.</small>
                             </div>
 
                             <button type="submit" class="btn btn-primary btn-test" data-action="test-connection">
@@ -195,15 +359,16 @@
                         </footer>
                     </section>
 
-                    <!-- Step 2: Group Selection -->
+                    <!-- ============ Step 2: Groups ============ -->
                     <section id="step2" class="step-panel" aria-labelledby="step2-title">
                         <header class="step-header">
-                            <h2 id="step2-title">Channel Groups</h2>
-                            <p class="step-description">Select which channel groups to include. Load groups from your provider first.</p>
+                            <p class="eyebrow">Step 2 of 5</p>
+                            <h2 id="step2-title">Choose your channels</h2>
+                            <p class="step-description">Pick the groups you actually watch. We'll fetch the real list from your provider.</p>
                         </header>
                         <div class="panel-toolbar">
                             <button type="button" class="btn btn-secondary" id="loadGroupsBtn" data-action="load-groups" disabled>
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"></path><line x1="16" y1="8" x2="2" y2="22"></line><line x1="17.5" y1="15" x2="9" y2="15"></line></svg>
                                 <span>Load Groups</span>
                             </button>
                             <div class="toolbar-spacer"></div>
@@ -215,7 +380,14 @@
                             <input type="search" id="groupSearch" placeholder="Filter groups..." aria-label="Filter groups">
                         </div>
                         <div class="groups-list" id="groupsList" role="listbox" aria-label="Channel groups">
-                            <p class="empty-state">Enter provider details and click "Load Groups" to fetch available channel groups.</p>
+                            <div class="groups-empty">
+                                <span class="groups-empty-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                                </span>
+                                <p class="empty-state">No channels to show yet.</p>
+                                <p class="groups-empty-hint">Add your provider in step 1, then come back and press <strong>Load Groups</strong>. We'll pull your real group list.</p>
+                                <button type="button" class="btn btn-secondary btn-sm" data-action="jump-step-1">Go to Provider</button>
+                            </div>
                         </div>
                         <footer class="step-nav">
                             <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
@@ -223,19 +395,20 @@
                         </footer>
                     </section>
 
-                    <!-- Step 3: Matching & AI Settings -->
+                    <!-- ============ Step 3: Matching & AI ============ -->
                     <section id="step3" class="step-panel" aria-labelledby="step3-title">
                         <header class="step-header">
-                            <h2 id="step3-title">Matching & AI Settings</h2>
-                            <p class="step-description">Configure how channels are matched to iptv-org reference data and AI curation.</p>
+                            <p class="eyebrow">Step 3 of 5</p>
+                            <h2 id="step3-title">Matching &amp; AI</h2>
+                            <p class="step-description">Make your channels look their best — matched to a clean reference guide, deduplicated, and tidy.</p>
                         </header>
                         <div class="settings-section">
-                            <h3 class="settings-title">iptv-org Matching</h3>
+                            <h3 class="settings-title">Smart matching</h3>
                             <div class="form-group form-group-inline">
                                 <label class="toggle">
                                     <input type="checkbox" id="iptvOrgEnabled" name="iptvOrgEnabled" checked>
                                     <span class="toggle-slider"></span>
-                                    <span class="toggle-label">Enable iptv-org matching</span>
+                                    <span class="toggle-label">Match channels to a tidy reference guide</span>
                                 </label>
                             </div>
                             <div class="form-group">
@@ -243,22 +416,26 @@
                                 <input type="range" id="matchConfidence" name="matchConfidence" min="50" max="100" value="85">
                                 <output class="range-value" for="matchConfidence">85%</output>
                             </div>
-                            <p class="setting-description">Channels with confidence below this threshold won't be auto-matched to iptv-org database.</p>
+                            <p class="setting-description">Higher confidence means only very reliable matches are applied. Lower it if your provider uses unusual channel names and you want more channels recognized.</p>
                         </div>
 
                         <div class="settings-section">
-                            <h3 class="settings-title">AI Curation (OpenRouter)</h3>
+                            <h3 class="settings-title">AI curation <span class="badge-optional">optional</span></h3>
                             <div class="form-group form-group-inline">
                                 <label class="toggle">
                                     <input type="checkbox" id="aiEnabled" name="aiEnabled">
                                     <span class="toggle-slider"></span>
-                                    <span class="toggle-label">Enable AI curation for unmatched channels</span>
+                                    <span class="toggle-label">Let AI sort out the tricky leftovers</span>
                                 </label>
                             </div>
+                            <p class="setting-description" id="aiExplain">
+                                When a channel can't be matched automatically, AI can figure it out for you.
+                                Only your channel names are sent — through your server, using your own key. Turn it off anytime.
+                            </p>
                             <div class="form-group" id="openrouterFields" hidden>
                                 <label for="openrouterKey">OpenRouter API Key <span class="required">*</span></label>
                                 <input type="password" id="openrouterKey" name="openrouterKey" placeholder="sk-or-v1-..." autocomplete="off">
-                                <small class="form-hint">Get your key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a></small>
+                                <small class="form-hint">Grab a free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. It's stored encrypted, never logged.</small>
                             </div>
                             <div class="form-group" id="aiModelFields" hidden>
                                 <label for="aiModel">AI Model</label>
@@ -268,23 +445,24 @@
                         </div>
                         <footer class="step-nav">
                             <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
-                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Import/Export</button>
+                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Backup</button>
                         </footer>
                     </section>
 
-                    <!-- Step 4: Import/Export -->
+                    <!-- ============ Step 4: Import / Export ============ -->
                     <section id="step4" class="step-panel" aria-labelledby="step4-title">
                         <header class="step-header">
-                            <h2 id="step4-title">Import / Export Configuration</h2>
-                            <p class="step-description">Backup your configuration or import from another instance.</p>
+                            <p class="eyebrow">Step 4 of 5</p>
+                            <h2 id="step4-title">Back up your setup</h2>
+                            <p class="step-description">Keep a copy of your configuration, or move it to another IPTVo instance. Secrets stay out of the file.</p>
                         </header>
                         <div class="action-cards">
                             <div class="action-card">
                                 <div class="action-card-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                                 </div>
-                                <h3 class="action-card-title">Export Configuration</h3>
-                                <p class="action-card-desc">Download your current configuration as a JSON file.</p>
+                                <h3 class="action-card-title">Export configuration</h3>
+                                <p class="action-card-desc">Download a JSON file with your choices. Passwords and keys are redacted — you'll re-enter those if you restore elsewhere.</p>
                                 <button type="button" class="btn btn-primary" id="exportBtn" data-action="export-config" disabled>
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                                     Export JSON
@@ -292,10 +470,10 @@
                             </div>
                             <div class="action-card">
                                 <div class="action-card-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                                 </div>
-                                <h3 class="action-card-title">Import Configuration</h3>
-                                <p class="action-card-desc">Load a previously exported configuration file.</p>
+                                <h3 class="action-card-title">Import configuration</h3>
+                                <p class="action-card-desc">Load a previously exported file. If a password or key was redacted, just type it in again on the provider step.</p>
                                 <div class="file-input-wrapper">
                                     <input type="file" id="importFile" accept=".json" hidden>
                                     <button type="button" class="btn btn-secondary" data-action="trigger-import">
@@ -307,15 +485,16 @@
                         </div>
                         <footer class="step-nav">
                             <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
-                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Save & Install</button>
+                            <button type="button" class="btn btn-primary btn-step-next" data-action="next-step">Next: Save &amp; Install</button>
                         </footer>
                     </section>
 
-                    <!-- Step 5: Save & Install -->
+                    <!-- ============ Step 5: Save & Install ============ -->
                     <section id="step5" class="step-panel" aria-labelledby="step5-title">
                         <header class="step-header">
-                            <h2 id="step5-title">Save & Install</h2>
-                            <p class="step-description">Save your configuration and get the Stremio addon URL.</p>
+                            <p class="eyebrow">Last step</p>
+                            <h2 id="step5-title">You're all set</h2>
+                            <p class="step-description">Save your configuration — then grab your addon link and add it to Stremio or Nuvio.</p>
                         </header>
                         <div class="save-section">
                             <button type="button" class="btn btn-primary btn-lg" id="saveConfigBtn" data-action="save-config" disabled>
@@ -325,14 +504,14 @@
                             <p class="save-status" id="saveStatus" hidden></p>
                         </div>
                         <div class="install-section" id="installSection" hidden>
-                            <h3 class="section-title">Addon URL</h3>
+                            <h3 class="section-title">Your addon link</h3>
+                            <p class="install-hint">Paste this into Stremio's addon field, or use the button if you have the app installed. It points to your account, and never exposes your provider password.</p>
                             <div class="url-box">
                                 <input type="text" id="addonUrl" readonly>
                                 <button type="button" class="btn btn-ghost" id="copyUrlBtn" data-action="copy-url" aria-label="Copy addon URL">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
                             </div>
-                            <p class="install-hint">Copy this URL and paste it into Stremio's addon installation field, or click "Open in Stremio" if you have the app installed.</p>
                             <a href="#" id="stremioLink" class="btn btn-secondary" target="_blank" rel="noopener">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
                                 Open in Stremio
@@ -344,6 +523,55 @@
                     </section>
                 </div>
             </main>
+
+            <footer class="app-footer">
+                <span class="app-footer-left">
+                    <span class="privacy-mini">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        AES-256-GCM encrypted
+                    </span>
+                </span>
+                <nav class="footer-links app-footer-right">
+                    <button type="button" class="link-like" data-action="open-changelog">Changelog</button>
+                    <a href="https://github.com/oleglucic/iptvo" target="_blank" rel="noopener">GitHub</a>
+                    <a href="https://ko-fi.com/oleglucic" target="_blank" rel="noopener">Support on Ko-fi</a>
+                </nav>
+            </footer>
+        </div>
+
+        <!-- ============ Changelog Modal ============ -->
+        <div id="changelogModal" class="modal" role="dialog" aria-labelledby="changelogTitle" aria-modal="true" hidden>
+            <div class="modal-backdrop" data-action="close-changelog"></div>
+            <div class="modal-content changelog-modal">
+                <button type="button" class="modal-close" data-action="close-changelog" aria-label="Close changelog">&times;</button>
+                <div class="auth-head">
+                    <h2 id="changelogTitle">What's new</h2>
+                    <p class="form-hint">IPTVo grows with every release. Here's the recent story.</p>
+                </div>
+                <ol class="changelog-list">
+                    <li class="changelog-entry">
+                        <span class="changelog-version">v0.3.0</span>
+                        <h3>A warmer, human dashboard</h3>
+                        <p>A full redesign — friendlier language, clearer explanations, an onboarding welcome, GitHub &amp; Ko-fi in the header, and a guide that never leaves you staring at a dead button.</p>
+                    </li>
+                    <li class="changelog-entry">
+                        <span class="changelog-version">v0.2.x</span>
+                        <h3>Stability &amp; security pass</h3>
+                        <p>Redirect revalidation, authed external fetches, SVG escaping fixes, auto-detected timezone, per-user AI models, and a working test-connection endpoint.</p>
+                    </li>
+                    <li class="changelog-entry">
+                        <span class="changelog-version">v0.2.0</span>
+                        <h3>Dashboard rewrite</h3>
+                        <p>A fresh configuration wizard with a five-step flow, matching &amp; AI settings, import/export, and a save-and-install page for Stremio.</p>
+                    </li>
+                    <li class="changelog-entry">
+                        <span class="changelog-version">v0.1.0</span>
+                        <h3>Automated releases</h3>
+                        <p>Semantic releases, Docker publishing, CI/CD, CodeQL scanning, and community contribution tooling landed.</p>
+                    </li>
+                </ol>
+                <a href="https://github.com/oleglucic/iptvo/releases" target="_blank" rel="noopener" class="btn btn-secondary">See all releases</a>
+            </div>
         </div>
 
         <!-- Toast Container -->
