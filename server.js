@@ -8,7 +8,7 @@ const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
-const { hashPassword, verifyPassword, generateSessionToken, decryptConfig } = require('./cryptoUtils');
+const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, configKeyFingerprint } = require('./cryptoUtils');
 
 const app = express();
 app.use(cors());
@@ -355,7 +355,7 @@ async function ensureCache(config, configObj) {
         }
     }
 
-    console.log(`[ensureCache] called for config=${config ? config.substring(0,12) : 'null'}... configObj=${!!configObj}`);
+    console.log(`[ensureCache] called for config=${configKeyFingerprint(config)}... configObj=${!!configObj}`);
     if (!configObj) { console.log('[ensureCache] no configObj, returning null'); return null; }
     let cached = userCaches.get(config);
     console.log(`[ensureCache] cache state: ${sanitizeForLog(cached ? cached.status : 'MISSING')}`);
@@ -1223,7 +1223,7 @@ const PORT = process.env.PORT || 3000;
                     const configObj = extractConfig({ params: { config: configKey }, query: {} });
                     if (configObj) {
                         console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${sanitizeForLog(configObj.ai)}`);
-                        console.log(`[ProactiveRefresh] refreshing stale config=${sanitizeForLog(configKey.substring(0,12))}...`);
+                        console.log(`[ProactiveRefresh] refreshing stale config=${configKeyFingerprint(configKey)}...`);
                         streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', sanitizeForLog(e.message)));
                     }
                 } catch (e) {
