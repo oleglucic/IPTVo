@@ -172,13 +172,10 @@ function openAuthModal() {
 }
 
 /**
- * Closes the authentication modal for authenticated users.
+ * Closes the authentication modal. For unauthenticated users on the welcome page,
+ * allows closing to return to the welcome page.
  */
 function closeAuthModal() {
-    // Only allow closing the modal if user is authenticated
-    if (!state.isAuthenticated) {
-        return;
-    }
     elements.authModal.hidden = true;
     document.body.style.overflow = '';
 }
@@ -302,11 +299,42 @@ function navigateToStep(step) {
  * Export, Save, Select/Deselect All) with the current configuration.
  * Called on navigation, form input, and after async operations so the
  * wizard never leaves an actionable control stuck disabled.
+ * Detects provider identity changes and invalidates cached groups when needed.
  */
 function updateProviderFields() {
     const type = state.config.type;
     elements.m3uFields.hidden = type !== 'm3u';
     elements.xtreamFields.hidden = type !== 'xtream';
+
+    // Detect if the provider identity has changed (URL, type, username, or password)
+    // and invalidate groups if it has
+    const currentIdentity = {
+        type: state.config.type,
+        m3uUrl: state.config.m3uUrl,
+        xtreamUrl: state.config.xtreamUrl,
+        username: state.config.username,
+        password: state.config.password
+    };
+
+    if (!state.lastProviderIdentity) {
+        state.lastProviderIdentity = currentIdentity;
+    } else {
+        const identityChanged = (
+            currentIdentity.type !== state.lastProviderIdentity.type ||
+            currentIdentity.m3uUrl !== state.lastProviderIdentity.m3uUrl ||
+            currentIdentity.xtreamUrl !== state.lastProviderIdentity.xtreamUrl ||
+            currentIdentity.username !== state.lastProviderIdentity.username ||
+            currentIdentity.password !== state.lastProviderIdentity.password
+        );
+
+        if (identityChanged) {
+            // Invalidate existing groups
+            mutations.setAvailableGroups([]);
+            mutations.setConfigField('selectedGroups', []);
+            mutations.setGroupsLoaded(false);
+            state.lastProviderIdentity = currentIdentity;
+        }
+    }
 
     const configured = getters.isProviderConfigured();
     elements.loadGroupsBtn.disabled = !configured;
@@ -395,9 +423,23 @@ async function handleLoadGroups() {
 
         toast.success('Groups Loaded', `${groups.length} groups found`);
     } catch (error) {
-        mutations.setGroupsLoaded(true);
+        // On failure, groupsLoaded remains false so the empty state with "Go to Provider" CTA is preserved
         toast.error('Failed to Load Groups', error.message);
-        elements.groupsList.innerHTML = `<p class="empty-state">Error loading groups: ${escapeHtml(error.message)}</p>`;
+
+        // Render a retryable error state that preserves the "Go to Provider" action
+        elements.groupsList.innerHTML = `
+            <div class="groups-empty">
+                <span class="groups-empty-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                </span>
+                <p class="empty-state">Failed to load groups</p>
+                <p class="groups-empty-hint">${escapeHtml(error.message)}</p>
+                <button type="button" class="btn btn-secondary btn-sm" data-action="jump-step-1">Go to Provider</button>
+            </div>
+        `;
+
+        // Re-bind the "Go to Provider" button
+        elements.groupsList.querySelector('[data-action="jump-step-1"]')?.addEventListener('click', () => navigateToStep(1));
     } finally {
         mutations.setLoadingGroups(false);
         updateProviderFields();
@@ -558,6 +600,8 @@ async function handleImportFile(e) {
         });
 
         mutations.setConfig(imported);
+        // Reset provider identity tracking so updateProviderFields will detect the change
+        state.lastProviderIdentity = null;
         updateProviderFields();
         updateFormFromState();
         renderGroups();
@@ -731,22 +775,38 @@ function updateFormFromState() {
     navigateToStep(1);
 }
 
+// Store the element that triggered the changelog modal
+let changelogTrigger = null;
+
 /**
- * Opens the changelog modal.
+ * Opens the changelog modal, moves focus into it, and sets up focus trapping.
  */
-function openChangelog() {
+function openChangelog(triggerElement) {
+    changelogTrigger = triggerElement || document.activeElement;
     elements.changelogModal.hidden = false;
     document.body.style.overflow = 'hidden';
+
+    // Move focus to the first focusable element in the modal
+    const firstFocusable = elements.changelogModal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (firstFocusable) {
+        firstFocusable.focus();
+    }
 }
 
 /**
- * Closes the changelog modal and restores body scrolling.
+ * Closes the changelog modal, restores body scrolling, and returns focus to the triggering element.
  */
 function closeChangelog() {
     elements.changelogModal.hidden = true;
     if (elements.authModal.hidden) {
         document.body.style.overflow = '';
     }
+
+    // Restore focus to the element that opened the modal
+    if (changelogTrigger && changelogTrigger.focus) {
+        changelogTrigger.focus();
+    }
+    changelogTrigger = null;
 }
 
 /**
@@ -777,9 +837,13 @@ function bindEvents() {
     document.querySelectorAll('[data-action="intro-get-started"], [data-action="intro-sign-in"]')
         .forEach(btn => btn.addEventListener('click', openAuthModal));
 
+    // Auth modal close button
+    document.querySelectorAll('[data-action="close-auth"]')
+        .forEach(btn => btn.addEventListener('click', closeAuthModal));
+
     // Changelog open/close (intro header, intro footer, in-app footer)
     document.querySelectorAll('[data-action="open-changelog"]')
-        .forEach(btn => btn.addEventListener('click', openChangelog));
+        .forEach(btn => btn.addEventListener('click', (e) => openChangelog(e.currentTarget)));
     document.querySelectorAll('[data-action="close-changelog"]')
         .forEach(btn => btn.addEventListener('click', closeChangelog));
 
@@ -835,6 +899,31 @@ function bindEvents() {
     elements.sidebarOverlay.addEventListener('click', closeSidebarDrawer);
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeSidebarDrawer();
+    });
+
+    // Focus trap for changelog modal
+    elements.changelogModal.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab' && !elements.changelogModal.hidden) {
+            const focusableElements = elements.changelogModal.querySelectorAll(
+                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+            );
+            const firstFocusable = focusableElements[0];
+            const lastFocusable = focusableElements[focusableElements.length - 1];
+
+            if (e.shiftKey) {
+                // Shift+Tab: if on first element, move to last
+                if (document.activeElement === firstFocusable) {
+                    e.preventDefault();
+                    lastFocusable.focus();
+                }
+            } else {
+                // Tab: if on last element, move to first
+                if (document.activeElement === lastFocusable) {
+                    e.preventDefault();
+                    firstFocusable.focus();
+                }
+            }
+        }
     });
 
     // Prev/Next step navigation

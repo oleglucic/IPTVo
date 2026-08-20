@@ -443,7 +443,7 @@
 /* Materialize on reveal — a soft rise-and-settle for the major intro blocks,
    staggered so the page arrives in a gentle order. Reduced motion kills this
    globally via base.css. */
-@keyframes riseIn {
+@keyframes rise-in {
     from {
         opacity: 0;
         transform: translateY(14px);
@@ -458,7 +458,7 @@
 .intro-how,
 .intro-cards,
 .intro-privacy {
-    animation: riseIn 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: rise-in 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .intro-how { animation-delay: 70ms; }
