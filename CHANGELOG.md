@@ -1,3 +1,11 @@
+# [0.6.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.5.0...v0.6.0) (2026-08-20)
+
+
+### Features
+
+* **image:** render square 1:1 posters tied to channel logo cache ([b4abdc2](https://github.com/oleglucic/nuvio-iptv/commit/b4abdc25d4241878a6ac4acdafadc1fc83a272cb))
+* **manifest:** declare square posterShape so client placeholders match ([81d57d9](https://github.com/oleglucic/nuvio-iptv/commit/81d57d9147b3885d68476d653000060a17323b75))
+
 # [0.5.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.4.0...v0.5.0) (2026-08-20)
 
 
