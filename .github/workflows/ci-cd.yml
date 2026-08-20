@@ -72,7 +72,7 @@ jobs:
           # applies when the token is scoped to the specific repository
           # (an unscoped multi-installation token is not granted bypass).
           owner: oleglucic
-          repositories: nuvio-iptv
+          repositories: IPTVo
       # git authenticates the raw `git push` that @semantic-release/git runs from
       # its own http.extraheader config, not from the GITHUB_TOKEN env. Register
       # the App installation token there so the push is authenticated as the
