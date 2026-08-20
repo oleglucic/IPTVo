@@ -50,7 +50,16 @@ Input: ${JSON.stringify(batchItems)}`;
             }
         });
 
-        let content = res.data.choices[0].message.content.trim();
+        // OpenRouter returns content:null for safety refusals (finish_reason
+        // "safety") and JSON wrapped in prose for others. Never assume content
+        // is a string — the refusal shape (no JSON inside) must not crash the
+        // whole batch queue cycle.
+        const rawContent = res.data?.choices?.[0]?.message?.content;
+        if (typeof rawContent !== 'string' || !rawContent.trim()) {
+            console.error('[AI Curator] Empty or non-string content in response (refusal/finish_reason=safety).');
+            return {};
+        }
+        let content = rawContent.trim();
         content = content.replace(/```json/g, '').replace(/```/g, '');
 
         const jsonStart = content.indexOf("{");
@@ -59,9 +68,15 @@ Input: ${JSON.stringify(batchItems)}`;
             content = content.substring(jsonStart, jsonEnd + 1);
         } else {
             console.error(`[AI Curator] No JSON object found in response. Raw snippet: ${sanitizeForLog(content.substring(0, 300))}`);
+            return {};
         }
 
-        return JSON.parse(content);
+        try {
+            return JSON.parse(content);
+        } catch {
+            console.error(`[AI Curator] response was not valid JSON. Raw snippet: ${sanitizeForLog(content)}`);
+            return {};
+        }
     } catch (e) {
         const status = e.response ? e.response.status : null;
         if (status === 429 || status === 402) {

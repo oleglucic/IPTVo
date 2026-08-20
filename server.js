@@ -330,7 +330,13 @@ function extractConfig(req) {
             while (rawB64.length % 4 !== 0) rawB64 += '=';
             const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
             try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch {}
-            return JSON.parse(decoded);
+            const parsed = JSON.parse(decoded);
+            // Legacy configs shipped with `iptvOrgEnabled` (dashboard alias) but
+            // the parser gates on `iptvOrg`. Normalize so both shapes enable it.
+            if (parsed && typeof parsed.iptvOrgEnabled !== 'undefined' && typeof parsed.iptvOrg === 'undefined') {
+                parsed.iptvOrg = parsed.iptvOrgEnabled;
+            }
+            return parsed;
         }
         return null;
     } catch (e) {
@@ -884,7 +890,9 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
             background: engineImage,
             logo: passedThroughLogo,
             description: fullDescription,
-            genres: [channel.meta.group],
+            // Prefer the parsed meta genres (iptv-org taxonomy for generic
+            // groups, else the playlist group); fall back to the group label.
+            genres: (channel.meta.genres && channel.meta.genres.length ? channel.meta.genres : [channel.meta.group || '']),
             // 1:1 — a per-meta posterShape, not just the manifest-level one, so
             // Nuvio/Stremio draw a square placeholder while the 640x640 loads
             // instead of defaulting to a 2:3 portrait skeleton.
@@ -981,10 +989,14 @@ function manifestFor(req) {
 }
 
 // Helper to extract configKey and configObj from request
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function getConfigFromReq(req) {
-    // Check for user UUID first (new system)
+    // Check for user UUID first (new system). A legacy base64 config can land in
+    // the same path segment; verify it is really a UUID so we never hand a base64
+    // blob (or worse, route it) to getUserById and spam DB UUID errors.
     const userId = req.params.userId;
-    if (userId) {
+    if (userId && UUID_RE.test(userId)) {
         const configObj = extractConfig(req);
         return { configKey: userId, configObj };
     }
@@ -1212,6 +1224,7 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
 
 const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
 const { backgroundLogoRefresh } = require('./iptvParser');
+const { prewarm } = require('./prewarm');
 const PORT = process.env.PORT || 3000;
 
 // Initialize database schema (creates tables if missing)
@@ -1232,6 +1245,17 @@ const PORT = process.env.PORT || 3000;
     setTimeout(() => {
         backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', sanitizeForLog(e.message)));
     }, 5 * 60 * 1000); // 5 min after startup
+
+    // Full iptv-org poster/logo prewarm: renders every channel's poster to disk
+    // and persists the logo URL map so the DB is always ready. Runs daily with a
+    // startup-delayed first run so boot isn't blocked. Idempotent and
+    // concurrency-capped, so re-runs only fill new/updated channels.
+    setInterval(() => {
+        prewarm().catch(e => console.error('[Prewarm] Cycle failed:', sanitizeForLog(e.message)));
+    }, 24 * 60 * 60 * 1000); // daily
+    setTimeout(() => {
+        prewarm().catch(e => console.error('[Prewarm] Initial run failed:', sanitizeForLog(e.message)));
+    }, 15 * 60 * 1000); // 15 min after startup, after logo refresh's first pass
 
     // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
     setInterval(() => {

@@ -57,11 +57,15 @@ export const getters = {
         } else {
             delete cfg.m3uUrl;
         }
-        // The parser filters channels via `include`/`exclude`. The dashboard
-        // tracks the same choice as `selectedGroups` (UI-only name), so map it
-        // to the field the backend actually reads, then drop the UI alias.
+        // The parser filters the selected groups via `include`/`exclude`. The
+        // dashboard tracks the same choice as `selectedGroups` (UI-only name),
+        // so map it to the field the backend actually reads, then drop the alias.
         cfg.include = (cfg.selectedGroups || []).filter(Boolean);
         delete cfg.selectedGroups;
+        // The parser gates iptv-org matching on `config.iptvOrg` (legacy key),
+        // but the dashboard exposes it as `iptvOrgEnabled`. Alias before send.
+        cfg.iptvOrg = cfg.iptvOrgEnabled;
+        delete cfg.iptvOrgEnabled;
         return cfg;
     },
 
