@@ -26,10 +26,10 @@ Out of scope:
 
 ## Supported Versions
 
-| Version | Supported |
-| ------- | --------- |
-| latest  | Fixes for security issues |
-| older   | Best-effort |
+| Version | Supported      |
+| ------- | -------------- |
+| latest  | Security fixes |
+| older   | Best effort    |
 
 ## Security Model
 
