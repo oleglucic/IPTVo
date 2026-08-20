@@ -51,6 +51,35 @@ describe('aiCurator', () => {
             await startAiQueue([], 'cfg', 'key123');
             expect(axios.post).not.toHaveBeenCalled();
         });
+
+        test('skips a new cycle while one is already running (prevents stacked 55k queues)', async () => {
+            // Halt the first cycle inside the AI batch resolution using an axios
+            // mock that never settles until the test lets it proceed.
+            let release;
+            axios.post.mockImplementation(() => new Promise(res => { release = res; }));
+            lookupChannel.mockReturnValue(null);
+            getAllOverrides.mockResolvedValue([]);
+
+            const dirtyChannels = [
+                { rawName: 'Channel A', baseCleanName: 'chana', cId: 'us_chana', countryScopeKey: 'us' }
+            ];
+
+            const first = startAiQueue(dirtyChannels, 'cfg', 'key123');
+            // Let the first cycle reach the axios post (past pre-filter).
+            await new Promise(r => setTimeout(r, 20));
+
+            // Second trigger while the first is mid-cycle must be dropped.
+            await startAiQueue(dirtyChannels, 'cfg2', 'otherkey');
+            expect(axios.post).toHaveBeenCalledTimes(1);
+
+            // Let the first cycle finish so the module's guard resets cleanly.
+            release({ data: { choices: [{ message: { content: '{}' } }] } });
+            await first;
+
+            // A follow-up call with no work left is not spuriously blocked.
+            await startAiQueue([], 'cfg3', 'key3');
+            expect(axios.post).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('log sanitization', () => {
