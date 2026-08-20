@@ -406,7 +406,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        console.error(`[parser] ERROR configKey=${configKey ? configKey.substring(0,12) : 'null'}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
@@ -601,7 +601,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 
     } catch(e) {
         console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
-        console.error(`[parser] ERROR configKey=${configKey ? configKey.substring(0,12) : 'null'}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
