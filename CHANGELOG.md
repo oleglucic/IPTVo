@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.6.0...v0.7.0) (2026-08-20)
+
+
+### Features
+
+* **dashboard:** match browser top bar to page theme ([90292db](https://github.com/oleglucic/nuvio-iptv/commit/90292dbff3c1cde51a6141b00d7293541d198633)), closes [#17130f](https://github.com/oleglucic/nuvio-iptv/issues/17130f) [#faf7f1](https://github.com/oleglucic/nuvio-iptv/issues/faf7f1)
+
 # [0.6.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.5.0...v0.6.0) (2026-08-20)
 
 
