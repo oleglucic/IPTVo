@@ -37,6 +37,9 @@ Thumbs.db
 *.temp
 diff_output.txt
 
+# Backup files
+*.bak
+
 # Supabase backup
 db.js.supabase-backup
 

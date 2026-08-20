@@ -819,6 +819,10 @@ const builder = new addonBuilder({
     description: 'AI Curation Stack & Intelligent Catalog Filter Layer for Live IPTV',
     resources: ['catalog', 'meta', 'stream'],
     types: ['tv'],
+    // Logo/background are served from each request's own origin so the addon
+    // icon works on any self-hosted base (not just the canonical domain).
+    logo: '/dashboard/logo.svg',
+    background: '/dashboard/logo.svg',
     behaviorHints: { configurable: true, configurationRequired: false },
     posterShape: 'square', // posters are 1:1 (channel logo on a backdrop) — square placeholders keep the client's skeleton consistent with the served poster
     catalogs: [{
@@ -847,12 +851,21 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const selectedGenre = extra?.genre?.replace(/-/g, ' ') || null;
     const selectedSearch = extra?.search?.toLowerCase() || null;
 
+    // Stremio catalogs must page via `skip` (default 100). Without this, a
+    // 40k+ channel catalog returns one unbounded JSON response and stalls the client.
+    const skip = Math.max(0, parseInt(extra?.skip, 10) || 0);
+    const limit = 100;
+
     const metas = [];
+    let idx = 0;
     for (const [chKey, channel] of ud.channelMap.entries()) {
         if (selectedGenre && channel.meta.group !== selectedGenre) continue;
         if (selectedSearch && !channel.meta.name.toLowerCase().includes(selectedSearch)) continue;
+        if (idx < skip) { idx++; continue; } // past the page offset
+        if (idx >= skip + limit) break;
+        idx++;
 
-        const engineImage = `${rootUrl}/${configKey}/poster/${chKey}.png?t=${ud.lastUpdated}`;
+        const engineImage = `${rootUrl}/${configKey}/poster/${chKey || 'x'}.png?t=${ud.lastUpdated || ''}`;
         const passedThroughLogo = channel.meta.logo || engineImage;
         const epgDescription = getEpgText(chKey, ud.epgData, configObj.timezoneOffset || 0);
         const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
@@ -874,8 +887,9 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
             genres: [channel.meta.group]
         });
     }
-    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas`);
-    return { metas };
+    const result = { metas };
+    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas (skip=${skip})`);
+    return result;
 });
 
 // Meta handler
@@ -886,12 +900,12 @@ builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
-    if (!ud || !ud.channelMap.has(id)) return { meta: {} };
-    const channel = ud.channelMap.get(id);
+    if (!ud || !ud.channelMap?.has(_id)) return { meta: {} };
+    const channel = ud.channelMap.get(_id);
 
-    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated}`;
+    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(_id)}.png?t=${ud.lastUpdated || ''}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
-    const epgDescription = getEpgText(id, ud.epgData, configObj ? configObj.timezoneOffset : 0);
+    const epgDescription = getEpgText(_id, ud.epgData, configObj ? configObj.timezoneOffset : 0);
     const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
         ...(s.groupTags ? s.groupTags.split(" • ") : []),
         ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -920,8 +934,8 @@ builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
-    if (!ud || !ud.channelMap.has(id)) return { streams: [] };
-    const channel = ud.channelMap.get(id);
+    if (!ud || !ud.channelMap?.has(_id)) return { streams: [] };
+    const channel = ud.channelMap.get(_id);
 
     const streamsToReturn = channel.streams
         .sort((a, b) => b.score - a.score)
@@ -939,7 +953,7 @@ builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
     let catchupEntries = [];
     if (channel.meta.hasCatchup && channel.streams.length > 0) {
         try {
-            catchupEntries = await getCatchupStreams(id, channel.streams[0].url, 48);
+            catchupEntries = await getCatchupStreams(_id, channel.streams[0].url, 48);
         } catch (e) {
             console.error('[Catchup] Failed to build catchup streams:', sanitizeForLog(e.message));
         }
@@ -950,6 +964,16 @@ builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
 
 // Get the addon interface and serve it via express
 const addonInterface = builder.getInterface();
+
+// Manifest is a shared static object; logo/background are absolute URLs keyed
+// to the requesting origin, so resolvel them per-request to the running host.
+function manifestFor(req) {
+    const root = `${req.protocol}://${req.get('host')}`;
+    const m = { ...addonInterface.manifest };
+    if (m.logo && m.logo.startsWith('/')) m.logo = `${root}${m.logo}`;
+    if (m.background && m.background.startsWith('/')) m.background = `${root}${m.background}`;
+    return m;
+}
 
 // Helper to extract configKey and configObj from request
 async function getConfigFromReq(req) {
@@ -968,7 +992,7 @@ async function getConfigFromReq(req) {
 
 // Mount the addon routes on express - NEW USER SYSTEM ROUTES
 app.get('/:userId/manifest.json', (req, res) => {
-    res.json(addonInterface.manifest);
+    res.json(manifestFor(req));
 });
 
 app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
@@ -1050,7 +1074,7 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
     let logoUrl = null;
     let channelName = "Live TV";
 
-    if (ud && ud.channelMap.has(id)) {
+    if (ud && ud.channelMap?.has(id)) {
         const channel = ud.channelMap.get(id);
         logoUrl = channel.meta.logo;
         channelName = channel.meta.name;
@@ -1073,7 +1097,7 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
 
 // Legacy routes for backward compatibility (base64 config)
 app.get('/:config/manifest.json', (req, res) => {
-    res.json(addonInterface.manifest);
+    res.json(manifestFor(req));
 });
 
 app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
@@ -1160,7 +1184,7 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
     let logoUrl = null;
     let channelName = "Live TV";
 
-    if (ud && ud.channelMap.has(id)) {
+    if (ud && ud.channelMap?.has(id)) {
         const channel = ud.channelMap.get(id);
         logoUrl = channel.meta.logo;
         channelName = channel.meta.name;

@@ -100,6 +100,38 @@ const { getLogoUrl, setLogoUrl } = require('./db');
 const userCaches = new Map();
 const MAX_CACHE_AGE = 60 * 60 * 1000; // 1 hour
 
+// Coalesce concurrent cold starts for the same configKey, and cap total
+// simultaneous provider parses so a wave of new users (hundreds of distinct
+// configs) queues instead of stampeding the box.
+const parseInFlight = new Map(); // configKey -> Promise (already-running parse)
+let activeParses = 0;
+const MAX_CONCURRENT_PARSES = 4;
+async function semaphoreSlot() {
+    while (activeParses >= MAX_CONCURRENT_PARSES) {
+        await new Promise(r => setTimeout(r, 200));
+    }
+    activeParses++;
+}
+
+async function parseWithCoalescing(configKey, configObj, parseFn) {
+    const existing = parseInFlight.get(configKey);
+    if (existing) return existing;
+    const promise = (async () => {
+        await semaphoreSlot();
+        try {
+            return await parseFn(configKey, configObj);
+        } finally {
+            activeParses--;
+        }
+    })();
+    parseInFlight.set(configKey, promise);
+    try {
+        return await promise;
+    } finally {
+        parseInFlight.delete(configKey);
+    }
+}
+
 function getUserCache(configKey) {
     const cached = userCaches.get(configKey);
     if (!cached) return null;
@@ -190,17 +222,14 @@ async function streamFetchIPTV(configKey, configObj) {
         if (existing.status === 'loading') return;
         if (existing.status === 'ready' && (Date.now() - existing.lastUpdated < MAX_CACHE_AGE)) return;
     }
-    
-    userCaches.set(configKey, { 
-        status: 'loading', channelMap: new Map(), logoTracker: new Map(), 
-        catalogItems: [], uniqueGroups: new Set(), epgData: {} 
+
+    userCaches.set(configKey, {
+        status: 'loading', channelMap: new Map(), logoTracker: new Map(),
+        catalogItems: [], uniqueGroups: new Set(), epgData: {}
     });
-    
-    if (configObj && configObj.type === 'xtream') {
-        return await parseXtreamData(configKey, configObj);
-    } else {
-        return await parseM3uData(configKey, configObj);
-    }
+
+    const parseFn = configObj && configObj.type === 'xtream' ? parseXtreamData : parseM3uData;
+    return await parseWithCoalescing(configKey, configObj, parseFn);
 }
 
 /**

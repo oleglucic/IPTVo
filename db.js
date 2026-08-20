@@ -245,6 +245,12 @@ async function getUserByUsername(username) {
  */
 async function getUserById(userId) {
     if (!pool) return null;
+    // A legacy base64 config key can reach this erroneously via `_userId`;
+    // Postgres rejects non-UUID input as noisy ERROR spam on every request.
+    // Short-circuit before the query — it is never a real user.
+    if (typeof userId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+        return null;
+    }
     try {
         const { rows } = await pool.query(
             'SELECT user_id, username, password_hash, encrypted_config, config_iv, config_salt, created_at, updated_at FROM users WHERE user_id = $1',
