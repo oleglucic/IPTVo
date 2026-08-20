@@ -16,6 +16,12 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB - reject absurd payloads before 
 const LOGO_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - cache fetched logos in memory
 const LOGO_CACHE_MAX_SIZE = 2000; // max entries in logo cache
 
+// Square poster output. The poster is the channel's own logo on a themed
+// backdrop, and both Stremio and Nuvio render square posters. A square canvas
+// (vs. the previous 600x900 vertical) roughly halves pixel count, which cuts
+// storage and bandwidth for the cached output without any client change.
+const POSTER_SIZE = 640; // 640x640 (1:1)
+
 const deadUrlCache = new Map(); // logoUrl -> {timestamp: number, failCount: number}
 const inFlight = new Map();     // cId -> Promise, de-dupes concurrent requests for the same poster
 const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
@@ -259,13 +265,13 @@ async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, _conte
     }
 
     const background = await sharp(processBuffer)
-        .resize(600, 900, { fit: 'cover' })
+        .resize(POSTER_SIZE, POSTER_SIZE, { fit: 'cover' })
         .blur(35)
         .linear(0.55, 0)
         .toBuffer();
 
     const haloSvg = `
-        <svg width="500" height="500" xmlns="http://www.w3.org/2000/svg">
+        <svg width="${POSTER_SIZE}" height="${POSTER_SIZE}" xmlns="http://www.w3.org/2000/svg">
             <defs>
                 <radialGradient id="haloGlow" cx="50%" cy="50%" r="50%">
                     <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35" />
@@ -273,13 +279,15 @@ async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, _conte
                     <stop offset="100%" stop-color="#ffffff" stop-opacity="0.0" />
                 </radialGradient>
             </defs>
-            <circle cx="250" cy="250" r="250" fill="url(#haloGlow)" />
+            <rect width="${POSTER_SIZE}" height="${POSTER_SIZE}" fill="url(#haloGlow)" />
         </svg>
     `;
     const haloBuffer = Buffer.from(haloSvg);
 
+    // Inset by ~20% so the logo reads as a rounded badge on the square backdrop
+    const fgSize = Math.round(POSTER_SIZE * 0.72);
     const foreground = await sharp(processBuffer)
-        .resize(400, 400, { fit: 'inside' })
+        .resize(fgSize, fgSize, { fit: 'inside' })
         .toBuffer();
 
     await sharp(background)
@@ -297,22 +305,22 @@ async function generateFallback(cachePath, fallbackName, sourceLog = []) {
     sourceLog.push('fallback-svg');
     const text = fallbackName || 'Live TV';
     const svg = `
-        <svg width="600" height="900" xmlns="http://www.w3.org/2000/svg">
+        <svg width="${POSTER_SIZE}" height="${POSTER_SIZE}" xmlns="http://www.w3.org/2000/svg">
             <defs>
                 <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stop-color="#0f172a" />
                     <stop offset="100%" stop-color="#1e293b" />
                 </linearGradient>
             </defs>
-            <rect width="600" height="900" fill="url(#bgGrad)" />
-            <text x="300" y="450" text-anchor="middle" dominant-baseline="middle"
-                  font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="600" fill="#94a3b8">
+            <rect width="${POSTER_SIZE}" height="${POSTER_SIZE}" fill="url(#bgGrad)" />
+            <text x="${POSTER_SIZE / 2}" y="${POSTER_SIZE / 2}" text-anchor="middle" dominant-baseline="middle"
+                  font-family="system-ui, -apple-system, sans-serif" font-size="${Math.round(POSTER_SIZE * 0.07)}" font-weight="600" fill="#94a3b8">
                 ${text}
             </text>
         </svg>
     `;
     await sharp(Buffer.from(svg))
-        .resize(600, 900, { fit: 'fill' })
+        .resize(POSTER_SIZE, POSTER_SIZE, { fit: 'fill' })
         .toFile(cachePath);
 
     console.log(`[imageEngine] Fallback poster generated for ${cachePath} (sources: ${sourceLog.join(' → ')})`);
@@ -367,7 +375,12 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     }
 
     const urlHash = primaryUrl ? crypto.createHash('md5').update(primaryUrl).digest('hex').substring(0, 8) : 'none';
-    const cachePath = path.join(cacheDir, `${cId}_${urlHash}.png`);
+    // Size/resolution stamp in the filename so a poster-cache format change
+    // (e.g. 600x900 vertical -> ${POSTER_SIZE} square) regenerates instead of
+    // serving a stale-sized file. Old un-suffixed files are left for the cap
+    // to evict gradually.
+    const sizeTag = `sq${POSTER_SIZE}`;
+    const cachePath = path.join(cacheDir, `${cId}_${urlHash}_${sizeTag}.png`);
 
     // Defense-in-depth: validate resolved path stays within cache directory
     const resolvedPath = path.resolve(cachePath);
