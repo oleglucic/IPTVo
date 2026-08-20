@@ -176,7 +176,7 @@ app.get('/api/version', (req, res) => {
 // hold a token and is not rate-limited as an anonymous caller).
 let releasesCache = null;
 let releasesCacheTime = 0;
-const RELEASES_REPO = 'oleglucic/nuvio-iptv';
+const RELEASES_REPO = 'oleglucic/IPTVo';
 const RELEASES_TTL = 10 * 60 * 1000; // 10 minutes
 
 app.get('/api/releases', dashboardLimiter, async (req, res) => {
