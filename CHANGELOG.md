@@ -1,3 +1,15 @@
+# [0.5.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.4.0...v0.5.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* **curator:** bound AI queue CPU usage and prevent stacked cycles ([ec54028](https://github.com/oleglucic/nuvio-iptv/commit/ec54028161c98988a23b0e9dbc2272d5d66cd938))
+
+
+### Features
+
+* **dashboard:** live version badge and GitHub-backed changelog ([32b9ac8](https://github.com/oleglucic/nuvio-iptv/commit/32b9ac8e8dc1499811e0a20ef79676505219c3a2))
+
 # [0.4.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.3.0...v0.4.0) (2026-08-20)
 
 
