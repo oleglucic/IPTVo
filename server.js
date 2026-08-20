@@ -820,6 +820,7 @@ const builder = new addonBuilder({
     resources: ['catalog', 'meta', 'stream'],
     types: ['tv'],
     behaviorHints: { configurable: true, configurationRequired: false },
+    posterShape: 'square', // posters are 1:1 (channel logo on a backdrop) — square placeholders keep the client's skeleton consistent with the served poster
     catalogs: [{
         type: 'tv',
         id: 'iptvo_live',
