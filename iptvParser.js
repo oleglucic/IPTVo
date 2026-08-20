@@ -402,11 +402,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             console.log(`[AI Curator] Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
             startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
         } else if (dirtyChannels.length > 0) {
-            console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${Object.keys(configObj).join(', ')}, ai=${configObj.ai}`);
+            console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, ai=${sanitizeForLog(configObj.ai)}`);
         }
 
     } catch(e) {
-        console.error(`[parser] ERROR configKey=${configKey ? configKey.substring(0,12) : 'null'}... message=${e.message} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: e.message });
+        console.error(`[parser] ERROR configKey=${configKey ? configKey.substring(0,12) : 'null'}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
@@ -600,8 +600,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        console.error("[Xtream Engine Error]", e.message);
-        console.error(`[parser] ERROR configKey=${configKey ? configKey.substring(0,12) : 'null'}... message=${e.message} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: e.message });
+        console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
+        console.error(`[parser] ERROR configKey=${configKey ? configKey.substring(0,12) : 'null'}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
@@ -686,13 +686,13 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
             });
 
             saxStream.on('error', (err) => {
-                console.error('[EPG SAX Error]', err.message);
+                console.error('[EPG SAX Error]', sanitizeForLog(err.message));
                 resolve(tEpg);
             });
 
             finalizedStream.pipe(saxStream);
         } catch(e) { 
-            console.error("EPG Error", e.message); 
+            console.error("EPG Error", sanitizeForLog(e.message)); 
             resolve(tEpg);
         }
     });
