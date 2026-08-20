@@ -1,0 +1,24 @@
+name: Security report
+about: To file a security report, use the private advisory - do not use this form for sensitive details.
+title: ""
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        For vulnerabilities that are actively exploitable or involve
+        credentials and private data, do not use this public form. Open
+        a [private security advisory](https://github.com/oleglucic/IPTVo/security/advisories)
+        instead so the details stay confidential.
+
+        Use this form only for low-sensitivity hardening requests, such as a
+        proposed dependency bump for a public CVE with no private exploit
+        details.
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: What would you like addressed?
+      description: Keep it to non-sensitive hardening details.
+    validations:
+      required: true

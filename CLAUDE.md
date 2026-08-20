@@ -58,7 +58,7 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 | `iptvOrgRef.js` | iptv-org reference data (daily refresh) |
 | `aiCurator.js` | OpenRouter AI batching for unmatched channels |
 | `dashboard.html` | Web UI for config management |
-| `docker-compose.yaml` | Container orchestration |
+| `docker-compose.yml` | Container orchestration |
 
 ## Code Style
 

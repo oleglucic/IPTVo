@@ -42,6 +42,10 @@
   ],
   "author": "Oleg Lučić",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oleglucic/IPTVo.git"
+  },
   "dependencies": {
     "axios": "^1.7.2",
     "cors": "^2.8.6",

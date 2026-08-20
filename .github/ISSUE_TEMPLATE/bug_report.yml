@@ -1,0 +1,42 @@
+name: Bug report
+about: Report a problem with IPTVo
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint / page
+      description: Which API route or dashboard screen is affected? Example - /api/catalog/tv/iptvo_live.json
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant (redacted) server or browser logs.
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Docker
+        - Local (npm)
+        - Stremio client
+        - Nuvio client
+        - Other
+    validations:
+      required: true
