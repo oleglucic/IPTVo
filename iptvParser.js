@@ -7,6 +7,7 @@ const { startAiQueue } = require('./aiCurator');
 const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
 const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
+const { configKeyFingerprint } = require('./cryptoUtils');
 
 /**
  * Sanitizes a string for safe logging (prevents log injection).
@@ -209,7 +210,7 @@ async function streamFetchIPTV(configKey, configObj) {
  */
 async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
-    console.log(`[parseM3uData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
+    console.log(`[parseM3uData] START for configKey=${configKeyFingerprint(configKey)}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
     console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
@@ -375,7 +376,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
-        console.log(`[parser] READY configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
+        console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
@@ -406,7 +407,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        console.error(`[parser] ERROR configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
@@ -417,7 +418,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
  */
 async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
-    console.log(`[parseXtreamData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
+    console.log(`[parseXtreamData] START for configKey=${configKeyFingerprint(configKey)}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
     console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
@@ -586,7 +587,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
         userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
-        console.log(`[parser] READY configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
+        console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
         console.log(`[Xtream Engine] Categorized and loaded ${sanitizeForLog(tCat.length)} streams inside memory.`);
 
@@ -601,7 +602,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 
     } catch(e) {
         console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
-        console.error(`[parser] ERROR configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
