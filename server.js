@@ -884,7 +884,11 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
             background: engineImage,
             logo: passedThroughLogo,
             description: fullDescription,
-            genres: [channel.meta.group]
+            genres: [channel.meta.group],
+            // 1:1 — a per-meta posterShape, not just the manifest-level one, so
+            // Nuvio/Stremio draw a square placeholder while the 640x640 loads
+            // instead of defaulting to a 2:3 portrait skeleton.
+            posterShape: 'square'
         });
     }
     const result = { metas };
@@ -922,7 +926,8 @@ builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
             poster: engineImage,
             background: engineImage,
             logo: passedThroughLogo,
-            description: fullDescription
+            description: fullDescription,
+            posterShape: 'square'
         }
     };
 });

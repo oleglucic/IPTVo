@@ -272,10 +272,14 @@ async function parseM3uData(configKey, configObj) {
                 const grp = t.match(/group-title=["']([^"']+)["']/i);
                 let rawGrp = grp ? grp[1].trim() : 'Uncategorized';
 
-                if (configObj.include && configObj.include.length > 0) {
-                    if (!configObj.include.includes(rawGrp)) { cItem = null; continue; }
-                } else if (configObj.exclude && configObj.exclude.length > 0) {
-                    if (configObj.exclude.includes(rawGrp)) { cItem = null; continue; }
+                const filterGroups = (configObj.include || []).map(g => g.toLowerCase());
+                const excludeGroups = (configObj.exclude || []).map(g => g.toLowerCase());
+                const rawGrpLower = rawGrp.toLowerCase();
+
+                if (filterGroups.length > 0) {
+                    if (!filterGroups.includes(rawGrpLower)) { cItem = null; continue; }
+                } else if (excludeGroups.length > 0) {
+                    if (excludeGroups.includes(rawGrpLower)) { cItem = null; continue; }
                 }
 
                 const tvgId = t.match(/tvg-id=["']([^"']+)["']/i);
@@ -502,10 +506,14 @@ async function parseXtreamData(configKey, configObj) {
 
             const rawGrp = catMap.get(stream.category_id?.toString()) || 'Uncategorized';
 
-            if (configObj.include && configObj.include.length > 0) {
-                if (!configObj.include.includes(rawGrp)) continue;
-            } else if (configObj.exclude && configObj.exclude.length > 0) {
-                if (configObj.exclude.includes(rawGrp)) continue;
+            const filterGroups = (configObj.include || []).map(g => g.toLowerCase());
+            const excludeGroups = (configObj.exclude || []).map(g => g.toLowerCase());
+            const rawGrpLower = rawGrp.toLowerCase();
+
+            if (filterGroups.length > 0) {
+                if (!filterGroups.includes(rawGrpLower)) continue;
+            } else if (excludeGroups.length > 0) {
+                if (excludeGroups.includes(rawGrpLower)) continue;
             }
 
             const rawName = stream.name || "Unknown Channel";
