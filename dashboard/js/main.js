@@ -26,6 +26,7 @@ function cacheElements() {
 
     // Changelog
     elements.changelogModal = document.getElementById('changelogModal');
+    elements.changelogList = document.getElementById('changelogList');
 
     // Main App
     elements.mainApp = document.getElementById('mainApp');
@@ -685,16 +686,7 @@ async function initializeApp() {
     elements.currentUser.textContent = username;
     elements.userAvatar.textContent = username.charAt(0).toUpperCase();
 
-    // Fetch version from server
-    try {
-        const { version } = await api.request('/api/version');
-        state.version = version;
-        elements.appVersion.textContent = `v${version}`;
-        elements.introVersion.textContent = `v${version}`;
-    } catch {
-        elements.appVersion.textContent = `v${state.version}`;
-        elements.introVersion.textContent = `v${state.version}`;
-    }
+    // Version is fetched once at boot in init(); badges already set.
 
     // Load user config from server
     try {
@@ -777,6 +769,67 @@ function updateFormFromState() {
 
 // Store the element that triggered the changelog modal
 let changelogTrigger = null;
+let changelogLoaded = false;
+
+/**
+ * Renders a GitHub release note (GFM-ish) as escaped, dependency-free HTML.
+ * Splits section headers and bullets into clean blocks rather than injecting
+ * a markdown renderer.
+ */
+function renderReleaseBody(body) {
+    const lines = (body || '').split('\n');
+    const out = [];
+    let inList = false;
+
+    const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        const header = line.match(/^#{1,3}\s+(.*)$/);
+        const bullet = line.match(/^[-*]\s+(.*)$/);
+
+        if (header) {
+            closeList();
+            out.push(`<h3>${escapeHtml(header[1])}</h3>`);
+        } else if (bullet) {
+            if (!inList) { out.push('<ul>'); inList = true; }
+            out.push(`<li>${escapeHtml(bullet[1])}</li>`);
+        } else if (line) {
+            closeList();
+            out.push(`<p>${escapeHtml(line)}</p>`);
+        }
+    }
+    closeList();
+    return out.join('');
+}
+
+/**
+ * Populates the changelog modal from the server's /api/releases feed (which
+ * proxies GitHub releases) on first open. Falls back to a friendly notice.
+ */
+async function loadChangelog() {
+    if (changelogLoaded) return;
+    const list = elements.changelogList;
+    if (!list) return;
+
+    list.innerHTML = '<li class="changelog-entry">Loading recent releases…</li>';
+    try {
+        const { releases } = await api.getReleases();
+        if (!Array.isArray(releases) || releases.length === 0) {
+            list.innerHTML = '<li class="changelog-entry">No releases yet — the story starts here.</li>';
+        } else {
+            list.innerHTML = releases.map(r => `
+                <li class="changelog-entry">
+                    <span class="changelog-version">${escapeHtml(r.tagName || 'release')}</span>
+                    ${renderReleaseBody(r.body)}
+                </li>
+            `).join('');
+        }
+        changelogLoaded = true;
+    } catch {
+        list.innerHTML = '<li class="changelog-entry">Couldn’t load the changelog — check your connection and try again.</li>';
+    }
+}
 
 /**
  * Opens the changelog modal, moves focus into it, and sets up focus trapping.
@@ -785,6 +838,8 @@ function openChangelog(triggerElement) {
     changelogTrigger = triggerElement || document.activeElement;
     elements.changelogModal.hidden = false;
     document.body.style.overflow = 'hidden';
+
+    loadChangelog();
 
     // Move focus to the first focusable element in the modal
     const firstFocusable = elements.changelogModal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
@@ -999,6 +1054,18 @@ function bindEvents() {
 async function init() {
     cacheElements();
     bindEvents();
+
+    // Fetch the server version once at boot so both the intro and the authed
+    // app show the real version instead of the 0.0.1 fallback. Public endpoint.
+    try {
+        const { version } = await api.request('/api/version');
+        state.version = version;
+        if (elements.appVersion) elements.appVersion.textContent = `v${version}`;
+        if (elements.introVersion) elements.introVersion.textContent = `v${version}`;
+    } catch {
+        // leave fallback badge as-is if the server is unreachable
+    }
+
     mutations.loadPersistedAuth();
 
     if (state.isAuthenticated) {

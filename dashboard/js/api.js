@@ -129,6 +129,12 @@ class APIClient {
         });
     }
 
+    async getReleases() {
+        return this.request('/api/releases', {
+            method: 'GET'
+        });
+    }
+
     async testConfig(config) {
         return this.request('/api/test-config', {
             method: 'POST',

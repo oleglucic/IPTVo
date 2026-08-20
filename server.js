@@ -172,7 +172,40 @@ app.get('/api/version', (req, res) => {
     res.json({ version: pkg.version });
 });
 
-// Apply general API rate limiting to all /api routes
+// Cache for the GitHub releases endpoint (server-side so the dashboard does not
+// hold a token and is not rate-limited as an anonymous caller).
+let releasesCache = null;
+let releasesCacheTime = 0;
+const RELEASES_REPO = 'oleglucic/nuvio-iptv';
+const RELEASES_TTL = 10 * 60 * 1000; // 10 minutes
+
+app.get('/api/releases', dashboardLimiter, async (req, res) => {
+    if (releasesCache && Date.now() - releasesCacheTime < RELEASES_TTL) {
+        return res.json(releasesCache);
+    }
+    try {
+        const resp = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases`, {
+            headers: { 'User-Agent': 'IPTVo-dashboard', Accept: 'application/vnd.github+json' },
+        });
+        if (!resp.ok) throw new Error(`GitHub ${resp.status}`);
+        const releases = await resp.json();
+        const slim = (Array.isArray(releases) ? releases : []).map(r => ({
+            tagName: r.tag_name,
+            body: r.body || '',
+            publishedAt: r.published_at || null,
+            htmlUrl: r.html_url,
+        }));
+        releasesCache = { releases: slim };
+        releasesCacheTime = Date.now();
+        res.json({ releases: slim });
+    } catch (err) {
+        console.error('releases fetch failed:', err.message);
+        res.status(502).json({ error: 'Failed to load releases' });
+    }
+});
+
+// Apply general API rate limiting to all /api routes. Auth has its own
+// stricter limiter registered later, so it isn't double-counted here.
 app.use('/api/', apiLimiter);
 
 // Require a valid bearer session for external-fetch endpoints so the server
