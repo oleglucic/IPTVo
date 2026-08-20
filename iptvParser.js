@@ -428,7 +428,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
  */
 async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
-    console.log(`[parseXtreamData] START for configKey=${configKey ? configKey.substring(0,12) : 'null'}...`);
+    console.log(`[parseXtreamData] START for configKey=${configKey ? sanitizeForLog(configKey.substring(0,12)) : 'null'}...`);
     const __overridesRows = await getAllOverrides();
     const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
     console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
