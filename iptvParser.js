@@ -3,7 +3,6 @@ const readline = require('readline');
 const zlib = require('zlib');
 const sax = require('sax');
 const { Readable } = require('stream');
-const crypto = require('crypto');
 const { startAiQueue } = require('./aiCurator');
 const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
@@ -21,16 +20,6 @@ function sanitizeForLog(str) {
         .replace(/[\r\n\t]/g, '?')
         .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
         .substring(0, 200);  // Limit length
-}
-
-/**
- * Returns a log-safe fingerprint for config keys without logging raw user input.
- * @param {string} configKey
- * @returns {string}
- */
-function getLogSafeConfigKeyFingerprint(configKey) {
-    if (!configKey) return 'null';
-    return crypto.createHash('sha256').update(String(configKey)).digest('hex').substring(0, 12);
 }
 
 /**
@@ -417,7 +406,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        console.error(`[parser] ERROR configKeyHash=${getLogSafeConfigKeyFingerprint(configKey)} message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
@@ -612,8 +601,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 
     } catch(e) {
         console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
-        const logConfigKey = String(configKey ? configKey.substring(0,12) : 'null').replace(/[\r\n]/g, '');
-        console.error(`[parser] ERROR configKey=${logConfigKey}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${sanitizeForLog(configKey ? configKey.substring(0,12) : 'null')}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
     }
 }
 
