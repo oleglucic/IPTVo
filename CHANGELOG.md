@@ -1,3 +1,15 @@
+# [0.4.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.3.0...v0.4.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* apply CodeRabbit auto-fixes ([5a89b92](https://github.com/oleglucic/nuvio-iptv/commit/5a89b923625c533dd1241fce86e95e97fda2e680))
+
+
+### Features
+
+* **dashboard:** warm humane redesign, materialize motion, fix groups empty-state ([0f865d2](https://github.com/oleglucic/nuvio-iptv/commit/0f865d25666b4f03c8b538b3969945710803c595))
+
 # [0.3.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.2.4...v0.3.0) (2026-08-19)
 
 
