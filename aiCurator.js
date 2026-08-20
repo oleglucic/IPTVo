@@ -79,7 +79,27 @@ Input: ${JSON.stringify(batchItems)}`;
  * @param {string} configKey - Configuration identifier used for processing context.
  * @param {string} openrouterKey - OpenRouter API key used for AI normalization.
  */
+// Guard against several concurrent 55k-channel queues stacking up and
+// starving the request-serving event loop. Only one cycle at a time; a new
+// trigger while one is active is dropped rather than queued.
+let aiQueueRunning = false;
+
 async function startAiQueue(dirtyChannels, configKey, openrouterKey, model) {
+    if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
+    if (aiQueueRunning) {
+        console.log(`[AI Curator] Skipping new queue: a cycle is already running for another config.`);
+        return;
+    }
+    aiQueueRunning = true;
+
+    try {
+        await runAiQueue(dirtyChannels, configKey, openrouterKey, model);
+    } finally {
+        aiQueueRunning = false;
+    }
+}
+
+async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
 
     console.log(`[AI Curator] Background queue triggered for ${sanitizeForLog(dirtyChannels.length)} stream evaluations...`);
@@ -102,7 +122,38 @@ async function startAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     const channelsToProcess = [];
     const overridesMap = new Map((await getAllOverrides()).map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
 
-    for (const ch of dirtyChannels) {
+    // Cap the per-call scan so a single 55k-channel config cannot peg one CPU
+    // core for hours in an unyielding loop. 8000 covers the worst realistic
+    // case in well under a minute while still resolving the highest-priority
+    // (most-conflicted) channels first.
+    const ordered = dirtyChannels
+        .map(ch => {
+            const isAlt = /backup|alt|mirror/i.test(ch.rawName);
+            const isShortOrUnknown = ch.baseCleanName === 'unknown' || ch.baseCleanName.length < 3;
+            const hasBaseNameConflict = (rawNamesByBase.get(ch.baseCleanName)?.size || 0) > 1;
+            const isOverMerged = (idCounts.get(ch.cId) || 0) > 3;
+            const existing = overridesMap.get(ch.rawName) || null;
+            const isLowConfidence = existing && existing.confidence < 0.5;
+            let priority = 0;
+            if (isOverMerged) priority += 3;
+            if (hasBaseNameConflict) priority += 2;
+            if (isAlt) priority += 1;
+            if (isLowConfidence) priority += 1;
+            if (isShortOrUnknown) priority += 1;
+            return { ch, priority };
+        })
+        .sort((a, b) => b.priority - a.priority);
+    const cap = 8000;
+    const scan = ordered.slice(0, cap);
+
+    for (let idx = 0; idx < scan.length; idx++) {
+        const { ch, priority } = scan[idx];
+
+        // Let the event loop breathe so request handling never fully stalls.
+        if (idx % 500 === 0) {
+            await new Promise(r => setTimeout(r, 0));
+        }
+
         const isAlt = /backup|alt|mirror/i.test(ch.rawName);
         const isShortOrUnknown = ch.baseCleanName === 'unknown' || ch.baseCleanName.length < 3;
         const hasBaseNameConflict = (rawNamesByBase.get(ch.baseCleanName)?.size || 0) > 1;
@@ -111,21 +162,17 @@ async function startAiQueue(dirtyChannels, configKey, openrouterKey, model) {
         // Check if DB already has mapping and confidence is low
         const existing = overridesMap.get(ch.rawName) || null;
         const isLowConfidence = existing && existing.confidence < 0.5;
+        const wasAlreadyMapped = !!existing && !isLowConfidence;
 
         // Check if iptv-org can match this channel (using cleaned name and country scope)
-        const iptvOrgMatch = lookupChannel(ch.baseCleanName, ch.countryScopeKey) || lookupChannelFuzzy(ch.baseCleanName, ch.countryScopeKey);
-        const hasIptvOrgMatch = !!iptvOrgMatch;
+        const hasIptvOrgMatch = !!(lookupChannel(ch.baseCleanName, ch.countryScopeKey) || lookupChannelFuzzy(ch.baseCleanName, ch.countryScopeKey));
 
-        let priority = 0;
         if (hasIptvOrgMatch) {
             // Already has authoritative match, skip AI
             continue;
         }
-        if (isOverMerged) priority += 3;
-        if (hasBaseNameConflict) priority += 2;
-        if (isAlt) priority += 1;
-        if (isLowConfidence) priority += 1;
-        if (isShortOrUnknown) priority += 1;
+        // Skip channels already persisted as a high-confidence override
+        if (wasAlreadyMapped) continue;
 
         if (isAlt || isShortOrUnknown || hasBaseNameConflict || isOverMerged || isLowConfidence || !existing) {
             channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || 'global', priority });
