@@ -6,7 +6,7 @@ const { Readable } = require('stream');
 const { startAiQueue } = require('./aiCurator');
 const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
-const { lookupChannel, lookupChannelFuzzy, isValidCountryCode } = require('./iptvOrgRef');
+const { lookupChannel, lookupChannelFuzzy, lookupChannelSmart, isValidCountryCode, resolveGroupScope } = require('./iptvOrgRef');
 const { configKeyFingerprint } = require('./cryptoUtils');
 
 /**
@@ -21,6 +21,23 @@ function sanitizeForLog(str) {
         .replace(/[\r\n\t]/g, '?')
         .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
         .substring(0, 200);  // Limit length
+}
+
+/**
+ * Choose the genre for a channel meta. iptv-org categories are authoritative
+ * and deduped, so prefer them when the playlist group carries no useful genre
+ * signal (generic "Uncategorized"/blank groups). Otherwise keep the group,
+ * which is what the dashboard group filter and genre chips key off.
+ * @param {Object} iptvOrgMatch - Result of iptv-org matching, may carry categories
+ * @param {string} group - The playlist group/finalGrp label
+ * @returns {string[]} Genre array
+ */
+function pickGenres(iptvOrgMatch, group) {
+    const cats = iptvOrgMatch && iptvOrgMatch.categories && iptvOrgMatch.categories.length ? iptvOrgMatch.categories : null;
+    const g = (group || '').trim();
+    const generic = !g || /^uncategorized$/i.test(g) || /^\s*$/.test(g);
+    if (generic && cats) return cats;
+    return [g || 'Uncategorized'];
 }
 
 /**
@@ -246,17 +263,24 @@ async function parseM3uData(configKey, configObj) {
     try {
         if (!configObj) throw new Error("Configuration context object is missing.");
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
-        if (!m3uTargetUrl) throw new Error("No M3U Playlist link found inside payload parameters.");
 
-        // Prevent SSRF: validate URL before fetching
-        if (!isSafeUrl(m3uTargetUrl)) {
-            throw new Error("Invalid M3U URL: private/internal addresses not allowed");
+        // Test-only hook: allow a harness to feed inline M3U content without a
+        // network fetch. Gated on an env var that is never set in production, so
+        // real deployments still enforce isSafeUrl on every remote URL.
+        let mStream = null;
+        if (process.env.IPTVO_ALLOW_INLINE_M3U === '1' && typeof configObj.m3uContent === 'string') {
+            mStream = Readable.from([configObj.m3uContent]);
+        } else {
+            if (!m3uTargetUrl) throw new Error("No M3U Playlist link found inside payload parameters.");
+            // Prevent SSRF: validate URL before fetching
+            if (!isSafeUrl(m3uTargetUrl)) {
+                throw new Error("Invalid M3U URL: private/internal addresses not allowed");
+            }
+            const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000 }); // 10 min for large playlists
+            revalidateResponseUrl(res, res.data);
+            mStream = res.data;
+            if (res.headers['content-encoding'] === 'gzip' || m3uTargetUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
         }
-
-        const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000 }); // 10 min for large playlists
-        revalidateResponseUrl(res, res.data);
-        let mStream = res.data;
-        if (res.headers['content-encoding'] === 'gzip' || m3uTargetUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
         const rl = readline.createInterface({ input: mStream, crlfDelay: Infinity });
         
         const tMap = new Map(), logoTrack = new Map(), tCat = []; 
@@ -290,28 +314,9 @@ async function parseM3uData(configKey, configObj) {
                 
                 if (/([#\-\*_=\+~]){3,}/.test(rawName) || rawName.includes('----') || rawName.includes('####')) { cItem = null; continue; }
                 
-                let normGrp = normaliseFormat(rawGrp).toLowerCase();
-                let countryPrefix = "";
-
-                // Try to extract country code from group name (e.g., "US | Sports" -> "us")
-                const countryMatch = normGrp.match(/^([a-z]{2,3})\b/i);
-                if (countryMatch) {
-                    const code = countryMatch[1].toUpperCase();
-                    if (isValidCountryCode(code)) {
-                        countryPrefix = code + " | "; normGrp = normGrp.substring(countryMatch[0].length).trim();
-                    }
-                }
-
-                // Also check original raw group for country codes that might be in different formats
-                if (!countryPrefix) {
-                    const rawCountryMatch = rawGrp.match(/^([A-Z]{2,3})\s*[\|\-\:]\s*/);
-                    if (rawCountryMatch) {
-                        const code = rawCountryMatch[1].toUpperCase();
-                        if (isValidCountryCode(code)) {
-                            countryPrefix = code + " | ";
-                        }
-                    }
-                }
+                const gScope = resolveGroupScope(rawGrp);
+                let normGrp = gScope.rest.toLowerCase();
+                let countryPrefix = gScope.prefix;
 
                 let cleanGrp = normGrp.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|live|vod|vip|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps)\b/gi, ' ');
                 cleanGrp = cleanGrp.replace(/[-\/|:_\s]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
@@ -347,7 +352,15 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 // Only run iptv-org matching if explicitly enabled in config
                 let iptvOrgMatch = null;
                 if (configObj.iptvOrg) {
-                    iptvOrgMatch = lookupChannel(baseCleanName, countryScopeKey) || lookupChannelFuzzy(baseCleanName, countryScopeKey);
+                    // Smart matcher: token/alias/subsequence-tolerant over the
+                    // space-preserved cleaned name, so playlist quirks
+                    // ("CNN Intl", "DW English") still resolve to the iptv-org id.
+                    // lookupChannelSmart already runs the conservative fuse-fuzzy
+                    // tier internally on token misses, so the OR-chain below must
+                    // NOT call lookupChannelFuzzy again — that double-invokes the
+                    // expensive fuzzy scan on every token-different name.
+                    iptvOrgMatch = lookupChannelSmart(cName, countryScopeKey)
+                        || lookupChannel(baseCleanName, countryScopeKey);
                 }
                 if (iptvOrgMatch) {
                     // Use iptv-org's official ID as the canonical identifier
@@ -371,6 +384,16 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 if (tvgName) epgMap.set(tvgName[1].toLowerCase().trim(), cId);
                 epgMap.set(rawName.toLowerCase().trim(), cId);
                 epgMap.set(rawName.toLowerCase().replace(/\s+/g, ''), cId);
+                // iptv-org guide feeds key programmes by the official channel id
+                // (e.g. channel="cnn.us"). Our canonical cId embeds that id
+                // (scope_officialId), so register the raw official id too — this
+                // is the recovery path that lets an iptv-org-keyed XMLTV feed map
+                // straight onto matched channels instead of falling through.
+                if (iptvOrgMatch && iptvOrgMatch.officialId) {
+                    const officialLower = iptvOrgMatch.officialId.toLowerCase().trim();
+                    epgMap.set(officialLower, cId);
+                    epgMap.set(officialLower.replace(/\s+/g, ''), cId);
+                }
                 epgMap.set(cId, cId);
                 
                 let finalLogo = logo ? logo[1] : '';
@@ -388,7 +411,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 if (!tMap.has(cId)) {
                     const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
                     const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : logo;
-                    const mItem = { id: cId, type: 'tv', name: displayName, genres: [grp], catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                    const genres = pickGenres(iptvOrgMatch, grp);
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
                 }
@@ -519,28 +543,9 @@ async function parseXtreamData(configKey, configObj) {
             const rawName = stream.name || "Unknown Channel";
             if (/([#\-\*_=\+~]){3,}/.test(rawName) || rawName.includes('----') || rawName.includes('####')) continue;
 
-            let normGrp = normaliseFormat(rawGrp).toLowerCase();
-            let countryPrefix = "";
-
-            // Try to extract country code from group name (e.g., "US | Sports" -> "us")
-            const countryMatch = normGrp.match(/^([a-z]{2,3})\b/i);
-            if (countryMatch) {
-                const code = countryMatch[1].toUpperCase();
-                if (isValidCountryCode(code)) {
-                    countryPrefix = code + " | "; normGrp = normGrp.substring(countryMatch[0].length).trim();
-                }
-            }
-
-            // Also check original raw group for country codes that might be in different formats
-            if (!countryPrefix) {
-                const rawCountryMatch = rawGrp.match(/^([A-Z]{2,3})\s*[\|\-\:]\s*/);
-                if (rawCountryMatch) {
-                    const code = rawCountryMatch[1].toUpperCase();
-                    if (isValidCountryCode(code)) {
-                        countryPrefix = code + " | ";
-                    }
-                }
-            }
+            const gScope = resolveGroupScope(rawGrp);
+            let normGrp = gScope.rest.toLowerCase();
+            let countryPrefix = gScope.prefix;
 
             let cleanGrp = normGrp.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|live|vod|vip|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|fps)\b/gi, ' ');
             cleanGrp = cleanGrp.replace(/[-\/|:_\s]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
@@ -571,7 +576,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             // Only run iptv-org matching if explicitly enabled in config
             let iptvOrgMatch = null;
             if (configObj.iptvOrg) {
-                iptvOrgMatch = lookupChannel(baseCleanName, countryScopeKey) || lookupChannelFuzzy(baseCleanName, countryScopeKey);
+                // lookupChannelSmart already runs the conservative fuse-fuzzy tier
+                // internally on token misses; do NOT re-invoke lookupChannelFuzzy
+                // here (it double-scans the whole fuse index on every non-token name).
+                iptvOrgMatch = lookupChannelSmart(cName, countryScopeKey)
+                    || lookupChannel(baseCleanName, countryScopeKey);
             }
             if (iptvOrgMatch) {
                 // Use iptv-org's official ID as the canonical identifier
@@ -590,6 +599,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             if (stream.epg_channel_id) epgMap.set(stream.epg_channel_id.toLowerCase().trim(), cId);
             epgMap.set(rawName.toLowerCase().trim(), cId);
             epgMap.set(cId, cId);
+            // iptv-org guide feeds key programmes by the official channel id
+            // (channel="cnn.us"). Register the raw id so such a feed maps onto
+            // the matched canonical channel instead of falling through.
+            if (iptvOrgMatch && iptvOrgMatch.officialId) {
+                const officialLower = iptvOrgMatch.officialId.toLowerCase().trim();
+                epgMap.set(officialLower, cId);
+                epgMap.set(officialLower.replace(/\s+/g, ''), cId);
+            }
 
             let finalLogo = stream.stream_icon || '';
 
@@ -603,7 +620,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             if (!tMap.has(cId)) {
                 const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
                 const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : finalLogo;
-                const mItem = { id: cId, type: 'tv', name: displayName, genres: [finalGrp], catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                const genres = pickGenres(iptvOrgMatch, finalGrp);
+                const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }
@@ -753,8 +771,6 @@ function getEpgText(chKey, epgData, offsetHours = 0) {
     return text;
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl };
-
 /**
  * Persists primary channel logo URLs for change tracking.
  * @param {Map} tMap - Map of channel identifiers to channel metadata.
@@ -875,4 +891,4 @@ async function queueLogoPrefetch(missingLogos) {
     }
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres };
