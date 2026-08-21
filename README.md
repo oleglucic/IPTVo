@@ -294,7 +294,8 @@ IPTVo ships three Cloudflare Workers, all served coherently under `assets.oleglu
 4. Enable **Caching** on both `iptvo-fetch` and `iptvo-assets` (default on) — they rely on it for 30-day edge caching.
 
 **Set the logo URL in backend env:**
-```
+
+```bash
 LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 ```
 
@@ -314,9 +315,10 @@ IPTVo includes a complete user authentication system with encrypted configuratio
 
 ### Architecture
 
+```text
 +-----------------------------------------------------------------+
 |                            CLIENTS                               |
-|              Stremio  /  Nuvio  /  Web Dashboard                 |
+|   Stremio  /  Nuvio  /  Web Dashboard                           |
 +---------------------------------+-------------------------------+
                                   |
                                   v
