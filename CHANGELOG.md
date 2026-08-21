@@ -1,3 +1,10 @@
+# [0.9.0](https://github.com/oleglucic/IPTVo/compare/v0.8.1...v0.9.0) (2026-08-21)
+
+
+### Features
+
+* **dashboard:** auto-load channel groups + persist group selection ([#30](https://github.com/oleglucic/IPTVo/issues/30)) ([56c5538](https://github.com/oleglucic/IPTVo/commit/56c5538dad5ec8e7e9546ebf2e77f2a51a7e5c69))
+
 ## [0.8.1](https://github.com/oleglucic/IPTVo/compare/v0.8.0...v0.8.1) (2026-08-21)
 
 
