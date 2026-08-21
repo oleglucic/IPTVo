@@ -19,9 +19,9 @@ A self-hosted Stremio/Nuvio addon serving live IPTV channels from M3U or Xtream 
 - **EPG integration** — XMLTV parsing with streaming SAX parser for memory efficiency
 - **Redis caching** — Playlist parse cache with 1hr TTL, proactive refresh every 15min
 - **Postgres persistence** — AI override mappings, EPG history, logo URL tracking, user accounts (auto-initialized on startup)
-- **Apple HIG / Liquid Glass dashboard** — Tabbed mobile-first UI (Provider, Matching & AI, Filters, Advanced, Sync)
+- **Apple HIG / Liquid Glass dashboard** — Guided 5-step setup (Provider → Groups → Matching & AI → Backup → Save & Install), mobile-first responsive
 - **Docker-ready** — Multi-stage build, multi-arch (amd64/arm64), Portainer deployment
-- **Automated releases** — Semantic versioning via manual tags, multi-arch Docker builds, Docker Hub + GHCR publishing, GitHub Releases
+- **Automated releases** — Semantic versioning from commit messages, multi-arch Docker builds, Docker Hub + GHCR publishing, GitHub Releases
 
 ## Quick Start
 
@@ -75,12 +75,13 @@ services:
   iptvo:
     image: itsoleglucic/iptvo:latest
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD:-changeme}@postgres:5432/iptvo
       - REDIS_URL=redis://redis:6379
-      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
+      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/iptvo/fetcher/logo}
+      - PORT=${PORT:-3000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,7 +101,7 @@ volumes:
 cat > .env << 'EOF'
 ENCRYPTION_KEY=your-32-char-secret-key-here
 POSTGRES_PASSWORD=secure-password-here
-LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 EOF
 
 # Deploy
@@ -120,7 +121,7 @@ docker-compose up -d
 ENCRYPTION_KEY=your-32-char-secret-key-here
 DATABASE_URL=postgresql://user:pass@ep-xyz.us-east-1.neon.tech/iptvo?sslmode=require
 REDIS_URL=redis://default:pass@fly-xyz.upstash.io:6379
-LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 ```
 
 #### Option C: External Host + Portainer Stack
@@ -134,12 +135,12 @@ services:
   iptvo:
     image: itsoleglucic/iptvo:latest
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - ENCRYPTION_KEY=your-32-char-secret-key-here
       - DATABASE_URL=postgresql://user:pass@postgres-host:5432/iptvo
       - REDIS_URL=redis://redis-host:6379
-      - LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+      - LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
     restart: unless-stopped
 ```
 
@@ -155,7 +156,7 @@ npm install
 export ENCRYPTION_KEY="your-32-char-secret-key-here"
 export DATABASE_URL="postgresql://iptvo:changeme@localhost:5432/iptvo"
 export REDIS_URL="redis://localhost:6379"
-export LOGO_PROXY_URL="https://assets.oleglucic.com/logo"
+export LOGO_PROXY_URL="https://assets.oleglucic.com/iptvo/fetcher/logo"
 
 # Start server
 node server.js
@@ -178,7 +179,7 @@ docker run -d \
   -e ENCRYPTION_KEY="your-32-char-secret-key-here" \
   -e DATABASE_URL="postgresql://user:pass@postgres-host:5432/iptvo" \
   -e REDIS_URL="redis://redis-host:6379" \
-  -e LOGO_PROXY_URL="https://assets.oleglucic.com/logo" \
+  -e LOGO_PROXY_URL="https://assets.oleglucic.com/iptvo/fetcher/logo" \
   itsoleglucic/iptvo:latest
 ```
 
@@ -192,12 +193,12 @@ services:
   iptvo:
     image: itsoleglucic/iptvo:latest
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - ENCRYPTION_KEY=your-32-char-secret-key-here
       - DATABASE_URL=postgresql://user:pass@postgres-host:5432/iptvo
       - REDIS_URL=redis://redis-host:6379
-      - LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+      - LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
     restart: unless-stopped
 ```
 
@@ -236,12 +237,12 @@ services:
   iptvo:
     image: itsoleglucic/iptvo:latest
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD}@postgres:5432/iptvo
       - REDIS_URL=redis://redis:6379
-      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
+      - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/iptvo/fetcher/logo}
     depends_on:
       postgres:
         condition: service_healthy
@@ -259,7 +260,7 @@ Set these in Portainer stack **Environment variables**:
 ```text
 ENCRYPTION_KEY=<32-char-secret>
 POSTGRES_PASSWORD=<secure-password>
-LOGO_PROXY_URL=https://assets.oleglucic.com/logo
+LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 ```
 
 ---
@@ -272,36 +273,35 @@ LOGO_PROXY_URL=https://assets.oleglucic.com/logo
 4. Add same environment variables as above
 5. Deploy — Portainer builds image locally, starts all services
 
-## Cloudflare Worker Logo Proxy (Required for Production)
+## Cloudflare Workers (Required for Production)
 
-The logo proxy eliminates rate limits, handles 403/404 fallbacks, caches at Cloudflare's edge (30 days), and serves SVG placeholders.
+IPTVo ships three Cloudflare Workers, all served coherently under `assets.oleglucic.com/iptvo/*`. Each is auto-deployed from this repository via **Workers Builds** (connect-to-GitHub in the Cloudflare dashboard):
 
-### One-time Setup
+| Worker | Code | Route | Purpose |
+| ------ | ---- | ----- | ------- |
+| `iptvo-root` | `logo-proxy.worker.js` | owns `assets.oleglucic.com` | domain anchor; serves `/logo` directly at the root |
+| `iptvo-fetch` | `logo-proxy.worker.js` | `/iptvo/fetcher/*` | logo fetch via Cloudflare edge (avoids logo-host rate limits) |
+| `iptvo-assets` | `iptvo-assets.worker.js` | `/iptvo/assets/*` | edge cache for posters, catalog/meta JSON, logos |
 
-```bash
-# Install Wrangler CLI
-npm install -g wrangler
-wrangler login
+### One-time Setup (via Cloudflare dashboard)
 
-# Create KV namespace for dead URL tracking
-wrangler kv:namespace create "LOGO_KV"
-wrangler kv:namespace create "LOGO_KV" --preview
+1. **Workers & Pages → Connect to GitHub** → pick `oleglucic/IPTVo`.
+2. Set the **Wrangler configuration file** per worker:
+   - `iptvo-root` → `wrangler.toml`
+   - `iptvo-fetch` → `wrangler.iptvo-fetch.toml`
+   - `iptvo-assets` → `wrangler.iptvo-assets.toml`
+3. Each worker's KV binding is declared in its config (`LOGO_KV` / `ASSETS_KV`, already created for you).
+4. Enable **Caching** on both `iptvo-fetch` and `iptvo-assets` (default on) — they rely on it for 30-day edge caching.
+
+**Set the logo URL in backend env:**
 ```
-
-Update `wrangler.toml` with the returned KV IDs, then deploy:
-
-```bash
-wrangler deploy
+LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 ```
-
-Worker URL: `https://logo-proxy.<account>.workers.dev/logo`
-
-Set `LOGO_PROXY_URL=https://logo-proxy.<account>.workers.dev/logo` in backend env vars.
 
 ### Worker Behavior
 
-- **Fallback chain per channel**: iptv-org authoritative logo → playlist `tvg-logo`/`stream_icon` → generated SVG
-- **Rate limits**: Automatic 429 retry with exponential backoff
+- **Fallback chain per URL**: primary logo → playlist `tvg-logo`/`stream_icon` → generated SVG placeholder
+- **Rate limits**: Automatic 429 retry with exponential backoff (rate-limit protection for logo hosts)
 - **Dead URLs**: Tracked in KV (24h TTL) to avoid retry storms
 - **SVG placeholders**: Served inline (no external fetch), cached 30 days at edge
 - **Caching**: Cloudflare CDN caches successful responses 30 days
@@ -314,33 +314,31 @@ IPTVo includes a complete user authentication system with encrypted configuratio
 
 ### Architecture
 
-```text
-��─────────────────────────────────────────────────────────────────��
-│                        CLIENTS                                   │
-│  Stremio / Nuvio / Web Dashboard                                │
-��──────────────────────────��──────────────────────────────────────��
-                           │
-                           ��
-��─────────────────────────────────────────────────────────────────��
-│                      EXPRESS SERVER                              │
-│  /api/auth/*      →  User registration, login, session mgmt    │
-│  /:userId/*       →  Stremio addon endpoints (user system)     │
-│  /:config/*       →  Legacy base64 config endpoints            │
-│  /health*         →  Health checks (Docker)                    │
-│  /api/get-groups  →  Category discovery                        │
-��──────────────────────────��──────────────────────────────────────��
-                           │
-        ��──────────────────��──────────────────��
-        ��                  ��                  ��
-��───────────────��  ��───────────────��  ��───────────────��
-│  POSTGRES     │  │    REDIS      │  │  CLOUDFLARE   │
-│  (Primary)    │  │  (Cache)      │  │   WORKER      │
-│               │  │               │  │  (Logos)      │
-│ - users       │  │ - channelMap  │  │               │
-│ - ai_overrides│  │ - logo buffers│  │ - edge cache  │
-│ - epg_history │  │ - logo URLs   │  │ - rate limit  │
-│ - logo_urls   │  │               │  │ - fallback    │
-��───────────────��  └───────────────��  └───────────────��
++-----------------------------------------------------------------+
+|                            CLIENTS                               |
+|              Stremio  /  Nuvio  /  Web Dashboard                 |
++---------------------------------+-------------------------------+
+                                  |
+                                  v
++-----------------------------------------------------------------+
+|                        EXPRESS  SERVER                          |
+|   /api/auth/*      ->  User registration, login, session mgmt  |
+|   /:userId/*       ->  Stremio addon endpoints (user system)    |
+|   /:config/*       ->  Legacy base64 config endpoints           |
+|   /health*         ->  Health checks (Docker)                   |
+|   /api/get-groups  ->  Category discovery                       |
++---------------------------------+-------------------------------+
+                                  |
+              +-------------------+-------------------+
+              v                   v                   v
++------------------+  +------------------+  +-----------------------+
+|  POSTGRES        |  |  REDIS           |  |  CLOUDFLARE WORKERS   |
+|  (Primary)       |  |  (Cache)         |  |  (edge assets)        |
+| - users          |  | - channelMap     |  | - iptvo-root (domain) |
+| - ai_overrides   |  | - logo buffers   |  | - iptvo-fetch (logos) |
+| - epg_history    |  | - logo URLs      |  | - iptvo-assets (edge) |
+| - logo_urls      |  |                  |  |  (edge cache + tiered)|
++------------------+  +------------------+  +-----------------------+
 ```
 
 ### Auth Flow
@@ -358,7 +356,7 @@ Logo Proxy:   GET  /api/logo-proxy-url → {logoProxyUrl}
 ### Session Tokens
 
 - Generated via `crypto.randomBytes(32).toString('base64url')`
-- Stored in-memory Map with 30-day expiry
+- Stored in **Redis** (`nuvio:session:*`) with 30-day expiry — survives restarts and works across cluster workers
 - Header: `Authorization: Bearer <token>`
 - Config returned in auth responses (passwords/keys redacted)
 
@@ -446,23 +444,23 @@ Where `:config` is the base64-encoded JSON config. The dashboard at `/` generate
 
 The web dashboard at `/` provides an **Apple HIG / Liquid Glass** (iOS 26/macOS 26) design:
 
-- **Tabbed navigation**: Provider | Matching & AI | Filters | Advanced | Sync
+- **Guided setup wizard**: 5 steps (Provider → Groups → Matching & AI → Backup → Save & Install) with a top-weekend sidebar/top bar
 - **Mobile-first responsive**: Segmented control (<430px), tab bar (430-768px), sidebar (>768px)
 - **Glassmorphism**: `backdrop-filter: saturate(180%) blur(20px)` with semantic color tokens
-- **Authentication**: Login/register in header, user profile in Sync tab
+- **Authentication**: Login/register modal in the header (Cloudflare Turnstile bot protection)
 - **Config management**: Save to DB, import/export JSON, change password, delete account
-- **Group management**: Searchable list with include/exclude toggles, channel counts
+- **Group management**: Searchable list with include/exclude toggles, channel counts (auto-loaded once provider is set)
 - **Sticky action bar**: Save & Install, Import, Export, Status (safe-area aware)
 
-### Tabs Detail
+### Wizard Steps
 
-| Tab | Purpose |
+| Step | Purpose |
 | ----- | --------- |
-| **Provider** | M3U/Xtream selection, URLs, credentials, EPG, timezone |
-| **Matching & AI** | iptv-org toggle, AI toggle, OpenRouter key, confidence slider |
-| **Filters** | Group discovery, search, include/exclude toggles, auto-sync |
-| **Advanced** | Fallback preference, logo proxy URL, cache TTL, debug logging |
-| **Sync** | Auth state, user profile, config import/export, password change, delete account |
+| **Provider** | M3U/Xtream selection, URLs, credentials, timezone |
+| **Groups** | Auto-loaded channel groups, search, include/exclude toggles |
+| **Matching & AI** | iptv-org toggle, confidence slider, AI toggle + OpenRouter key |
+| **Backup** | Export config JSON / import a saved one |
+| **Save & Install** | Save config, view your private addon URL, copy to Stremio deep link |
 
 ## Configuration
 
@@ -525,18 +523,18 @@ The parser extracts country codes from group names using a regex pattern (e.g., 
 
 ```text
 getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
-  │
-  ├─�� 1. In-memory cache (30 min) — fastest
-  │
-  ├─�� 2. Redis logo cache (7 days) — survives restarts
-  │
-  ├─�� 3. Cloudflare Worker proxy — handles rate limits, fallbacks, edge cache
-  │     ├─�� Try iptv-org authoritative logo
-  │     ├─�� Try playlist fallback logo
-  │     └─�� Return SVG placeholder
-  │
-  └─�� 4. Generate SVG fallback (no external calls)
-```
+  |
+  |- 1. In-memory cache (30 min) - fastest
+  |
+  |- 2. Redis logo cache (7 days) - survives restarts
+  |
+  |- 3. Cloudflare Worker proxy - handles rate limits, fallbacks, edge cache
+  |     |- Try iptv-org authoritative logo
+  |     |- Try playlist fallback logo
+  |     `- Return SVG placeholder
+  |
+  `- 4. Generate SVG fallback (no external calls)
+
 
 **Cold-start optimization**: On server startup, Redis logo buffers are pre-warmed via background job (100 concurrent fetches, respects rate limits) to reduce first-request latency.
 
@@ -554,8 +552,11 @@ getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
 | `redisCache.js` | Playlist cache read/write, logo buffer persist/get, pre-warm job |
 | `catchup.js` | Catch-up metadata extraction (M3U `catchup`/`catchup-days`, Xtream) |
 | `cryptoUtils.js` | AES-GCM encryption/decryption, PBKDF2 password hashing, session tokens |
-| `logo-proxy.worker.js` | Cloudflare Worker logo proxy with KV dead URL tracking |
-| `wrangler.toml` | Worker config (KV bindings, compatibility date) |
+| `logo-proxy.worker.js` | Cloudflare Worker logo fetcher with KV dead URL tracking |
+| `iptvo-assets.worker.js` | Cloudflare edge asset cache (posters, catalog/meta JSON) |
+| `wrangler.toml` | Worker config for `iptvo-root` (KV bindings, compatibility date) |
+| `wrangler.iptvo-fetch.toml` | Worker config for `iptvo-fetch` (logo fetcher) |
+| `wrangler.iptvo-assets.toml` | Worker config for `iptvo-assets` (edge asset cache) |
 | `dashboard/index.html` | Apple HIG/Liquid Glass tabbed UI, auth integration |
 | `docker-compose.yml` | Container orchestration |
 
@@ -582,7 +583,7 @@ docker run -d \
   -e ENCRYPTION_KEY="your-32-char-secret-key-here" \
   -e DATABASE_URL="postgresql://user:pass@host:5432/dbname" \
   -e REDIS_URL="redis://host:6379" \
-  -e LOGO_PROXY_URL="https://your-worker.workers.dev/logo" \
+  -e LOGO_PROXY_URL="https://assets.oleglucic.com/iptvo/fetcher/logo" \
   itsoleglucic/iptvo:latest
 ```
 
@@ -635,10 +636,11 @@ IPTVo uses **semantic versioning** with automated releases via GitHub Actions.
 
 - Source of truth: `package.json` version
 - Commits drive version bumps via `semantic-release` (in the Release job):
-  - `feat:` → MINOR
+  - `feat:` → MINOR (the first `feat:` on a pre-1.0 project graduates straight to 1.0.0)
   - `fix:` → PATCH
   - `BREAKING CHANGE:` → MAJOR
   - Other prefixes (`docs:`, `chore:`, `refactor:`) → no version bump
+- Every release's GitHub notes include a **🤝 Contributors** section (aggregated from commit authors + `Co-authored-by` trailers)
 
 ### Release Workflow (`.github/workflows/ci-cd.yml`)
 
@@ -654,11 +656,7 @@ Release runs on every push to `main` (CI + Release jobs in the same pipeline):
 
 Releases are automatic: merging to `main` via a Pull Request triggers the Release job in `ci-cd.yml`, which bumps the version and publishes the Docker images + GitHub release. No manual tag creation or push is needed.
 
-To preview what the changelog would contain:
-
-```bash
-npm run changelog
-```
+The changelog is generated automatically into `CHANGELOG.md` on each release.
 
 ### Required Secrets (GitHub Repository Settings)
 

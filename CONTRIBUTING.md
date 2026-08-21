@@ -8,15 +8,16 @@ Thank you for your interest in contributing! This project follows standard open-
 2. **Create a feature branch** from `main`
 3. **Make your changes** with clear, focused commits
 4. **Test locally** before pushing:
-   - Run `node -c` on modified files to check syntax
-   - Test with a real decoded production config against `streamFetchIPTV` directly
+   - Run `npm run lint` (ESLint)
+   - Run `npm test` (Jest)
+   - Run `node --check server.js` for syntax
 5. **Push and open a Pull Request**
 
 ## Code Style
 
-- ES modules not used — stick to CommonJS (`require`/`module.exports`)
+- CommonJS (`require`/`module.exports`) — no ES modules in the server
 - Match existing indentation (2 spaces), naming conventions, and comment density
-- No linting config — follow the patterns in the existing codebase
+- ESLint config: `eslint.config.js` — run `npm run lint` before pushing
 
 ## Two-Pass M3U Parsing
 
