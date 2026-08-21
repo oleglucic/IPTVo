@@ -107,7 +107,16 @@ export const mutations = {
     },
 
     setConfig(config) {
-        state.config = { ...state.config, ...config };
+        const next = { ...config };
+        // The server persists the group selection under `include` (the field the
+        // parser filters on); the dashboard tracks it as `selectedGroups` (UI-only
+        // name). Coerce on load so the checkboxes reflect what is actually saved,
+        // and a later save does not wipe it with an empty selection.
+        if (Array.isArray(next.include)) {
+            next.selectedGroups = [...next.include];
+            delete next.include;
+        }
+        state.config = { ...state.config, ...next };
     },
 
     setConfigField(field, value) {

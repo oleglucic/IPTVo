@@ -291,12 +291,62 @@ function navigateToStep(step) {
     });
 
     // Re-evaluate action buttons so controls reflect the current config
-    // (e.g. "Load Groups" enables once a provider URL is entered).
+    // (e.g. "Refresh" enables once a provider URL is entered).
     updateProviderFields();
+
+    // Groups load themselves when the user reaches the channels step with a
+    // configured provider — no explicit "Load Groups" press required. A manual
+    // "Refresh" button remains for re-fetching.
+    if (step === 2) maybeAutoLoadGroups().catch(() => {});
 }
 
 /**
- * Syncs provider-specific fields and every action button (Load Groups,
+ * Loads the provider's channel groups automatically when appropriate.
+ *
+ * Fires when the user is on the Groups step, has a configured provider, and groups
+ * have not been loaded yet (or were invalidated by a provider change). Safe to call
+ * repeatedly: it no-ops while groups are already loaded or a load is in flight.
+ */
+async function maybeAutoLoadGroups() {
+    if (state.currentStep !== 2) return;
+    if (!getters.isProviderConfigured()) return;
+    if (state.groupsLoaded || state.isLoadingGroups) return;
+    await handleLoadGroups();
+}
+
+/**
+ * The subset of config fields that identify the IPTV provider. Changing any of
+ * them invalidates previously loaded groups, so an in-flight groups response
+ * for an old identity must be discarded rather than applied.
+ * @returns {object} A snapshot of the current provider identity.
+ */
+function currentProviderIdentity() {
+    return {
+        type: state.config.type,
+        m3uUrl: state.config.m3uUrl,
+        xtreamUrl: state.config.xtreamUrl,
+        username: state.config.username,
+        password: state.config.password
+    };
+}
+
+/**
+ * Compares two provider identities after an asynchronous load.
+ * @param {object|null} a - The identity captured when the load started.
+ * @param {object} b - The current identity.
+ * @returns {boolean} True if the provider is unchanged.
+ */
+function sameProviderIdentity(a, b) {
+    if (!a || !b) return false;
+    return a.type === b.type &&
+        a.m3uUrl === b.m3uUrl &&
+        a.xtreamUrl === b.xtreamUrl &&
+        a.username === b.username &&
+        a.password === b.password;
+}
+
+/**
+ * Syncs provider-specific fields and every action button (Refresh,
  * Export, Save, Select/Deselect All) with the current configuration.
  * Called on navigation, form input, and after async operations so the
  * wizard never leaves an actionable control stuck disabled.
@@ -309,13 +359,7 @@ function updateProviderFields() {
 
     // Detect if the provider identity has changed (URL, type, username, or password)
     // and invalidate groups if it has
-    const currentIdentity = {
-        type: state.config.type,
-        m3uUrl: state.config.m3uUrl,
-        xtreamUrl: state.config.xtreamUrl,
-        username: state.config.username,
-        password: state.config.password
-    };
+    const currentIdentity = currentProviderIdentity();
 
     if (!state.lastProviderIdentity) {
         state.lastProviderIdentity = currentIdentity;
@@ -405,6 +449,11 @@ async function handleTestConnection() {
 async function handleLoadGroups() {
     if (!getters.isProviderConfigured() || state.isLoadingGroups) return;
 
+    // Capture the provider before the async load. If it changes while the
+    // request is in flight, updateProviderFields invalidates the groups; the
+    // stale response below must be discarded, not applied under the new provider.
+    const requestedIdentity = currentProviderIdentity();
+
     mutations.setLoadingGroups(true);
     elements.loadGroupsBtn.disabled = true;
     elements.loadGroupsBtn.innerHTML = `<svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"></path></svg> Loading...`;
@@ -412,6 +461,14 @@ async function handleLoadGroups() {
     try {
         const config = getters.getConfigForAPI();
         const { categories } = await api.getGroups(config);
+
+        // Provider changed mid-flight: drop this response. updateProviderFields
+        // already cleared the groups, and the user can navigate back to trigger
+        // a fresh auto-load for the new provider.
+        if (!sameProviderIdentity(requestedIdentity, currentProviderIdentity())) {
+            console.log('[Groups] Discarded stale groups load (provider changed while fetching)');
+            return;
+        }
 
         const groups = categories.map(name => ({ name, count: 0 }));
         mutations.setAvailableGroups(groups);
@@ -444,7 +501,7 @@ async function handleLoadGroups() {
     } finally {
         mutations.setLoadingGroups(false);
         updateProviderFields();
-        elements.loadGroupsBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg><span>Load Groups</span>`;
+        elements.loadGroupsBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg><span>Refresh</span>`;
     }
 }
 
