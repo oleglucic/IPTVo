@@ -515,8 +515,16 @@ async function ensureCache(config, configObj) {
         return loadingCache;
     }
 
-    // Already loading (e.g. triggered by a parallel request): wait for it with a generous timeout
+    // Already loading (a background refresh is in flight, or a parallel request
+    // kicked off a cold start). A refresh seeds the loading entry with the last
+    // good snapshot (its channelMap is populated), so serve it immediately — the
+    // client never waits on the re-parse, and the fresh snapshot swaps in when it
+    // completes. Only a true cold start (empty channelMap) blocks, and then on a
+    // bounded poll so a slow first parse can't wedge requests indefinitely.
     if (cached.status === 'loading') {
+        if (cached.channelMap && cached.channelMap.size > 0) {
+            return cached;
+        }
         const pollPromise = (async () => {
             while (userCaches.get(config) && userCaches.get(config).status === 'loading') {
                 await new Promise(r => setTimeout(r, 500));
