@@ -117,10 +117,12 @@ async function fetchWithRetry(url, attempt = 0, redirects = 0) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    // Served under assets.oleglucic.com/iptvo/* — strip the prefix so the routing
-    // below (health/poster/logo/json) sees the addon-relative path, then proxied
-    // to the origin using the stripped path.
-    if (url.pathname === "/iptvo" || url.pathname.startsWith("/iptvo/")) {
+    // Served under assets.oleglucic.com/iptvo/assets/* — strip the prefix so the
+    // routing below (health/poster/logo/json/purge) sees the addon-relative path,
+    // then proxied to the origin using the stripped path.
+    if (url.pathname === "/iptvo/assets" || url.pathname.startsWith("/iptvo/assets/")) {
+      url.pathname = url.pathname.slice("/iptvo/assets".length) || "/";
+    } else if (url.pathname === "/iptvo" || url.pathname.startsWith("/iptvo/")) {
       url.pathname = url.pathname.slice("/iptvo".length) || "/";
     }
     if (url.pathname === "/health") return new Response("ok");
