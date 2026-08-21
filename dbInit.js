@@ -79,14 +79,20 @@ async function initSchema() {
         `CREATE TABLE IF NOT EXISTS epg_programs (
             channel_key VARCHAR(255) NOT NULL, -- canonical cId (e.g. 'global_cnn.us')
             source VARCHAR(50) NOT NULL,       -- 'epgshare01', 'imjhnz', ...
-            title VARCHAR(500) NOT NULL,
+            title VARCHAR(2000) NOT NULL,
             description TEXT,
             start_time BIGINT NOT NULL,
             stop_time BIGINT NOT NULL,
             PRIMARY KEY (channel_key, source, start_time)
         )`,
         `CREATE INDEX IF NOT EXISTS idx_epg_programs_channel_time ON epg_programs(channel_key, start_time)`,
-        `CREATE INDEX IF NOT EXISTS idx_epg_sources_enabled ON epg_sources(enabled)`
+        // Retention prune deletes by time across all channels; the PK and
+        // channel_time index both lead with channel_key so a global time scan
+        // needs its own index.
+        `CREATE INDEX IF NOT EXISTS idx_epg_programs_start ON epg_programs(start_time)`,
+        // Widen title on existing installs (CREATE TABLE IF NOT EXISTS above only
+        // covers fresh ones). No-op when already widened.
+        `ALTER TABLE epg_programs ALTER COLUMN title TYPE VARCHAR(2000)`
     ];
 
     for (const sql of statements) {

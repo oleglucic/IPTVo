@@ -15,24 +15,14 @@
  *    to Postgres (no expiry). Nothing depends on the in-memory hot tier.
  */
 const fs = require('fs');
-const path = require('path');
 const iptvOrgRef = require('./iptvOrgRef');
-const { getPremiumPoster } = require('./imageEngine');
-const { setLogoUrl } = require('./db');
+const { getPremiumPoster, posterPath } = require('./imageEngine');
+const { getLogoUrl, setLogoUrl } = require('./db');
 
-const cacheDir = path.join(__dirname, 'cache');
 const CONCURRENCY = parseInt(process.env.PREWARM_CONCURRENCY || '8', 10);
 const CHUNK_PROGRESS = Math.max(500, Math.floor(CONCURRENCY * 60));
 
 let running = false;
-
-/** Build the deterministic cache path for a channel poster, mirroring imageEngine. */
-function posterPathFor(cId, logoUrl) {
-    const urlHash = logoUrl
-        ? require('crypto').createHash('md5').update(logoUrl).digest('hex').substring(0, 8)
-        : 'none';
-    return path.join(cacheDir, `${cId}_${urlHash}_sq640.png`);
-}
 
 /**
  * Ensures a channel logo is registered and available in the poster cache.
@@ -42,13 +32,17 @@ function posterPathFor(cId, logoUrl) {
  */
 async function warmOne(officialId, logoUrl) {
     if (!logoUrl || typeof logoUrl !== 'string' || !logoUrl.startsWith('http')) {
-        // No logo: still register the channel id so the map is complete.
-        await setLogoUrl(officialId, '', 'iptv-org').catch(() => {});
+        // No logo this cycle. Don't clobber a previously-good URL with an empty
+        // one; register the id as having no logo only when nothing good exists.
+        const existing = await getLogoUrl(officialId).catch(() => null);
+        if (!existing || !existing.url) {
+            await setLogoUrl(officialId, '', 'iptv-org').catch(() => {});
+        }
         return 'skipped';
     }
     // Scope defaults to global; the cId only needs to be unique + safe.
     const cId = `prewarm_${officialId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const cachePath = posterPathFor(cId, logoUrl);
+    const cachePath = posterPath(cId, logoUrl);
 
     if (fs.existsSync(cachePath)) {
         // Already rendered; still refresh the URL map in case it changed.

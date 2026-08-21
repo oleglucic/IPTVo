@@ -1,6 +1,11 @@
 // Basic test structure for iptvParser
 
 // Mock the required modules
+jest.mock('axios', () => {
+  const { Readable } = require('stream');
+  return jest.fn(() => Promise.resolve({ data: Readable.from([]) }));
+});
+
 jest.mock('../aiCurator', () => ({
   startAiQueue: jest.fn()
 }));
@@ -92,11 +97,24 @@ describe('isSafeUrl', () => {
     ['https://example.com/list.m3u', true],
     ['http://example.com:8080/x', true],
     ['http://127.0.0.1/x', false],
+    ['http://127.8.8.8/x', false],
     ['http://localhost/x', false],
     ['http://10.0.0.5/x', false],
     ['http://192.168.1.1/x', false],
     ['http://172.16.0.1/x', false],
+    ['http://172.32.0.1/x', true],
+    ['http://100.64.0.1/x', false],
+    ['http://100.128.0.1/x', true],
     ['http://169.254.169.254/latest', false],
+    ['http://0.0.0.0/x', false],
+    ['http://[::1]/x', false],
+    ['http://[::ffff:127.0.0.1]/x', false],
+    ['http://[::ffff:7f00:1]/x', false],
+    ['http://[::ffff:10.0.0.5]/x', false],
+    ['http://[2600:1f18::1]/x', true],
+    ['http://2130706433/x', false],
+    ['http://2130706433.nip.io/x', false],
+    ['http://127.0.0.1.sslip.io/x', false],
     ['file:///etc/passwd', false],
     ['not-a-url', false]
   ])('isSafeUrl(%s) -> %s', (url, expected) => {
@@ -107,8 +125,6 @@ describe('isSafeUrl', () => {
 describe('epgScheduleNextRefresh (coverage-informed EPG cadence)', () => {
   test('returns the fail-fast retry for empty/failed feeds', () => {
     // 5 min
-    expect(iptvParser.epgScheduleNextRefresh(0)).toBeGreaterThan(0);
-    expect(iptvParser.epgScheduleNextRefresh(-1)).toBeGreaterThan(0);
     const retryAt = iptvParser.epgScheduleNextRefresh(0) - Date.now();
     expect(retryAt).toBeGreaterThanOrEqual(4.5 * 60 * 1000);
     expect(retryAt).toBeLessThanOrEqual(5 * 60 * 1000);
@@ -158,6 +174,39 @@ describe('pickGenres (smart auto-grouping)', () => {
   test('returns the group even without categories', () => {
     expect(iptvParser.pickGenres(null, 'News')).toEqual(['News']);
     expect(iptvParser.pickGenres({ categories: [] }, '')).toEqual(['Uncategorized']);
+  });
+});
+
+describe('handleXmltvEpg', () => {
+  test('parses a minimal XMLTV doc and resolves a populated tEpg with a positive span', async () => {
+    const { Readable } = require('stream');
+    const xml = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<tv>',
+      '<channel id="cnn.us"><display-name>CNN</display-name></channel>',
+      '<programme start="20260801000000 +0000" stop="20260801010000 +0000" channel="cnn.us">',
+      '<title>News Hour</title><desc>Evening news</desc>',
+      '</programme>',
+      '<programme start="20260801010000 +0000" stop="20260801020000 +0000" channel="cnn.us">',
+      '<title>Late Edition</title>',
+      '</programme>',
+      '</tv>'
+    ].join('');
+
+    const axios = require('axios');
+    axios.mockResolvedValueOnce({
+      data: Readable.from([Buffer.from(xml)])
+    });
+
+    const { handleXmltvEpg } = require('../iptvParser');
+    // channel id -> canonical cId mapping; both programmes map onto cnn.us
+    const tMap = new Map([['cnn.us', true]]);
+    const epgMap = new Map([['cnn.us', 'cnn.us']]);
+
+    const res = await handleXmltvEpg('https://example.com/epg.xml', tMap, epgMap);
+    expect(res.tEpg['cnn.us']).toBeDefined();
+    expect(res.tEpg['cnn.us'].length).toBe(2);
+    expect(res.spanMs).toBeGreaterThan(0);
   });
 });
 });

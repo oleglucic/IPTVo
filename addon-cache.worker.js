@@ -70,9 +70,13 @@ export default {
     try { gen = parseInt(await env.ADDON_CACHE_KV.get(KV_GEN_KEY) || '0', 10); } catch {}
 
     // ---- Serve from edge cache first ----
-    const edgeKey = `${url.pathname}?${url.search}|gen=${gen}`;
+    // Cache API keys must be absolute request URLs; carry the generation as a
+    // __gen query param so a re-parse (bumped generation) misses the cache.
     const cache = caches.default;
-    const cachedRes = await cache.match(new Request(edgeKey, { method: 'GET' }));
+    const edgeUrl = new URL(url.toString());
+    edgeUrl.searchParams.set('__gen', gen);
+    const edgeKey = edgeUrl.toString();
+    const cachedRes = await cache.match(edgeKey);
     if (cachedRes) {
       return new Response(cachedRes.body, { status: cachedRes.status, headers: cachedRes.headers, statusText: cachedRes.statusText });
     }
@@ -92,16 +96,14 @@ export default {
       headers.set('CF-Addon-Cache', 'hit');
       const body = await upstream.arrayBuffer();
       // Store in edge cache (cache API) keyed with generation
-      ctx.waitUntil(cache.put(new Request(edgeKey, { method: 'GET' }), new Response(body, { status: upstream.status, headers, statusText: upstream.statusText })));
+      ctx.waitUntil(cache.put(edgeKey, new Response(body, { status: upstream.status, headers, statusText: upstream.statusText })));
       return new Response(body, { status: upstream.status, headers, statusText: upstream.statusText });
     }
 
     return upstream;
   },
 
-  // Allow the backend to bump the generation (invalidate all cached pages) via a
-  // signed/secret-free path — the origin calls /_purge?token=... (protected).
-  async scheduled(event, env, ctx) {
-    // Optional: bump generation on a schedule — not used here.
-  }
+  // Purge/invalidation is handled by the iptvo-assets worker's /_purge route;
+  // this worker reads ADDON_CACHE_KV on each request so a bumped generation
+  // automatically invalidates cached pages. No scheduled handler is needed.
 };

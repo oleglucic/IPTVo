@@ -22,6 +22,7 @@ const MANIFEST_TTL = 24 * 60 * 60;      // 1d
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 2;
+const MAX_REDIRECTS = 5;
 /**
  * Decodes a URL-safe Base64-encoded string as UTF-8 text.
  * @param {string} str - The encoded string.
@@ -89,16 +90,21 @@ function isValidHttp(u) {
  * @param {number} [attempt=0] - The current retry attempt.
  * @returns {Promise<Object>} The fetch result, indicating success, a dead URL, or an error.
  */
-async function fetchWithRetry(url, attempt = 0) {
+async function fetchWithRetry(url, attempt = 0, redirects = 0) {
   const ctl = new AbortController(); const tid = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {
     const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; IPTVo-Assets/1.0)", "Accept": "image/*,*/*;q=0.8" }, signal: ctl.signal, redirect: "manual" });
     clearTimeout(tid);
     // Reject a redirect whose target resolves to a blocked/private host (a logo
-    // URL that bounces to an internal endpoint must not be followed).
+    // URL that bounces to an internal endpoint must not be followed). Safe hops
+    // ARE followed so a redirecting logo host still resolves — with a hop cap.
     if (r.status >= 300 && r.status < 400) {
       const loc = r.headers.get("location");
-      if (loc && !isValidHttp(new URL(loc, url).toString())) return { status: "error", error: "unsafe redirect" };
+      if (!loc) return { status: "error", error: "redirect without location" };
+      const target = new URL(loc, url).toString();
+      if (!isValidHttp(target)) return { status: "error", error: "unsafe redirect" };
+      if (redirects >= MAX_REDIRECTS) return { status: "error", error: "too many redirects" };
+      return fetchWithRetry(target, attempt, redirects + 1);
     }
     if (r.status === 200) { const ct = r.headers.get("content-type") || ""; if (ct.startsWith("image/")) { const b = await r.arrayBuffer(); return { status: "success", buffer: b, ct }; } return { status: "error", error: "non-image" }; }
     if ((r.status === 403 || r.status === 404)) return { status: "dead", code: r.status };
@@ -119,10 +125,23 @@ export default {
     }
     if (url.pathname === "/health") return new Response("ok");
 
+    // PURGE: bump the ASSETS_KV generation so cached catalog pages invalidate on
+    // re-parse. Requires the PURGE_TOKEN secret to match; rejects otherwise.
+    if (url.pathname === "/_purge") {
+      const token = url.searchParams.get("token") || request.headers.get("x-purge-token") || "";
+      if (!env.PURGE_TOKEN || token !== env.PURGE_TOKEN) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (!env.ASSETS_KV) return new Response("KV not bound", { status: 500 });
+      const cur = parseInt((await env.ASSETS_KV.get(KV_GEN_KEY)) || "0", 10);
+      await env.ASSETS_KV.put(KV_GEN_KEY, String(cur + 1));
+      return new Response("purged");
+    }
+
     // POSTER: /poster/<cId>.png — edge-cache from Node origin
     if (url.pathname.startsWith("/poster/")) {
       const cache = caches.default;
-      const key = url.pathname + url.search; // includes ?t= cache-buster
+      const key = url.toString(); // absolute cache key (includes ?t= cache-buster)
       const hit = await cache.match(key);
       if (hit) return hit;
       const res = await fetch(ADDON_ORIGIN + url.pathname + url.search, { redirect: "follow" });
@@ -160,8 +179,13 @@ export default {
     // JSON addon routes (catalog/meta/manifest): edge-cache
     if (request.method === "GET" && !url.pathname.startsWith("/api/") && /\.json$/.test(url.pathname)) {
       const cache = caches.default;
-      const gen = parseInt((await env.ASSETS_KV.get(KV_GEN_KEY)) || "0", 10);
-      const key = `${url.pathname}?${url.search}#${gen}`;
+      let gen = 0;
+      try { gen = parseInt((await env.ASSETS_KV.get(KV_GEN_KEY)) || "0", 10); } catch {}
+      // Cache API keys must be absolute URLs; carry the generation as a __gen
+      // query param (a # fragment is stripped and would not vary the key).
+      const edgeUrl = new URL(url.toString());
+      edgeUrl.searchParams.set("__gen", gen);
+      const key = edgeUrl.toString();
       const hit = await cache.match(key);
       if (hit) return hit;
       const res = await fetch(ADDON_ORIGIN + url.pathname + url.search, { headers: { Accept: "application/json" }, redirect: "follow" });
@@ -182,13 +206,6 @@ export default {
     return fetch(ADDON_ORIGIN + url.pathname + url.search, { redirect: "follow" });
   },
 
-  // purge: bump the generation via KV so cached pages invalidate on re-parse.
-  async request(request, env) {
-    if (new URL(request.url).pathname === "/_purge") {
-      const cur = parseInt((await env.ASSETS_KV.get(KV_GEN_KEY)) || "0", 10);
-      await env.ASSETS_KV.put(KV_GEN_KEY, String(cur + 1));
-      return new Response("purged");
-    }
-    return this.fetch(request, env, null);
-  }
+  // opted out of a scheduled handler — purge is triggered by the origin calling
+  // /_purge?token=... against the fetch handler.
 };

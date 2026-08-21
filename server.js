@@ -5,7 +5,7 @@ const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
 const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry } = require('./iptvParser');
 const { run: runEpgHub, seedSources: seedEpgHub } = require('./epgHub');
-const { loadCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired } = require('./redisCache');
+const { loadCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
@@ -425,16 +425,14 @@ async function getEffectiveEpgMany(chKeys, entry) {
     }
     if (needDb.length) {
         try {
-            // Per-channel DB reads are rare (only a generation change or cold);
-            // keep them bounded so a page never fans out into thousands of queries.
-            const batch = needDb.slice(0, 50);
-            for (const k of batch) {
-                const dbRows = await require('./db').getEpgPrograms(k, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
-                if (dbRows.length) {
-                    const progs = dbRows.map((r) => ({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) }));
-                    if (hasRedis) await saveEpgCache(k, progs, gen);
-                    out.set(k, progs);
-                }
+            // One batched query covers every missing channel (Earlier per-channel
+            // reads were capped at 50, silently dropping EPG for later channels
+            // on a page). Warm each result into the Redis cache.
+            const byKey = await require('./db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
+            for (const k of byKey.keys()) {
+                const progs = byKey.get(k);
+                if (hasRedis) await saveEpgCache(k, progs, gen);
+                out.set(k, progs);
             }
         } catch (e) {
             console.error('[EPG][Central] batched resolution failed:', sanitizeForLog(e.message));
@@ -482,6 +480,7 @@ async function ensureCache(config, configObj) {
     if (!cached) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
+            redisCached._configObj = configObj;
             userCaches.set(config, redisCached);
             // Log iptv-org match rate from cached data
             let iptvOrgMatchCount = 0;
@@ -509,7 +508,8 @@ async function ensureCache(config, configObj) {
             catalogItems: [],
             uniqueGroups: new Set(),
             epgData: {},
-            lastUpdated: Date.now()
+            lastUpdated: Date.now(),
+            _configObj: configObj
         };
         userCaches.set(config, loadingCache);
         return loadingCache;
@@ -1445,11 +1445,14 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     // and persists the logo URL map so the DB is always ready. Runs daily with a
     // startup-delayed first run so boot isn't blocked. Idempotent and
     // concurrency-capped, so re-runs only fill new/updated channels.
+    // Prewarm renders every channel's posters into shared DB/PV state, so in
+    // cluster mode it must run once cluster-wide, not once per worker. The
+    // daily lock (30 min TTL, well above the longest actual run) deduplicates.
     setInterval(() => {
-        prewarm().catch(e => console.error('[Prewarm] Cycle failed:', sanitizeForLog(e.message)));
+        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => console.error('[Prewarm] Cycle failed:', sanitizeForLog(e.message)));
     }, 24 * 60 * 60 * 1000); // daily
     setTimeout(() => {
-        prewarm().catch(e => console.error('[Prewarm] Initial run failed:', sanitizeForLog(e.message)));
+        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => console.error('[Prewarm] Initial run failed:', sanitizeForLog(e.message)));
     }, 15 * 60 * 1000); // 15 min after startup, after logo refresh's first pass
 
     // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
@@ -1482,7 +1485,7 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     // Daily retention prune: epg_history grows without bound otherwise (only a
     // 48h read window is used; keep 7 days).
     setInterval(() => {
-        pruneEpgHistory().catch(e => console.error('[EPG][Prune] cycle failed:', sanitizeForLog(e.message)));
+        withOnceLock('epgHistoryPrune', 30 * 60, pruneEpgHistory).catch(e => console.error('[EPG][Prune] cycle failed:', sanitizeForLog(e.message)));
     }, 24 * 60 * 60 * 1000);
     setTimeout(() => {
         snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', sanitizeForLog(e.message)));
@@ -1492,11 +1495,13 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     // merge + warm the generation-stamped cache on a periodic cadence. A broken
     // source is isolated and only increments its own error_count.
     seedEpgHub().catch(e => console.error('[epgHub] seed failed:', sanitizeForLog(e.message)));
+    // runEpgHub re-fetches + merges the central DB, so it must run once
+    // cluster-wide. 45-min lock exceeds the longest realistic fetch/merge.
     setInterval(() => {
-        runEpgHub().catch(e => console.error('[epgHub] cycle failed:', sanitizeForLog(e.message)));
+        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] cycle failed:', sanitizeForLog(e.message)));
     }, 30 * 60 * 1000);
     setTimeout(() => {
-        runEpgHub().catch(e => console.error('[epgHub] initial run failed:', sanitizeForLog(e.message)));
+        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] initial run failed:', sanitizeForLog(e.message)));
     }, 10 * 60 * 1000); // 10 min after startup, after DB/iptv-org are up
 
     // Proactively refresh any cached config older than MAX_CACHE_AGE, independent of

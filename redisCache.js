@@ -204,6 +204,11 @@ async function listCachedConfigKeys() {
 // rebuilt from the DB. So the cache lives exactly as long as the DB has data.
 const EPG_CACHE_PREFIX = 'nuvio:epg:';
 const EPG_STATE_KEY = 'nuvio:epg:hub_state';
+// Generation is a dedicated integer so bumpGeneration can INCR atomically (a
+// read-modify-write on the JSON state key would lose increments under the
+// multi-process cluster). TTL keeps unused EPG keys from growing unbounded.
+const EPG_GEN_KEY = 'nuvio:epg:hub_generation';
+const EPG_CACHE_TTL_SECONDS = 14 * 24 * 60 * 60;
 
 /**
  * Saves merged EPG programs for a channel with the hub generation used to build them.
@@ -214,7 +219,7 @@ const EPG_STATE_KEY = 'nuvio:epg:hub_state';
 async function saveEpgCache(channelKey, programs, generation) {
     if (!redis) return;
     try {
-        await redis.set(EPG_CACHE_PREFIX + channelKey, JSON.stringify({ generation, programs, savedAt: Date.now() }));
+        await redis.set(EPG_CACHE_PREFIX + channelKey, JSON.stringify({ generation, programs, savedAt: Date.now() }), 'EX', EPG_CACHE_TTL_SECONDS);
     } catch (e) {
         console.error('[Redis Error] saveEpgCache:', e.message);
     }
@@ -232,7 +237,7 @@ async function loadEpgCache(channelKey) {
         if (!raw) return null;
         const obj = JSON.parse(raw);
         return { programs: obj.programs || [], generation: obj.generation || 0, savedAt: obj.savedAt || 0 };
-    } catch (e) {
+    } catch (_) {
         return null;
     }
 }
@@ -268,27 +273,91 @@ async function mgetEpgCaches(channelKeys) {
 async function getHubGeneration() {
     if (!redis) return 0;
     try {
-        const raw = await redis.get(EPG_STATE_KEY);
-        if (!raw) return 0;
-        const obj = JSON.parse(raw);
-        return (obj && obj.generation) || 0;
-    } catch (e) {
+        const n = parseInt(await redis.get(EPG_GEN_KEY) || '0', 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch (_) {
         return 0;
     }
 }
 
 /**
- * Advances the central EPG hub generation after a successful merge cycle.
+ * Advances the central EPG hub generation and records cycle coverage.
+ * INCR is atomic across the multi-process cluster, so concurrent bumps never
+ * lose an increment (the old read-modify-write could), and the returned value
+ * is the generation this cycle is now authoritative at — callers must stamp
+ * their cache writes with it rather than deriving generation + 1 locally.
+ * Coverage and last_update are stored on the state key, which no longer
+ * carries the generation.
  * @param {number} coverage - The coverage value to store with the updated generation.
+ * @return {number} The new generation, or `0` when Redis is unavailable.
  */
 async function bumpGeneration(coverage) {
-    if (!redis) return;
+    if (!redis) return 0;
     try {
-        const raw = await redis.get(EPG_STATE_KEY);
-        const prev = raw ? (JSON.parse(raw).generation || 0) : 0;
-        await redis.set(EPG_STATE_KEY, JSON.stringify({ generation: prev + 1, last_update: Date.now(), coverage: coverage || 0 }));
+        const gen = await redis.incr(EPG_GEN_KEY);
+        await redis.set(EPG_STATE_KEY, JSON.stringify({ last_update: Date.now(), coverage: coverage || 0 }));
+        return gen;
     } catch (e) {
         console.error('[Redis Error] bumpGeneration:', e.message);
+        return 0;
+    }
+}
+
+/**
+ * Records cycle coverage without advancing the hub generation, and returns the
+ * current generation. Used to publish final coverage after cache entries have
+ * already been stamped with the cycle's reserved generation.
+ * @param {number} coverage - The coverage value to store.
+ * @return {Promise<number>} The current generation, or `0` when Redis is unavailable.
+ */
+async function setHubState(coverage) {
+    if (!redis) return 0;
+    try {
+        const gen = parseInt(await redis.get(EPG_GEN_KEY) || '0', 10) || 0;
+        await redis.set(EPG_STATE_KEY, JSON.stringify({ last_update: Date.now(), coverage: coverage || 0 }));
+        return gen;
+    } catch (e) {
+        console.error('[Redis Error] setHubState:', e.message);
+        return 0;
+    }
+}
+
+/**
+ * Runs a DB-global background job exactly once per cadence across the whole
+ * cluster. Every worker registers the same periodic timers, but only the worker
+ * that wins the NX-lock actually executes the job body; the others skip this
+ * cycle. The lock is released (compare-and-delete of our own token) when the job
+ * finishes, and auto-expires via TTL if the holder crashes mid-run, so the next
+ * cadence can always re-acquire. When Redis is unavailable it runs directly,
+ * preserving the single-process behavior (one scheduler, nothing to dedupe).
+ *
+ * Intended for durable, DB-driven jobs (EPG hub merge, prewarm, history prune).
+ * Jobs that read a worker's in-memory userCaches must NOT be gated here — each
+ * worker legitimately processes its own caches.
+ * @param {string} lockName - Stable name identifying the job (lock key suffix).
+ * @param {number} ttlSeconds - Lock TTL; a safety net for crashes, so make it
+ *   comfortably exceed the longest expected job runtime.
+ * @param {Function} fn - The job to run; may return a promise.
+ * @return {Promise<boolean>} `true` if this worker ran the job, `false` if it
+ *   skipped because another worker holds the lock this cycle.
+ */
+async function withOnceLock(lockName, ttlSeconds, fn) {
+    if (!redis) return fn();
+    const key = 'nuvio:lock:' + lockName;
+    const token = crypto.randomUUID();
+    try {
+        const acquired = (await redis.set(key, token, 'EX', ttlSeconds, 'NX')) === 'OK';
+        if (!acquired) return false;
+    } catch (e) {
+        // Lock infra unavailable: don't drop the job, run it unguarded.
+        console.error(`[Lock] ${lockName} acquire failed, running unguarded:`, e.message);
+        return fn();
+    }
+    try {
+        return await fn();
+    } finally {
+        const lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+        try { await redis.eval(lua, 1, key, token); } catch (e) { console.error(`[Lock] ${lockName} release failed:`, e.message); }
     }
 }
 
@@ -345,7 +414,7 @@ async function sessionPruneExpired() {
     try {
         let cursor = '0';
         do {
-            const [next, keys] = await redis.scan(cursor, { match: SESSION_PREFIX + '*', count: 200 });
+            const [next, keys] = await redis.scan(cursor, 'MATCH', SESSION_PREFIX + '*', 'COUNT', 200);
             cursor = next;
             if (keys && keys.length) {
                 const raws = await redis.mget(keys);
@@ -377,6 +446,8 @@ module.exports = {
     mgetEpgCaches,
     getHubGeneration,
     bumpGeneration,
+    setHubState,
+    withOnceLock,
     sessionGet,
     sessionSet,
     sessionDelete,

@@ -270,7 +270,7 @@ async function getEpgPrograms(channelKey, from, to) {
         const { rows } = await pool.query(
             `SELECT DISTINCT ON (start_time) title, description, start_time, stop_time
              FROM epg_programs
-             WHERE channel_key = $1 AND start_time >= $2 AND start_time <= $3
+             WHERE channel_key = $1 AND start_time <= $3 AND stop_time >= $2
              ORDER BY start_time ASC`,
             [channelKey, from || 0, to || Date.now() + 14 * 24 * 60 * 60 * 1000]
         );
@@ -278,6 +278,35 @@ async function getEpgPrograms(channelKey, from, to) {
     } catch (e) {
         console.error('[DB Error] getEpgPrograms:', e.message);
         return [];
+    }
+}
+
+/**
+ * Fetches central EPG programs for many channels in one query, grouped by channel.
+ * @param {string[]} channelKeys - The channel keys to fetch programs for.
+ * @param {number} from - The start of the time range as an epoch timestamp in milliseconds.
+ * @param {number} to - The end of the time range as an epoch timestamp in milliseconds.
+ * @return {Map<string, Array<Object>>} A map of channel key to its ordered programs (program selection per start time).
+ */
+async function getEpgProgramsMany(channelKeys, from, to) {
+    const out = new Map();
+    if (!pool || !channelKeys || channelKeys.length === 0) return out;
+    try {
+        const { rows } = await pool.query(
+            `SELECT DISTINCT ON (channel_key, start_time) channel_key, title, description, start_time, stop_time
+             FROM epg_programs
+             WHERE channel_key = ANY($1) AND start_time <= $3 AND stop_time >= $2
+             ORDER BY channel_key, start_time ASC`,
+            [channelKeys, from || 0, to || Date.now() + 14 * 24 * 60 * 60 * 1000]
+        );
+        for (const r of rows) {
+            if (!out.has(r.channel_key)) out.set(r.channel_key, []);
+            out.get(r.channel_key).push({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) });
+        }
+        return out;
+    } catch (e) {
+        console.error('[DB Error] getEpgProgramsMany:', e.message);
+        return out;
     }
 }
 
@@ -317,11 +346,13 @@ async function setEpgSourceStatus(source, { last_fetch, last_success, error_coun
 async function upsertEpgSource(src) {
     if (!pool) return;
     try {
+        // On conflict, refresh metadata but preserve the stored `enabled` flag so
+        // a source a user disabled in the registry is not re-enabled by seeding.
         await pool.query(
             `INSERT INTO epg_sources (source, enabled, kind, url, region, notes)
              VALUES ($1,$2,$3,$4,$5,$6)
              ON CONFLICT (source) DO UPDATE SET
-                enabled = EXCLUDED.enabled, kind = EXCLUDED.kind,
+                kind = EXCLUDED.kind,
                 url = EXCLUDED.url, region = EXCLUDED.region, notes = EXCLUDED.notes`,
             [src.source, src.enabled !== false, src.kind || 'general', src.url || '', src.region || 'global', src.notes || null]
         );
@@ -508,6 +539,7 @@ module.exports = {
     // Central multi-source EPG (epg_programs / epg_sources)
     saveEpgPrograms,
     getEpgPrograms,
+    getEpgProgramsMany,
     listEpgSources,
     setEpgSourceStatus,
     upsertEpgSource,

@@ -1,4 +1,21 @@
 // Unit tests for epgHub (central multi-source EPG).
+// Mock db/redisCache before importing epgHub so requiring it never creates real
+// database or Redis clients (the module top-levels a connection pool).
+jest.mock('../db', () => ({
+  saveEpgPrograms: jest.fn(),
+  listEpgSources: jest.fn(async () => []),
+  setEpgSourceStatus: jest.fn(),
+  upsertEpgSource: jest.fn(),
+  pruneEpgPrograms: jest.fn(async () => 0)
+}));
+jest.mock('../redisCache', () => ({
+  saveEpgCache: jest.fn(),
+  getHubGeneration: jest.fn(async () => 0),
+  bumpGeneration: jest.fn(async () => 1),
+  setHubState: jest.fn(async () => 1),
+  hasRedis: false
+}));
+
 const { normalizeSourceId, mergeForChannel } = require('../epgHub');
 
 describe('epgHub normalizeSourceId', () => {
@@ -37,7 +54,10 @@ describe('epgHub mergeForChannel', () => {
 
   test('prefers the source with more programmes first', () => {
     const candidates = [
-      { source: 'few', programs: [{ title: 'A', desc: '', start: 1, stop: 2 }] },
+      { source: 'few', programs: [
+        { title: 'A', desc: '', start: 1, stop: 2 },
+        { title: 'D', desc: '', start: 7, stop: 8 }
+      ] },
       { source: 'many', programs: [
         { title: 'A', desc: '', start: 1, stop: 2 },
         { title: 'B', desc: '', start: 3, stop: 4 },
@@ -45,7 +65,9 @@ describe('epgHub mergeForChannel', () => {
       ] }
     ];
     const merged = mergeForChannel(candidates);
-    expect(merged.length).toBe(3);
+    // 'many' (3 programmes) is drained first, so B/C appear before 'few''s D;
+    // A is a cross-source duplicate and is only emitted once (the 'many' copy).
+    expect(merged.map(p => p.title)).toEqual(['A', 'B', 'C', 'D']);
   });
 
   test('returns [] for empty input', () => {

@@ -35,6 +35,10 @@ const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 // assets worker (/logo) on assets.oleglucic.com when ASSET_BASE_URL is set.
 const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
 const LOGO_PROXY_URL = process.env.LOGO_PROXY_URL || (ASSET_BASE_URL ? ASSET_BASE_URL.replace(/\/$/, '') + '/logo' : 'https://logo-proxy.your-worker.workers.dev/logo');
+// Whether a proxy was actually configured (env or derived from ASSET_BASE_URL),
+// as opposed to the placeholder default. Direct fetch is allowed whenever no
+// proxy config was provided — never gated on matching the placeholder string.
+const PROXY_CONFIGURED = Boolean(process.env.LOGO_PROXY_URL || process.env.ASSET_BASE_URL);
 
 /**
  * Determines whether a buffer begins with SVG markup.
@@ -238,7 +242,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
     }
 
     // 5. Final fallback: direct fetch (if Worker proxy not configured)
-    if (LOGO_PROXY_URL === 'https://logo-proxy.your-worker.workers.dev/logo') {
+    if (!PROXY_CONFIGURED) {
         try {
             const { buffer, contentType } = await fetchLogoDirect(logoUrl);
             sourceLog.push('direct');
@@ -367,6 +371,20 @@ function evictOldestIfOverCap() {
  * @returns {string} The path to the cached poster.
  * @throws {Error} If the channel identifier is invalid or the cache path is unsafe.
  */
+/**
+ * Builds the deterministic on-disk path for a channel poster. Single source of
+ * truth for the filename (md5 url-hash + size stamp), shared with the prewarm
+ * job so both agree on "already rendered" and never drift if POSTER_SIZE changes.
+ * @param {string} cId - The channel identifier (validated by callers).
+ * @param {string} [primaryUrl] - The primary logo URL used to derive the url-hash.
+ * @return {string} The cache file path on disk.
+ */
+function posterPath(cId, primaryUrl) {
+    const urlHash = primaryUrl ? crypto.createHash('md5').update(primaryUrl).digest('hex').substring(0, 8) : 'none';
+    const sizeTag = `sq${POSTER_SIZE}`;
+    return path.join(cacheDir, `${cId}_${urlHash}_${sizeTag}.png`);
+}
+
 async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // Support fallback URL as optional 4th parameter (for parser to pass playlist logo)
     // For backward compatibility with server.js call, we check if logoUrl is an object
@@ -386,13 +404,10 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
         throw new Error("Invalid channel ID");
     }
 
-    const urlHash = primaryUrl ? crypto.createHash('md5').update(primaryUrl).digest('hex').substring(0, 8) : 'none';
-    // Size/resolution stamp in the filename so a poster-cache format change
-    // (e.g. 600x900 vertical -> ${POSTER_SIZE} square) regenerates instead of
-    // serving a stale-sized file. Old un-suffixed files are left for the cap
-    // to evict gradually.
-    const sizeTag = `sq${POSTER_SIZE}`;
-    const cachePath = path.join(cacheDir, `${cId}_${urlHash}_${sizeTag}.png`);
+    // Size/resolution stamp (sq640) lives in posterPath() so the prewarm job and
+    // the request path agree; a format change regenerates instead of serving a
+    // stale-sized file, and old un-suffixed files are left for the cap to evict.
+    const cachePath = posterPath(cId, primaryUrl);
 
     // Defense-in-depth: validate resolved path stays within cache directory
     const resolvedPath = path.resolve(cachePath);
@@ -406,7 +421,7 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // the cached file while the URL is inside its (short, expiring) dead-URL
     // retry window; once that expires the next request re-fetches and the
     // success overwrites it (and clears the dead-URL mark).
-    if (fs.existsSync(cachePath) && !isDeadUrl(primaryUrl)) return cachePath;
+    if (isDeadUrl(primaryUrl) && fs.existsSync(cachePath)) return cachePath;
 
     const inFlightKey = cachePath;
     if (inFlight.has(inFlightKey)) {
@@ -423,7 +438,6 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     return promise;
 }
 
-// Task #42 retry pass: the logo refresh loop re-attempts URLs whose last fetch
 /**
  * Determines whether a logo URL is within its retry window after a failed fetch.
  * @param {string} url - The logo URL to check.
@@ -433,4 +447,4 @@ function isLogoMissPending(url) {
     return isDeadUrl(url);
 }
 
-module.exports = { getPremiumPoster, isLogoMissPending, markDeadUrl };
+module.exports = { getPremiumPoster, isLogoMissPending, markDeadUrl, posterPath };

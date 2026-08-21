@@ -184,5 +184,6 @@ wrangler deploy -c wrangler.iptvo-assets.toml
    (`iptvo-assets`) or the build fails (Workers name requirement).
 5. Push a commit to `main` → Workers Builds runs the deploy command.
 
-The `nuvio-iptv` worker is already connected this way (201 auto-builds on
-every branch push, surfaced as the "Workers Builds: nuvio-iptv" check).
+The `nuvio-iptv` worker is already connected this way and automatically
+builds on every branch push, surfaced as the "Workers Builds: nuvio-iptv"
+check.

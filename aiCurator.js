@@ -73,7 +73,10 @@ Input: ${JSON.stringify(batchItems)}`;
         }
 
         try {
-            return JSON.parse(content);
+            const parsed = JSON.parse(content);
+            // The AI must return a JSON object mapping names → base names; arrays
+            // or null would downstream be treated as (garbage) name entries.
+            return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
         } catch {
             console.error(`[AI Curator] response was not valid JSON. Raw snippet: ${sanitizeForLog(content)}`);
             return {};

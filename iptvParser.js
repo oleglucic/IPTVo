@@ -1,4 +1,5 @@
 const axios = require('axios');
+const net = require('net');
 const readline = require('readline');
 const zlib = require('zlib');
 const sax = require('sax');
@@ -38,6 +39,103 @@ function pickGenres(iptvOrgMatch, group) {
 }
 
 /**
+ * Fills only the channels `tEpg` does not already cover with entries from
+ * `add`. The user's own EPG feed takes precedence, so enrichment (iptv-org
+ * guides) must never overwrite a channel the user already mapped.
+ * @param {Object} tEpg - The base EPG map (user feed).
+ * @param {Object} add - The enrichment EPG map to fill in gaps from.
+ * @return {Object} The base map with only-missing keys copied from `add`.
+ */
+function mergeEpgFill(tEpg, add) {
+    for (const [k, v] of Object.entries(add || {})) {
+        if (!(k in tEpg)) tEpg[k] = v;
+    }
+    return tEpg;
+}
+
+/**
+ * Validates a URL to prevent SSRF attacks.
+ * Blocks private/internal IPs, localhost, and requires http/https scheme.
+ * @param {string} url - The URL to validate
+ * @returns {boolean} - True if URL is safe to fetch
+ */
+/**
+ * Tests whether an IPv6 literal (bare or bracketed) embeds an IPv4 address -
+ * either the standard IPv4-mapped form (::ffff:a.b.c.d) or the IPv4-compatible
+ * IPv6 form (::a.b.c.d). Both alias the embedded IPv4 on a dual-stack host and
+ * must be treated as that address for SSRF checks. Node normalizes these to
+ * hex groups (e.g. ::ffff:7f00:1), so decode them big-endian (32-bit) exactly
+ * as the Cloudflare asset worker's isPrivateHost does. Returns null when the
+ * form is invalid or the decoded address is not IPv4.
+ */
+function ipv4FromIpv6Embedded(h) {
+    let m = h.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$|^::ffff:([0-9a-f]{1,4})\.([0-9a-f]{1,4})\.([0-9a-f]{1,4})\.([0-9a-f]{1,4})$|^::ffff:(\d+)\.(\d+)\.(\d+)\.(\d+)$/i);
+    if (!m) return null;
+    const parts = [];
+    if (m[1] !== undefined && m[2] !== undefined) {
+        if (m[1] > 'ffff' || m[2] > 'ffff') return null;
+        parts.push(parseInt(m[1], 16) >> 8, parseInt(m[1], 16) & 255, parseInt(m[2], 16) >> 8, parseInt(m[2], 16) & 255);
+        return parts.join('.');
+    }
+    if (m[3] !== undefined) return [parseInt(m[3], 16), parseInt(m[4], 16), parseInt(m[5], 16), parseInt(m[6], 16)].join('.');
+    return [parseInt(m[7]), parseInt(m[8]), parseInt(m[9]), parseInt(m[10])].join('.');
+}
+
+/**
+ * Converts an IPv4 address string to its two-octet /16 prefix (first two octets
+ * as a 16-bit unsigned integer). Used for numeric range checks; a malformed
+ * address yields null.
+ * @param {string} ip - The IPv4 address.
+ * @returns {?number} The /16 prefix, or `null` if not a valid dotted-quad IPv4.
+ */
+function prefixToIpv4(ip) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+    if (!m) return null;
+    const o = m.slice(1).map(Number);
+    if (o.some(n => n > 255)) return null;
+    return (o[0] << 8) | o[1];
+}
+
+/**
+ * Returns whether an IPv4 dotted-quad address falls in a private, loopback,
+ * link-local, metadata, CGNAT (100.64.0.0/10), or unspecified (0.0.0.0) range.
+ * @param {string} ip - The IPv4 address.
+ * @returns {boolean} `true` when the address is not a safe public address.
+ */
+function isPrivateIpv4(ip) {
+    const p = prefixToIpv4(ip);
+    if (p === null) return true;   // malformed — do not allow
+    const a = Number(ip.split('.')[0]);
+    // 0.0.0.0/8 (unspecified), 10.0.0.0/8, 127.0.0.0/8 (loopback)
+    if (a === 0 || a === 10 || a === 127) return true;
+    // 100.64.0.0/10 (CGNAT / carrier-grade NAT)
+    if (a === 100 && (Number(ip.split('.')[1]) & 0xc0) === 0x40) return true;
+    // 169.254.0.0/16 (link-local incl. metadata 169.254.169.254)
+    if (p === 43518) return true;   // 169.254
+    // 172.16.0.0/12
+    if (a === 172 && Number(ip.split('.')[1]) >= 16 && Number(ip.split('.')[1]) <= 31) return true;
+    // 192.168.0.0/16
+    if (p === 49320) return true;   // 192.168
+    return false;
+}
+
+/**
+ * Returns whether an IPv6 address is a loopback, ULA, link-local, or an
+ * IPv4-mapped/compatible form whose embedded IPv4 is private.
+ * @param {string} hostname - The IPv6 literal (may include surrounding brackets).
+ * @returns {boolean} `true` when the address is not a safe public address.
+ */
+function isPrivateIpv6(hostname) {
+    let h = hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+    const v4 = ipv4FromIpv6Embedded(h);
+    if (v4) return isPrivateIpv4(v4);
+    if (h === '::' || h === '::1') return true;   // unspecified / loopback
+    if (h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true;   // fe80::/10 link-local
+    if (h.startsWith('fc') || h.startsWith('fd')) return true;   // fc00::/7 ULA
+    return false;
+}
+
+/**
  * Validates a URL to prevent SSRF attacks.
  * Blocks private/internal IPs, localhost, and requires http/https scheme.
  * @param {string} url - The URL to validate
@@ -57,37 +155,35 @@ function isSafeUrl(url) {
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
 
     const hostname = parsed.hostname.toLowerCase();
-    // Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1) to the embedded IPv4 so the
-    // private-range/loopback checks below can't be bypassed (Node's URL parser
-    // returns the hex form, e.g. ::ffff:7f00:1 — decode big-endian like the
-    // Cloudflare asset worker's isPrivateHost).
-    let h = hostname.replace(/^\[/, '').replace(/\]$/, '');
-    if (h.startsWith('::ffff:')) {
-        const n = parseInt(h.slice(7).split(':').map(s => s.padStart(4, '0')).join('').padStart(8, '0'), 16);
-        h = String((n >> 24) & 255) + '.' + ((n >> 16) & 255) + '.' + ((n >> 8) & 255) + '.' + (n & 255);
-    }
+    // Block DNS shortcut forms before any IP test: a shortcut like 2130706433.nip.io
+    // must not resolve to 127.0.0.1 on the caller's DNS.
+    if (!hostname.includes('.') && !hostname.includes(':')) return false;
 
-    // Block localhost and loopback
-    if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
+    const h = hostname.replace(/^\[/, '').replace(/\]$/, '');
 
-    // Block private IPv4 ranges
-    // 10.0.0.0/8
-    if (/^10\./.test(h)) return false;
-    // 172.16.0.0/12
-    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return false;
-    // 192.168.0.0/16
-    if (/^192\.168\./.test(h)) return false;
-    // 169.254.0.0/16 (link-local)
-    if (/^169\.254\./.test(h)) return false;
+    // IPv4-mapped/compatible IPv6 (::ffff:a.b.c.d or ::a.b.c.d) aliases the
+    // embedded IPv4 and must be checked as that address; check before net.isIP
+    // because Node returns these in hex group form (e.g. ::ffff:7f00:1).
+    const v4 = ipv4FromIpv6Embedded(h);
+    if (v4) return !isPrivateIpv4(v4);
 
-    // Block private IPv6 ranges
-    // fc00::/7 (ULA)
-    if (/^fc[0-9a-f]{2}:/i.test(h) || /^fd[0-9a-f]{2}:/i.test(h)) return false;
-    // fe80::/10 (link-local)
-    if (/^fe8[0-9a-f]:/i.test(h) || /^fe9[0-9a-f]:/i.test(h) || /^fea[0-9a-f]:/i.test(h) || /^feb[0-9a-f]:/i.test(h)) return false;
+    // Prefer net.isIP: it distinguishes IPv4/6 literals from hostnames and, on
+    // the current Node runtime, also canonicalizes decimal/octal/hex/compressed
+    // IPv4 forms to dotted-quad, closing alternative-encoding bypasses.
+    const kind = net.isIP(h);
+    if (kind === 4) return !isPrivateIpv4(h);
+    if (kind === 6) return !isPrivateIpv6(h);
 
-    // Block metadata services (cloud provider internal endpoints)
-    if (h === '169.254.169.254' || h === '[fd00:ec2::254]') return false;
+    if (h === 'localhost' || h === '::1') return false;
+    if (h === '0.0.0.0') return false;
+    // metadata DNS shortcut names (AWS/GCP/Azure local endpoints)
+    if (h === 'metadata.google.internal' || h === 'metadata') return false;
+    if (h === '169.254.169.254' || h === 'fd00:ec2::254') return false;
+    // Wildcard DNS services that resolve an IP literal embedded in the hostname
+    // (e.g. 2130706433.nip.io -> 127.0.0.1) — a DNS-based SSRF bypass that a
+    // syntactic numeric-first-label check would over-block (breaks legit domains
+    // like 123.com), so block only the known resolvers.
+    if (/\.(nip\.io|sslip\.io|xip\.io|nip\.io\.$)$/i.test(h)) return false;
 
     return true;
 }
@@ -151,11 +247,25 @@ const MAX_CONCURRENT_PARSES = parseInt(process.env.MAX_CONCURRENT_PARSES || '4',
 /**
  * Waits for an available parsing slot and reserves it.
  */
-async function semaphoreSlot() {
-    while (activeParses >= MAX_CONCURRENT_PARSES) {
-        await new Promise(r => setTimeout(r, 200));
+// Waiters queueing for a parse slot. A pending-resolver queue avoids the 200ms
+// polling loop: each caller enqueues while the concurrency cap is reached, and
+// the next waiter is resolved (and reserves its slot) the moment one frees up.
+const parseWaiters = [];
+
+function semaphoreSlot() {
+    if (activeParses < MAX_CONCURRENT_PARSES) {
+        activeParses++;
+        return Promise.resolve();
     }
-    activeParses++;
+    return new Promise((resolve) => {
+        parseWaiters.push(() => { activeParses++; resolve(); });
+    });
+}
+
+function releaseParseSlot() {
+    activeParses--;
+    const next = parseWaiters.shift();
+    if (next) next();
 }
 
 /**
@@ -173,7 +283,7 @@ async function parseWithCoalescing(configKey, configObj, parseFn) {
         try {
             return await parseFn(configKey, configObj);
         } finally {
-            activeParses--;
+            releaseParseSlot();
         }
     })();
     parseInFlight.set(configKey, promise);
@@ -310,8 +420,11 @@ async function streamFetchIPTV(configKey, configObj) {
 
     const parseFn = configObj && configObj.type === 'xtream' ? parseXtreamData : parseM3uData;
     const result = await parseWithCoalescing(configKey, configObj, parseFn);
-    // Full parse succeeded → clear this config's failure backoff.
-    backoffAttempts.delete(configKey);
+    // The parsers swallow their own errors, so a normal return does not prove
+    // success. Only clear the failure backoff when the resulting snapshot is
+    // 'ready' — otherwise a down provider keeps escalating its retry window.
+    const after = userCaches.get(configKey);
+    if (after && after.status === 'ready') backoffAttempts.delete(configKey);
     return result;
 }
 
@@ -508,7 +621,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             const enrich = await fetchIptvOrgEpg(configObj, epgMap);
             if (enrich && enrich.tEpg) {
                 epgCoverageMs = Math.max(epgCoverageMs, enrich.spanMs);
-                tEpg = Object.assign(tEpg, enrich.tEpg);
+                tEpg = mergeEpgFill(tEpg, enrich.tEpg);
             }
         }
         const epgLastUpdated = Date.now();
@@ -755,7 +868,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             const enrich = await fetchIptvOrgEpg(configObj, epgMap);
             if (enrich && enrich.tEpg) {
                 epgCoverageMs = Math.max(epgCoverageMs, enrich.spanMs);
-                tEpg = Object.assign(tEpg, enrich.tEpg);
+                tEpg = mergeEpgFill(tEpg, enrich.tEpg);
             }
         }
         const epgLastUpdated = Date.now();
@@ -832,7 +945,17 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
             revalidateResponseUrl(epgRes, epgRes.data);
             let rawStream = epgRes.data;
             
-            const firstChunk = await new Promise((resChunk) => { rawStream.once('data', (chunk) => resChunk(chunk)); });
+            // Settle the first-chunk wait on data, an immediate end (empty body),
+            // or a stream error — otherwise an empty/closed response hangs forever.
+            const firstChunk = await new Promise((resChunk) => {
+                const cleanup = () => { rawStream.removeListener('data', onData); rawStream.removeListener('end', onEnd); rawStream.removeListener('error', onErr); };
+                const onData = (c) => { cleanup(); resChunk(c); };
+                const onEnd = () => { cleanup(); resChunk(null); };
+                const onErr = () => { cleanup(); resChunk(null); };
+                rawStream.once('data', onData);
+                rawStream.once('end', onEnd);
+                rawStream.once('error', onErr);
+            });
             let finalizedStream;
             if (firstChunk && firstChunk[0] === 0x1f && firstChunk[1] === 0x8b) {
                 const combined = Readable.from((async function* () { yield firstChunk; for await (const chunk of rawStream) { yield chunk; } })());
@@ -886,21 +1009,23 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
             });
 
             // Coverage span over all parsed programmes — drives the EPG refresh
-            // cadence (short feeds refresh more often, long feeds less so).
-            let minStart = Infinity, maxStop = 0, progs = 0;
-            for (const list of Object.values(tEpg)) {
-                for (const p of list) {
-                    progs++;
-                    if (p.start < minStart) minStart = p.start;
-                    if (p.stop > maxStop) maxStop = p.stop;
+            // cadence (short feeds refresh more often, long feeds less so). The
+            // span can only be computed once the stream has fully parsed, so
+            // resolve inside the sax 'end' handler — never before the pipe.
+            saxStream.on('end', () => {
+                let minStart = Infinity, maxStop = 0, progs = 0;
+                for (const list of Object.values(tEpg)) {
+                    for (const p of list) {
+                        progs++;
+                        if (p.start < minStart) minStart = p.start;
+                        if (p.stop > maxStop) maxStop = p.stop;
+                    }
                 }
-            }
-            const spanMs = progs > 0 ? (maxStop - minStart) : 0;
-            resolve({ tEpg, spanMs });
-
+                resolve({ tEpg, spanMs: progs > 0 ? (maxStop - minStart) : 0 });
+            });
             saxStream.on('error', (err) => {
                 console.error('[EPG SAX Error]', sanitizeForLog(err.message));
-resolve({ tEpg, spanMs: 0 });
+                resolve({ tEpg, spanMs: 0 });
             });
 
             finalizedStream.pipe(saxStream);
@@ -921,6 +1046,7 @@ resolve({ tEpg, spanMs: 0 });
 let iptvOrgGuideCache = null; // { byChannel: Map<officialId, [{url}]>, fetchedAt }
 const IPTVORG_GUIDE_TTL = 24 * 60 * 60 * 1000;
 const IPTVORG_GUIDE_URL = 'https://iptv-org.github.io/api/guides.json';
+const IPTVORG_FETCH_CONCURRENCY = 4;
 
 /**
  * Loads the iptv-org guide metadata indexed by channel identifier.
@@ -962,26 +1088,51 @@ async function fetchIptvOrgEpg(configObj, epgMap) {
     const guideByChannel = await loadIptvOrgGuideMap();
     if (!guideByChannel) return null;
 
-    const tEpg = {};
-    let maxSpan = 0;
-    // Filter to matched channels (their officialId is registered in epgMap).
+    // Group channels that share a guide URL so each unique XML is fetched once,
+    // then bound concurrency across distinct sites. Channels are small-enough
+    // subsets of one feed that a per-channel fetch would re-download the same
+    // XML N times.
+    const perUrl = new Map(); // url -> [{ officialId, cId }]
     for (const [officialId, cId] of epgMap.entries()) {
         const guides = guideByChannel.get(String(officialId).toLowerCase());
         if (!guides || guides.length === 0) continue;
         const url = guides[0].urls[0];
         if (!url) continue;
-        try {
-            // Map this channel's programmes onto the canonical channel id.
-            const fakeMap = new Map([[officialId, cId]]);
-            const res = await handleXmltvEpg(url, new Map(), fakeMap);
-            const progs = res && res.tEpg ? res.tEpg[cId] : null;
-            if (progs && progs.length) {
-                tEpg[cId] = progs;
-                if (res.spanMs > maxSpan) maxSpan = res.spanMs;
-            }
-        } catch (e) {
-            // A single guide failure must not break the whole enrichment.
+        let bucket = perUrl.get(url);
+        if (!bucket) { bucket = []; perUrl.set(url, bucket); }
+        bucket.push({ officialId, cId });
+    }
+
+    const tEpg = {};
+    let maxSpan = 0;
+    let active = 0;
+    let cursor = 0;
+    const byUrl = Array.from(perUrl.entries());
+    while (cursor < byUrl.length || active > 0) {
+        while (active < IPTVORG_FETCH_CONCURRENCY && cursor < byUrl.length) {
+            const [url, bucket] = byUrl[cursor++];
+            active++;
+            (async () => {
+                try {
+                    // Map every channel sharing this URL onto its canonical id.
+                    const fakeMap = new Map(bucket.map(b => [b.officialId, b.cId]));
+                    const res = await handleXmltvEpg(url, new Map(), fakeMap);
+                    if (!res || !res.tEpg) return;
+                    for (const b of bucket) {
+                        const progs = res.tEpg[b.cId];
+                        if (progs && progs.length) {
+                            tEpg[b.cId] = progs;
+                            if (res.spanMs > maxSpan) maxSpan = res.spanMs;
+                        }
+                    }
+                } catch (_e) {
+                    // A single guide failure must not break the whole enrichment.
+                } finally {
+                    active--;
+                }
+            })();
         }
+        if (active >= IPTVORG_FETCH_CONCURRENCY) await new Promise(r => setTimeout(r, 25));
     }
     if (!Object.keys(tEpg).length) return { tEpg, spanMs: 0 };
     return { tEpg, spanMs: maxSpan };
@@ -1016,10 +1167,10 @@ async function refreshEpgForEntry(entry, configObj) {
     if (configObj && configObj.iptvOrg) {
         const enrich = await fetchIptvOrgEpg(configObj, epgMap);
         if (enrich && enrich.tEpg) {
-            // merge: user feed wins on conflict (starts with user, add iptv-org)
-            for (const [chId, progs] of Object.entries(tEpg)) if (!tEpg[chId]) tEpg[chId] = progs;
+            // Fill-only merge: the user feed wins on conflict (never overwrite a
+            // channel the user already mapped with an iptv-org guide).
+            tEpg = mergeEpgFill(tEpg, enrich.tEpg);
             span = span || (enrich.spanMs || 0);
-            tEpg = Object.assign(tEpg, enrich.tEpg);
         }
     }
     if (span > 0) {
@@ -1155,7 +1306,7 @@ async function backgroundLogoRefresh() {
                     const { getPremiumPoster } = require('./imageEngine');
                     const fallbackLogo = meta.iptvOrgLogo ? meta.logo : null;
                     await getPremiumPoster(cId, primary, fallbackLogo, meta.name);
-                    markLogoOk(primary);
+                    markLogoOk(primary, true); // success: clear the dead-URL marker
                     refreshed++;
                     await setLogoUrl(cId, meta.logo, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
                     await saveLogoUrl(cId, meta.logo, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
@@ -1204,4 +1355,4 @@ async function queueLogoPrefetch(missingLogos) {
     }
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, CACHE_BACKOFF_MIN, CACHE_BACKOFF_MAX, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres, refreshEpgForEntry, epgScheduleNextRefresh };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, CACHE_BACKOFF_MIN, CACHE_BACKOFF_MAX, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres, refreshEpgForEntry, epgScheduleNextRefresh, handleXmltvEpg };

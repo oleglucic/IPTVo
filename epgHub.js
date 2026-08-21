@@ -21,10 +21,10 @@ const {
     saveEpgPrograms, listEpgSources, setEpgSourceStatus, upsertEpgSource, pruneEpgPrograms
 } = require('./db');
 const {
-    saveEpgCache, getHubGeneration, bumpGeneration
+    saveEpgCache, getHubGeneration, bumpGeneration, setHubState
 } = require('./redisCache');
 
-const CONCURRENCY = parseInt(process.env.EPG_HUB_CONCURRENCY || '3', 10);
+const CONCURRENCY = Math.min(Math.max(parseInt(process.env.EPG_HUB_CONCURRENCY || '3', 10) || 3, 1), 16);
 
 let running = false;
 
@@ -33,16 +33,39 @@ let running = false;
 const DEFAULT_SOURCES = [
     { source: 'epgshare01-all', kind: 'aggregate', url: 'https://epgshare01.online/epgshare01/epg_ripper_ALL_SOURCES1.xml.gz', region: 'global', notes: 'epgshare01 aggregate (192MB, iptv-org-style ids)' },
     { source: 'epgshare01-es', kind: 'country', url: 'https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz', region: 'es', notes: 'Spain' },
-    { source: 'epgshare01-us', kind: 'country', url: 'https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz', region: 'uk', notes: 'UK' },
+    { source: 'epgshare01-us', kind: 'country', url: 'https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz', region: 'us', notes: 'USA' },
     { source: 'imjhnz', kind: 'aggregate', url: 'https://i.mjh.nz/all/epg.xml', region: 'global', notes: 'i.mjh.nz broad aggregate' },
-    { source: 'globetvapp', kind: 'general', url: 'https://raw.githubusercontent.com/globetvapp/epg/main/README.md', region: 'global', notes: 'country-organized GitHub EPG (raw files)' },
+    { source: 'globetvapp', kind: 'country', url: 'https://raw.githubusercontent.com/globetvapp/epg/main/Usa/usa1.xml.gz', region: 'us', notes: 'globetvapp USA guide (GitHub raw)' },
 ];
 
-/** Seed the epg_sources registry once (idempotent upsert). */
+/** Seed the epg_sources registry once (idempotent upsert); isolates per-source failures. */
 async function seedSources() {
     for (const s of DEFAULT_SOURCES) {
-        await upsertEpgSource(s);
+        try {
+            await upsertEpgSource(s);
+        } catch (e) {
+            console.error(`[epgHub] failed to seed source ${s.source}:`, sanitizeForLog(e.message));
+        }
     }
+}
+
+function sanitizeForLog(msg) {
+    return typeof msg === 'string' ? msg.replace(/:\/\/[^@\s]*@/, '://[REDACTED]@') : msg;
+}
+
+/**
+ * Reads the first chunk of a stream, settling on EOF/error (an empty-body feed
+ * would otherwise leave the bare `once('data')` promise pending forever).
+ * @param {stream.Readable} stream - The stream to read from.
+ * @return {Promise<Buffer|undefined>} The first chunk, or `undefined` when the stream ends or errors before producing data.
+ */
+function firstStreamChunk(stream) {
+    const settled = new Promise((resolve) => {
+        stream.once('data', (c) => resolve(c));
+        stream.once('end', () => resolve(undefined));
+        stream.once('error', () => resolve(undefined));
+    });
+    return settled;
 }
 
 /**
@@ -56,7 +79,7 @@ async function fetchSourceRaw(url) {
     const res = await axios({ method: 'get', url, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0 (compatible; IPTVo/1.0)' }, timeout: 300000 });
     revalidateResponseUrl(res, res.data);
     let rawStream = res.data;
-    const firstChunk = await new Promise((resChunk) => { rawStream.once('data', (c) => resChunk(c)); });
+    const firstChunk = await firstStreamChunk(rawStream);
     let finalizedStream;
     if (firstChunk && firstChunk[0] === 0x1f && firstChunk[1] === 0x8b) {
         finalizedStream = Readable.from((async function* () { yield firstChunk; for await (const c of rawStream) yield c; })()).pipe(zlib.createGunzip());
@@ -139,11 +162,12 @@ function normalizeSourceId(rawId) {
 function mergeForChannel(candidates) {
     // candidates: [{source, spanMs, programs}]
     if (!candidates || candidates.length === 0) return [];
-    // Prefer the candidate with the most programmes / longest span.
-    candidates.sort((a, b) => (b.programs ? b.programs.length : 0) - (a.programs ? a.programs.length : 0));
+    // Prefer the candidate with the most programmes / longest span. Copy avoids
+    // mutating the caller's array (the list also drives source attribution).
+    const sorted = [...candidates].sort((a, b) => (b.programs ? b.programs.length : 0) - (a.programs ? a.programs.length : 0));
     const seen = new Set();
     const out = [];
-    for (const c of candidates) {
+    for (const c of sorted) {
         if (!c.programs) continue;
         for (const p of c.programs) {
             const k = `${p.start}|${p.title}`;
@@ -192,20 +216,26 @@ async function run() {
             }
         }));
 
-        // Merge per-channel, write to central store, and bump the hub generation
-        // (so the Redis cache is marked stale and rebuilt from the fresh DB data).
+        // Merge per-channel, write to central store, and mark the hub generation
+        // stale so the Redis cache is rebuilt from the fresh DB data. Reserve the
+        // new generation atomically up front — every cache entry below is stamped
+        // with exactly that value, so a concurrent (cluster) cycle can never
+        // publish entries under a stale or guessed generation.
         let mergedChannels = 0, mergedPrograms = 0;
-        const generation = await getHubGeneration();
+        const generation = await bumpGeneration(0); // advance + reserve the stamp value
         for (const [officialId, candidates] of channelBuckets) {
             const merged = mergeForChannel(candidates);
             if (!merged.length) continue;
             const channelKey = `global_${officialId}`;
-            await saveEpgPrograms(channelKey, candidates[0].source, merged);
+            // Attribute to the source contributing the most programmes (more
+            // stable than candidates[0], whose order reflects insertion, not fit).
+            const dominant = candidates.reduce((best, c) => (c.programs && c.programs.length > (best.programs ? best.programs.length : 0)) ? c : best, candidates[0]);
+            await saveEpgPrograms(channelKey, dominant.source, merged);
             mergedChannels++;
             mergedPrograms += merged.length;
-            await saveEpgCache(channelKey, merged, generation + 1);
+            await saveEpgCache(channelKey, merged, generation);
         }
-        await bumpGeneration(mergedPrograms); // record coverage + advance generation
+        setHubState(mergedPrograms).catch(() => {}); // publish final coverage (no re-advance)
         await pruneEpgPrograms();
         console.log(`[epgHub] cycle: fetched=${fetched} failed=${failed} mergedChannels=${mergedChannels} mergedPrograms=${mergedPrograms}`);
         return { status: 'done', fetched, failed, mergedChannels, mergedPrograms, generation: await getHubGeneration() };

@@ -50,11 +50,19 @@ const ALIASES = {
     'm+': 'movistar',
 };
 // Reverse direction too: iptv-org's official short name -> playlist long name.
+// The reverse is skipped when the abbreviation is a bare single letter, and
+// when a canonical name already got a reverse — 'm' and 'm+' both alias to
+// 'movistar', and a reverse entry would collapse the iptv-org brand token
+// "movistar" down to a single-letter "m" during tokenize (wrong-match risk).
+// The forward m/m+ -> movistar expansion is what playlists rely on.
 const ALIAS_BILATERAL = new Map();
 for (const [k, v] of Object.entries(ALIASES)) {
     ALIAS_BILATERAL.set(k, v);
-    ALIAS_BILATERAL.set(v, k);
+    if (k.length > 1 && !ALIAS_BILATERAL.has(v)) ALIAS_BILATERAL.set(v, k);
 }
+// Precompile alias regexes once: each tokenize() call otherwise rebuilds them.
+const ALIAS_PATTERNS = Array.from(ALIAS_BILATERAL.entries())
+    .map(([k, v]) => [new RegExp(`\\b${k.replace(/[^a-z0-9]+/g, '\\s+')}\\b`, 'i'), v]);
 
 let tokenIndex = new Map();        // sortedKey -> entry
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
@@ -103,9 +111,8 @@ function tokenize(name, applyAliases = true) {
         const long = ALIAS_BILATERAL.get(flat.trim());
         if (long) s = long;
         else {
-            for (const [k, v] of ALIAS_BILATERAL.entries()) {
-                // match whole-word span at token boundaries
-                const pat = new RegExp(`\\b${k.replace(/[^a-z0-9]+/g, '\\s+')}\\b`, 'i');
+            for (const [pat, v] of ALIAS_PATTERNS) {
+                // whole-word span at token boundaries (precompiled)
                 if (pat.test(s)) { s = s.replace(pat, v); break; }
             }
         }
@@ -152,6 +159,10 @@ const REGION_MARKERS = ['latin america', 'latinamerican', 'caribbean', 'amtv', '
 function isRegionConflicting(name, countryScopeKey) {
     if (!countryScopeKey || countryScopeKey === 'global') return false;
     const n = (name || '').toLowerCase();
+    // When a marker IS the requested country scope ("Brazil" feed under a
+    // "br" scope), it is not a conflict — the country's own primary feed.
+    // Only a marker naming a DIFFERENT region/pan-region is a false positive.
+    if (REGION_MARKERS.includes(countryScopeKey)) return false;
     return REGION_MARKERS.some(m => n.includes(m));
 }
 
@@ -187,21 +198,6 @@ function isTokenSubset(query, cand) {
         if (!hit) return false;
     }
     return true;
-}
-
-/**
- * Builds a standardized channel match entry from channel metadata.
- * @param {Object} entry - Channel metadata containing its name, country scope, official ID, and categories.
- * @return {Object} The standardized match entry with canonical name, logo, country scope, official ID, and categories.
- */
-function buildMatchEntry(entry) {
-    return {
-        countryScopeKey: entry.country || 'global',
-        canonicalName: entry.name,
-        logo: channelIdToLogo.get(entry.officialId) || null,
-        officialId: entry.officialId,
-        categories: entry.categories || []
-    };
 }
 
 /**
@@ -323,7 +319,7 @@ async function refresh() {
         for (const ch of channelsRes.data) {
             if (ch.closed) continue;
             const countryLower = (ch.country || '').toLowerCase();
-            const entry = { officialId: ch.id, name: ch.name, country: countryLower, logo: null };
+            const entry = { officialId: ch.id, name: ch.name, country: countryLower, logo: null, categories: ch.categories || [] };
             const toks = tokenize(ch.name, true); // alias-aware
             if (!toks.length) continue;
             const { sortedKey } = tokensToKeys(toks);
@@ -339,12 +335,14 @@ async function refresh() {
         fuseByFirst = newFuseByFirst;
         tokenIndex = newTokenIndex;
 
-        // Bucket token entries by their first token so the subsequence tier in
-        // lookupChannelSmart only scans the handful sharing the query's leading
+        // Bucket token entries by their leading token — from the source name,
+        // not the alphabetical sortedKey — so the subsequence tier in
+        // lookupChannelSmart scans the handful that share the query's leading
         // token, instead of the full 48k-index on every miss.
         const newTokenByFirst = new Map();
         for (const [sk, entry] of newTokenIndex.entries()) {
-            const firstTok = sk.split(' ')[0];
+            const leadToks = tokenize(entry.name, false);
+            const firstTok = leadToks[0] || '';
             if (!firstTok) continue;
             const arr = newTokenByFirst.get(firstTok);
             if (arr) arr.push(entry);
@@ -472,7 +470,7 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     const tokEntry = tokenIndex.get(sortedKey);
     if (tokEntry) {
         if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
-            return { ...buildMatchEntry(tokEntry), fuzzy: true, match: 'token' };
+            return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
         }
     }
 
@@ -506,7 +504,7 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
                 if (candToks.length < toks.length) continue;
                 if (orderSensitive ? isSubsequence(toks, candToks) : isTokenSubset(toks, candToks)) {
                     if (isRegionConflicting(entry.name, countryScopeKey)) continue;
-                    return { ...buildMatchEntry(entry), fuzzy: true, matchFuzzy: 'subsequence' };
+                    return { ...buildMatchResult(entry), fuzzy: true, matchFuzzy: 'subsequence' };
                 }
             }
         }
