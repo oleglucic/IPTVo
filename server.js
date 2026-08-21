@@ -4,7 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
-const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry } = require('./iptvParser');
+const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry, bumpConfigGeneration, adoptGeneration } = require('./iptvParser');
 const { run: runEpgHub, seedSources: seedEpgHub } = require('./epgHub');
 const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
@@ -482,6 +482,10 @@ async function ensureCache(config, configObj) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
             redisCached._configObj = configObj;
+            // Sync the local generation counter to the one the snapshot was
+            // written under, so a later refresh survives the publish check
+            // instead of being discarded against a fresh worker's counter of 0.
+            adoptGeneration(config, redisCached._generation);
             userCaches.set(config, redisCached);
             // Log iptv-org match rate from cached data
             let iptvOrgMatchCount = 0;
@@ -917,9 +921,29 @@ app.put('/api/auth/config', async (req, res) => {
         // the in-memory snapshot and its Redis copy so the next request rebuilds
         // from the saved config instead of serving the stale one until it ages out.
         const userId = session.userId;
-        userCaches.delete(userId);
-        await deleteCacheFromRedis(userId);
-        catalogPageCache.clear();
+        // Bump the per-config generation FIRST: an in-flight parse that started
+        // under the old config carries a loading placeholder stamped with that
+        // generation. bumping makes publishParseResult discard it on completion.
+        bumpConfigGeneration(userId);
+        // Evict the stale snapshot — but never a 'loading' placeholder: it is the
+        // only record of an in-flight parse's generation, and deleting it would
+        // let publishParseResult mistake the bumped counter for the parse's own.
+        const existing = userCaches.get(userId);
+        if (!existing || existing.status !== 'loading') {
+            userCaches.delete(userId);
+        }
+        // Targeted catalog-page invalidation: only this user's entries
+        // ("configKey|skip|genre|search|lastUpdated") are stale. key starts with
+        // the raw userId, but catalogPageCache also caches legacy base64 keys —
+        // delete by prefix so both are dropped.
+        const delPrefix = userId + '|';
+        for (const key of catalogPageCache.keys()) {
+            if (key.startsWith(delPrefix)) catalogPageCache.delete(key);
+        }
+        const deleted = await deleteCacheFromRedis(userId);
+        if (!deleted) {
+            console.warn(`[Auth] Redis cache delete failed for ${sanitizeForLog(userId)}; old snapshot may rehydrate until it ages out (6h).`);
+        }
 
         // Update session config (persisted to Redis so the running worker holds the
         // preserved secrets, not blanks).
