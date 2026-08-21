@@ -625,9 +625,11 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
         checks.openrouter = { status: 'not_configured' };
     }
 
-    // Cache status
+    // Cache status — a key may be a UUID, a base64 config key, or missing; guard
+    // it so a malformed entry can't 500 the health endpoint.
     for (const [key, cached] of userCaches.entries()) {
-        checks.caches[key.substring(0, 12)] = {
+        if (!key || !cached) continue;
+        checks.caches[String(key).substring(0, 12)] = {
             status: cached.status,
             channels: cached.channelMap?.size || 0,
             groups: cached.uniqueGroups?.size || 0,
