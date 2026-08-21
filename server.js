@@ -836,13 +836,18 @@ app.put('/api/auth/config', async (req, res) => {
         }
 
         const { updateUserConfig } = require('./db');
-        const success = await updateUserConfig(session.userId, config, process.env.ENCRYPTION_KEY);
-        if (!success) {
+        // updateUserConfig reads the stored config under a row lock and preserves
+        // sensitive fields the client omitted (blank or '[REDACTED]') instead of
+        // overwriting them with empty strings - the server never returns real
+        // credentials, so a fresh form cannot know them. Returns the merged config.
+        const savedConfig = await updateUserConfig(session.userId, config, process.env.ENCRYPTION_KEY);
+        if (!savedConfig) {
             return res.status(500).json({ error: 'Failed to update config' });
         }
 
-        // Update session config (persisted to Redis so any worker sees it)
-        session.config = config;
+        // Update session config (persisted to Redis so any worker sees it) with the
+        // merged config so workers hold the preserved secrets, not blanks.
+        session.config = savedConfig;
         await sessionSet(token, session);
 
         console.log(`[Auth] Config updated for user: ${sanitizeForLog(session.userId)}`);
