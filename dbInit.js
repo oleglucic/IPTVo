@@ -57,7 +57,33 @@ async function initSchema() {
         `CREATE INDEX IF NOT EXISTS idx_epg_history_channel ON epg_history(channel_key)`,
         `CREATE INDEX IF NOT EXISTS idx_epg_history_time ON epg_history(start_time)`,
         `CREATE INDEX IF NOT EXISTS idx_logo_urls_source ON logo_urls(source)`,
-        `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`
+        `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+
+        // epg_sources: which EPG providers to fetch, their URL pattern, coverage.
+        `CREATE TABLE IF NOT EXISTS epg_sources (
+            source VARCHAR(50) PRIMARY KEY,
+            enabled BOOLEAN DEFAULT TRUE,
+            kind VARCHAR(20),   -- 'general' | 'country' | 'aggregate'
+            url TEXT,           -- base URL (or pattern)
+            region VARCHAR(10), -- ISO cc or 'global'
+            last_fetch BIGINT DEFAULT 0,
+            last_success BIGINT DEFAULT 0,
+            error_count INTEGER DEFAULT 0,
+            notes TEXT
+        )`,
+
+        // epg_programs: central merged EPG store (source of truth).
+        `CREATE TABLE IF NOT EXISTS epg_programs (
+            channel_key VARCHAR(255) NOT NULL, -- canonical cId (e.g. 'global_cnn.us')
+            source VARCHAR(50) NOT NULL,       -- 'epgshare01', 'imjhnz', ...
+            title VARCHAR(500) NOT NULL,
+            description TEXT,
+            start_time BIGINT NOT NULL,
+            stop_time BIGINT NOT NULL,
+            PRIMARY KEY (channel_key, source, start_time)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_epg_programs_channel_time ON epg_programs(channel_key, start_time)`,
+        `CREATE INDEX IF NOT EXISTS idx_epg_sources_enabled ON epg_sources(enabled)`
     ];
 
     for (const sql of statements) {

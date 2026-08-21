@@ -3,12 +3,22 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
-const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE } = require('./iptvParser');
-const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
+const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry } = require('./iptvParser');
+const { run: runEpgHub, seedSources: seedEpgHub } = require('./epgHub');
+const { loadCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
+const { pruneEpgHistory } = require('./db');
 const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, configKeyFingerprint } = require('./cryptoUtils');
+
+// Assets base URL. When set (e.g. https://assets.oleglucic.com), poster/logo/
+// catalog links resolve to the Cloudflare assets Worker+edge instead of the
+// request host, offloading the Node server. Falls back to the request host.
+const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
+function assetRoot(req) {
+    return ASSET_BASE_URL || `${req.protocol}://${req.get('host')}`;
+}
 
 const app = express();
 app.use(cors());
@@ -145,14 +155,22 @@ function isSafeUrl(url) {
 }
 
 // Session store (in-memory, for simplicity - can be moved to Redis later)
-const sessions = new Map(); // token -> { userId, expiresAt, config }
+// Sessions now live in Redis (sessionGet/sessionSet/sessionDelete) so any worker
+// can validate any token — required for horizontal scaling / cluster mode.
 
-// Session cleanup (every hour)
+// Catalog page cache: thousands of concurrent users hit the same paginated
+// catalog; re-walking the full 7k-entry channelMap + serializing 100 metas on
+// every request saturates the (single-threaded) Node CPU and raised latency at
+// high concurrency. Cache the rendered metas per (configKey, page, genre, search)
+// for a short window, keyed by ud.lastUpdated so a re-parse invalidates it.
+const catalogPageCache = new Map(); // "configKey|skip|genre|search|lastUpdated" -> { metas, at }
+const CATALOG_PAGE_CACHE_TTL = 30 * 1000; // 30s
+
+// Session cleanup (every hour): sessions live in Redis (so any worker validates
+// any token — required for cluster/replicas). Redis auto-expires on TTL; this
+// prunes any whose expiresAt passed without firing, across all workers.
 setInterval(() => {
-    const now = Date.now();
-    for (const [token, session] of sessions.entries()) {
-        if (session.expiresAt < now) sessions.delete(token);
-    }
+    sessionPruneExpired().catch(e => console.error('[SessionPrune] failed:', sanitizeForLog(e.message)));
 }, 60 * 60 * 1000);
 
 // Serve dashboard (new structure)
@@ -210,15 +228,15 @@ app.use('/api/', apiLimiter);
 
 // Require a valid bearer session for external-fetch endpoints so the server
 // cannot be used as an anonymous fetch/SSRF proxy once open to the public.
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     const token = authHeader.slice(7);
-    const session = sessions.get(token);
+    const session = await sessionGet(token);
     if (!session || session.expiresAt < Date.now()) {
-        if (session) sessions.delete(token);
+        if (session) await sessionDelete(token);
         return res.status(401).json({ error: 'Unauthorized' });
     }
     req.session = session;
@@ -345,6 +363,73 @@ function extractConfig(req) {
     }
 }
 
+// Resolve the effective EPG for a channel without hitting the DB on every
+// request: serve from the generation-stamped Redis EPG cache first (valid for
+// as long as the central DB's data lasts), fall back to promoting from the
+// central epg_programs store, and finally the per-entry forward data.
+// Returns a programme array [{title,desc,start,stop}] or null.
+async function getEffectiveEpg(chKey, entry) {
+    try {
+        const gen = await getHubGeneration();
+        const cached = hasRedis ? await loadEpgCache(chKey) : null;
+        if (cached && cached.generation === gen && cached.programs.length) {
+            return cached.programs;
+        }
+        // Cache miss or stale: read the merged store and warm the cache.
+        const dbRows = await require('./db').getEpgPrograms(chKey, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
+        if (dbRows.length) {
+            const progs = dbRows.map(r => ({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) }));
+            if (hasRedis) await saveEpgCache(chKey, progs, gen);
+            return progs;
+        }
+    } catch (e) {
+        console.error('[EPG][Central] resolution failed:', sanitizeForLog(e.message));
+    }
+    // Fall back to the per-entry forward EPG (user-provided feed).
+    const sched = entry && entry.epgData && entry.epgData[chKey];
+    return (sched && sched.length) ? sched : null;
+}
+
+/**
+ * Batch resolve EPG for many channels with ONE Redis MGET (+ one DB fallback
+ * pass), instead of N sequential per-channel getEffectiveEpg calls — the
+ * catalog page loops 100 channels, so N× round-trips were the concurrency cost.
+ * Returns a Map<chKey, programmes-array|null>.
+ */
+async function getEffectiveEpgMany(chKeys, entry) {
+    const out = new Map();
+    if (!chKeys.length) return out;
+    const gen = hasRedis ? await getHubGeneration() : 0;
+    const cached = hasRedis ? await mgetEpgCaches(chKeys) : new Map();
+    const needDb = [];
+    for (const k of chKeys) {
+        const c = cached.get(k);
+        if (c && c.generation === gen && c.programs.length) { out.set(k, c.programs); continue; }
+        needDb.push(k);
+        // Fall back to per-entry EPG (user-provided feed) — cheap, no store.
+        const sched = entry && entry.epgData && entry.epgData[k];
+        if (sched && sched.length) out.set(k, sched);
+    }
+    if (needDb.length) {
+        try {
+            // Per-channel DB reads are rare (only a generation change or cold);
+            // keep them bounded so a page never fans out into thousands of queries.
+            const batch = needDb.slice(0, 50);
+            for (const k of batch) {
+                const dbRows = await require('./db').getEpgPrograms(k, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
+                if (dbRows.length) {
+                    const progs = dbRows.map((r) => ({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) }));
+                    if (hasRedis) await saveEpgCache(k, progs, gen);
+                    out.set(k, progs);
+                }
+            }
+        } catch (e) {
+            console.error('[EPG][Central] batched resolution failed:', sanitizeForLog(e.message));
+        }
+    }
+    return out;
+}
+
 // Ensure cache is populated before serving data routes
 async function ensureCache(config, configObj) {
     // If configObj contains _userId, resolve the full config from database
@@ -364,9 +449,14 @@ async function ensureCache(config, configObj) {
     console.log(`[ensureCache] called for config=${configKeyFingerprint(config)}... configObj=${!!configObj}`);
     if (!configObj) { console.log('[ensureCache] no configObj, returning null'); return null; }
     let cached = userCaches.get(config);
+    // Stash the config reference so the decoupled EPG-only refresh loop and the
+    // proactive refresh can re-fetch without decoding the cache key (user-system
+    // keys are plaintext UUIDs the base64 decode can't handle). Saved on the
+    // entry so it survives a rehydrate.
+    if (cached) cached._configObj = configObj;
     console.log(`[ensureCache] cache state: ${sanitizeForLog(cached ? cached.status : 'MISSING')}`);
 
-    // Total cache miss (cold start): check Redis first, then start background parse
+    // Total cache miss (Reduced cold start): check Redis first, then start background parse
     if (!cached) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
@@ -415,9 +505,14 @@ async function ensureCache(config, configObj) {
         return userCaches.get(config);
     }
 
-    // Ready but stale, or errored previously: refresh in the background, serve what we have now.
-    if (cached.status === 'error' ||
-        (cached.status === 'ready' && (Date.now() - cached.lastUpdated > 60 * 60 * 1000))) {
+    // Ready but stale: refresh in the background, serve what we have now. An
+    // errored entry carries the last good snapshot (serve immediately) and is
+    // only refreshed once its backoff window (retryAt) has elapsed — the tier
+    // gate in streamFetchIPTV also skips inside that window, so the request
+    // path and the proactive loop stay consistent.
+    if (cached.status === 'error'
+        ? (Date.now() >= (cached.retryAt || 0))
+        : (cached.status === 'ready' && (Date.now() - cached.lastUpdated > 60 * 60 * 1000))) {
         streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] refresh failed:', sanitizeForLog(e.message)));
     }
 
@@ -550,7 +645,7 @@ app.post('/api/auth/register', async (req, res) => {
         }
 
         const token = generateSessionToken();
-        sessions.set(token, {
+        await sessionSet(token, {
             userId: user.user_id,
             username,
             config: config || {},
@@ -590,7 +685,7 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         const token = generateSessionToken();
-        sessions.set(token, {
+        await sessionSet(token, {
             userId: user.user_id,
             username: user.username,
             config,
@@ -629,15 +724,15 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Validate session
-app.get('/api/auth/validate', (req, res) => {
+app.get('/api/auth/validate', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ valid: false });
     }
     const token = authHeader.slice(7);
-    const session = sessions.get(token);
+    const session = await sessionGet(token);
     if (!session || session.expiresAt < Date.now()) {
-        if (session) sessions.delete(token);
+        if (session) await sessionDelete(token);
         return res.status(401).json({ valid: false });
     }
     const safeConfig = { ...session.config };
@@ -666,10 +761,10 @@ app.get('/api/auth/validate', (req, res) => {
 });
 
 // Logout
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
-        sessions.delete(authHeader.slice(7));
+        await sessionDelete(authHeader.slice(7));
     }
     res.json({ success: true });
 });
@@ -684,6 +779,21 @@ app.get('/api/logo-proxy-url', (req, res) => {
     }
 });
 
+// Edge-cache purge: bumps the addon-cache Worker's KV generation so the CDN
+// drops stale catalog/meta/manifest pages after a re-parse. Guarded by a secret
+// only the server knows, so it can't be triggered by the public. No-op when the
+// worker isn't configured.
+const ADDON_CACHE_URL = process.env.ADDON_CACHE_URL || '';
+app.post('/api/_edge-purge', (req, res) => {
+    const secret = req.headers['x-purge-secret'];
+    if (!process.env.EDGE_PURGE_SECRET || secret !== process.env.EDGE_PURGE_SECRET) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!ADDON_CACHE_URL) return res.json({ ok: true, note: 'no addon-cache worker configured' });
+    axios.post(`${ADDON_CACHE_URL}/_purge`, { secret }).then(() => res.json({ ok: true }))
+        .catch(e => res.status(502).json({ error: sanitizeForLog(e.message) }));
+});
+
 // Update user config (encrypted)
 app.put('/api/auth/config', async (req, res) => {
     try {
@@ -692,9 +802,9 @@ app.put('/api/auth/config', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         const token = authHeader.slice(7);
-        const session = sessions.get(token);
+        const session = await sessionGet(token);
         if (!session || session.expiresAt < Date.now()) {
-            if (session) sessions.delete(token);
+            if (session) await sessionDelete(token);
             return res.status(401).json({ error: 'Session expired' });
         }
 
@@ -709,9 +819,9 @@ app.put('/api/auth/config', async (req, res) => {
             return res.status(500).json({ error: 'Failed to update config' });
         }
 
-        // Update session config
+        // Update session config (persisted to Redis so any worker sees it)
         session.config = config;
-        sessions.set(token, session);
+        await sessionSet(token, session);
 
         console.log(`[Auth] Config updated for user: ${sanitizeForLog(session.userId)}`);
 console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
@@ -731,9 +841,9 @@ app.put('/api/auth/password', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         const token = authHeader.slice(7);
-        const session = sessions.get(token);
+        const session = await sessionGet(token);
         if (!session || session.expiresAt < Date.now()) {
-            if (session) sessions.delete(token);
+            if (session) await sessionDelete(token);
             return res.status(401).json({ error: 'Session expired' });
         }
 
@@ -780,9 +890,9 @@ app.delete('/api/auth/account', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         const token = authHeader.slice(7);
-        const session = sessions.get(token);
+        const session = await sessionGet(token);
         if (!session || session.expiresAt < Date.now()) {
-            if (session) sessions.delete(token);
+            if (session) await sessionDelete(token);
             return res.status(401).json({ error: 'Session expired' });
         }
 
@@ -806,7 +916,7 @@ app.delete('/api/auth/account', async (req, res) => {
         if (pool) {
             await pool.query('DELETE FROM users WHERE user_id = $1', [session.userId]);
         }
-        sessions.delete(token);
+        await sessionDelete(token);
 
         console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
@@ -862,18 +972,37 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const skip = Math.max(0, parseInt(extra?.skip, 10) || 0);
     const limit = 100;
 
-    const metas = [];
+    // Cache hit: same config + page + genre/search + same cache generation →
+    // serve the previously-rendered metas without re-walking the channelMap.
+    const cacheKey = `${configKey}|${skip}|${extra?.genre || ''}|${extra?.search || ''}|${ud.lastUpdated || 0}`;
+    const cachedPage = catalogPageCache.get(cacheKey);
+    if (cachedPage && Date.now() - cachedPage.at < CATALOG_PAGE_CACHE_TTL) {
+        const r0 = { metas: cachedPage.metas };
+        return r0;
+    }
+
+    // Two-pass: collect this page's channels first, then batch-resolve EPG with
+    // ONE Redis MGET (per-channel getEffectiveEpg calls were the concurrency cost —
+    // a 100-metadata page did up to 100 Redis round-trips).
+    const pageChannels = []; // [{chKey, channel}]
     let idx = 0;
     for (const [chKey, channel] of ud.channelMap.entries()) {
         if (selectedGenre && channel.meta.group !== selectedGenre) continue;
         if (selectedSearch && !channel.meta.name.toLowerCase().includes(selectedSearch)) continue;
-        if (idx < skip) { idx++; continue; } // past the page offset
+        if (idx < skip) { idx++; continue; }
         if (idx >= skip + limit) break;
         idx++;
+        pageChannels.push({ chKey, channel });
+    }
+    const epgByCh = await getEffectiveEpgMany(pageChannels.map((p) => p.chKey), ud);
 
+    const metas = [];
+    for (const { chKey, channel } of pageChannels) {
         const engineImage = `${rootUrl}/${configKey}/poster/${chKey || 'x'}.png?t=${ud.lastUpdated || ''}`;
         const passedThroughLogo = channel.meta.logo || engineImage;
-        const epgDescription = getEpgText(chKey, ud.epgData, configObj.timezoneOffset || 0);
+        const centralEpg = epgByCh.get(chKey) || null;
+        const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [chKey]: centralEpg } : {}) };
+        const epgDescription = getEpgText(chKey, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj.timezoneOffset || 0);
         const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
             ...(s.groupTags ? s.groupTags.split(" • ") : []),
             ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -900,7 +1029,13 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
         });
     }
     const result = { metas };
-    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas (skip=${skip})`);
+    // Only cache the common paginated pages (skip=0, no search) to bound memory;
+    // search/genre pages are cheap enough to rebuild and would bloat the cache.
+    if (skip === 0 && !extra?.search) {
+        if (catalogPageCache.size > 2000) catalogPageCache.clear();
+        catalogPageCache.set(cacheKey, { metas, at: Date.now() });
+    }
+    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas (skip=${skip})${catalogPageCache.has(cacheKey) ? ' [cached]' : ''}`);
     return result;
 });
 
@@ -917,7 +1052,9 @@ builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
 
     const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(_id)}.png?t=${ud.lastUpdated || ''}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
-    const epgDescription = getEpgText(_id, ud.epgData, configObj ? configObj.timezoneOffset : 0);
+    const centralEpg = await getEffectiveEpg(_id, ud);
+    const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [_id]: centralEpg } : {}) };
+    const epgDescription = getEpgText(_id, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj ? configObj.timezoneOffset : 0);
     const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
         ...(s.groupTags ? s.groupTags.split(" • ") : []),
         ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -1015,7 +1152,7 @@ app.get('/:userId/manifest.json', (req, res) => {
 app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1031,7 +1168,7 @@ app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
 app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1047,7 +1184,7 @@ app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
 app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
@@ -1063,7 +1200,7 @@ app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
 app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
@@ -1121,7 +1258,7 @@ app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1138,7 +1275,7 @@ app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1155,7 +1292,7 @@ app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
@@ -1172,7 +1309,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
@@ -1227,7 +1364,34 @@ const { backgroundLogoRefresh } = require('./iptvParser');
 const { prewarm } = require('./prewarm');
 const PORT = process.env.PORT || 3000;
 
-// Initialize database schema (creates tables if missing)
+// ---- Cluster mode (horizontal scaling on one box) ---------------------------
+// Node's built-in cluster forks N subprocesses, each able to handle requests in
+// parallel across CPU cores. WITHOUT it the server is single-threaded (~65 req/s
+// ceiling on a 6-core host). Sessions are Redis-backed (see redisCache.js), so
+// any worker validates any token — required for multi-worker correctness.
+// The worker count is deliberately CONSERVATIVE so the host still has CPU for
+// other services: default = floor(nproc/2) but capped, overridable via
+// CLUSTER_WORKERS. Zero/1 = single-process (cluster disabled).
+const os = require('os');
+const CLUSTER_WORKERS = process.env.CLUSTER_WORKERS ? parseInt(process.env.CLUSTER_WORKERS, 10) : 0;
+const workercount = CLUSTER_WORKERS > 1
+    ? CLUSTER_WORKERS
+    : (process.env.CLUSTER_WORKERS === 'auto' ? Math.max(1, Math.floor(os.cpus().length / 2)) : 1);
+let clusterObj = null;
+try { clusterObj = require('node:cluster'); } catch { /* cluster unavailable */ }
+// Multi-worker cluster: the PRIMARY forks N workers (each runs the app below)
+// and then exits this module (supervisor only). Workers / single-process run the
+// app. Worker count is deliberately conservative so the host retains CPUs for
+// other services (the user's box isn't running only this addon).
+if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
+    clusterObj.setupPrimary({ workers: workercount, schedulingPolicy: clusterObj.SCHED_RR });
+    for (let i = 0; i < workercount; i++) clusterObj.fork();
+    console.log(`[Cluster] Forked ${workercount} workers (reserving cores for other services).`);
+    require('process').on('SIGTERM', () => process.exit(0));
+    return; // primary: don't run the app directly
+}
+
+// Initialize database (creates tables if missing)
 (async () => {
     try {
         await initSchema();
@@ -1261,9 +1425,48 @@ const PORT = process.env.PORT || 3000;
     setInterval(() => {
         snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', sanitizeForLog(e.message)));
     }, 30 * 60 * 1000);
+
+    // Decoupled EPG-only refresh (task #42): re-fetch EPG schedules for entries
+    // whose coverage-informed epgNextRefreshAt has passed, WITHOUT re-parsing the
+    // whole provider playlist. Uses the retained epgMap + per-entry epg URL (and
+    // the iptv-org guide map when enabled). Coalesced so a refresh never stomps
+    // a full parse.
+    setInterval(() => {
+        for (const [configKey, entry] of userCaches.entries()) {
+            if (!entry || !entry._configObj) continue;
+            if (Date.now() < (entry.epgNextRefreshAt || 0)) continue;
+            const cfg = entry._configObj;
+            refreshEpgForEntry(entry, cfg).then(next => {
+                if (!next) return;
+                const cur = userCaches.get(configKey);
+                if (!cur) return;
+                cur.epgData = next.epgData;
+                cur.epgNextRefreshAt = next.epgNextRefreshAt;
+                cur.epgCoverageMs = next.epgCoverageMs;
+                cur.epgLastUpdated = Date.now();
+            }).catch(e => console.error('[EPG][Refresh] failed:', sanitizeForLog(e.message)));
+        }
+    }, 15 * 60 * 1000);
+
+    // Daily retention prune: epg_history grows without bound otherwise (only a
+    // 48h read window is used; keep 7 days).
+    setInterval(() => {
+        pruneEpgHistory().catch(e => console.error('[EPG][Prune] cycle failed:', sanitizeForLog(e.message)));
+    }, 24 * 60 * 60 * 1000);
     setTimeout(() => {
         snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', sanitizeForLog(e.message)));
     }, 2 * 60 * 1000);
+
+    // Central multi-source EPG (epgHub): seed the source registry, then fetch +
+    // merge + warm the generation-stamped cache on a periodic cadence. A broken
+    // source is isolated and only increments its own error_count.
+    seedEpgHub().catch(e => console.error('[epgHub] seed failed:', sanitizeForLog(e.message)));
+    setInterval(() => {
+        runEpgHub().catch(e => console.error('[epgHub] cycle failed:', sanitizeForLog(e.message)));
+    }, 30 * 60 * 1000);
+    setTimeout(() => {
+        runEpgHub().catch(e => console.error('[epgHub] initial run failed:', sanitizeForLog(e.message)));
+    }, 10 * 60 * 1000); // 10 min after startup, after DB/iptv-org are up
 
     // Proactively refresh any cached config older than MAX_CACHE_AGE, independent of
     // incoming requests - so the cache stays fresh even during idle periods.

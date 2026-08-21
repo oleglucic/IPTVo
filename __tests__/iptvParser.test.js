@@ -104,6 +104,41 @@ describe('isSafeUrl', () => {
   });
 });
 
+describe('epgScheduleNextRefresh (coverage-informed EPG cadence)', () => {
+  test('returns the fail-fast retry for empty/failed feeds', () => {
+    // 5 min
+    expect(iptvParser.epgScheduleNextRefresh(0)).toBeGreaterThan(0);
+    expect(iptvParser.epgScheduleNextRefresh(-1)).toBeGreaterThan(0);
+    const retryAt = iptvParser.epgScheduleNextRefresh(0) - Date.now();
+    expect(retryAt).toBeGreaterThanOrEqual(4.5 * 60 * 1000);
+    expect(retryAt).toBeLessThanOrEqual(5 * 60 * 1000);
+  });
+
+  test('clamps a short-coverage feed to the 30min floor', () => {
+    // 10 minutes of coverage / 3 is only 3.3min, below the floor → 30min
+    const next = iptvParser.epgScheduleNextRefresh(10 * 60 * 1000);
+    const delay = next - Date.now();
+    expect(delay).toBeGreaterThanOrEqual(29.5 * 60 * 1000);
+    expect(delay).toBeLessThanOrEqual(30 * 60 * 1000);
+  });
+
+  test('uses coverage/3 for a mid-range feed', () => {
+    // 6 hours of coverage → 2h refresh
+    const at = iptvParser.epgScheduleNextRefresh(6 * 60 * 60 * 1000);
+    const delay = at - Date.now();
+    expect(delay).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000 - 1000);
+    expect(delay).toBeLessThanOrEqual(2 * 60 * 60 * 1000 + 1000);
+  });
+
+  test('caps to the 12h ceiling for a long feed', () => {
+    // 7 days of coverage / 3 is 56h — capped at 12h
+    const at = iptvParser.epgScheduleNextRefresh(7 * 24 * 60 * 60 * 1000);
+    const delay = at - Date.now();
+    expect(delay).toBeGreaterThanOrEqual(11.5 * 60 * 60 * 1000);
+    expect(delay).toBeLessThanOrEqual(12 * 60 * 60 * 1000);
+  });
+});
+
 describe('pickGenres (smart auto-grouping)', () => {
   test('prefers iptv-org categories for a generic Uncategorized group', () => {
     const match = { categories: ['sports', 'news'] };

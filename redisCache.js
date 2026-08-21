@@ -41,6 +41,10 @@ function serializeCache(cacheData) {
         catalogItems: cacheData.catalogItems || [],
         uniqueGroups: Array.from(cacheData.uniqueGroups || new Set()),
         epgData: cacheData.epgData || {},
+        epgMap: Object.fromEntries(cacheData.epgMap || new Map()), // retained for decoupled EPG refresh
+        epgLastUpdated: cacheData.epgLastUpdated || 0,
+        epgNextRefreshAt: cacheData.epgNextRefreshAt || 0,
+        epgCoverageMs: cacheData.epgCoverageMs || 0,
         lastUpdated: cacheData.lastUpdated || Date.now()
     });
 }
@@ -58,6 +62,10 @@ function deserializeCache(raw) {
         catalogItems: obj.catalogItems || [],
         uniqueGroups: new Set(obj.uniqueGroups || []),
         epgData: obj.epgData || {},
+        epgMap: new Map(Object.entries(obj.epgMap || {})), // retained for decoupled EPG refresh
+        epgLastUpdated: obj.epgLastUpdated || 0,
+        epgNextRefreshAt: obj.epgNextRefreshAt || 0,
+        epgCoverageMs: obj.epgCoverageMs || 0,
         lastUpdated: obj.lastUpdated || 0
     };
 }
@@ -188,6 +196,156 @@ async function listCachedConfigKeys() {
     }
 }
 
+// --- Central EPG cache (generation-stamped, not arbitrary TTL) --------------
+// The central EPG DB (epg_programs) is the source of truth. User requests read
+// this Redis cache, which is valid for as long as the central DB's data hasn't
+// been renewed — tracked by a hub `generation` rather than a fixed TTL. When
+// the hub (epgHub) re-fetches and bumps the generation, stale cache entries are
+// rebuilt from the DB. So the cache lives exactly as long as the DB has data.
+const EPG_CACHE_PREFIX = 'nuvio:epg:';
+const EPG_STATE_KEY = 'nuvio:epg:hub_state';
+
+/**
+ * Save a channel's merged EPG to the cache, stamped with the hub generation it
+ * was built from.
+ * @param {string} channelKey canonical cId
+ * @param {Array} programs [{title,desc,start,stop}]
+ * @param {number} generation current hub generation (from getHubGeneration)
+ */
+async function saveEpgCache(channelKey, programs, generation) {
+    if (!redis) return;
+    try {
+        await redis.set(EPG_CACHE_PREFIX + channelKey, JSON.stringify({ generation, programs, savedAt: Date.now() }));
+    } catch (e) {
+        console.error('[Redis Error] saveEpgCache:', e.message);
+    }
+}
+
+/**
+ * Load a channel's EPG cache. Returns { programs, generation, savedAt } or null
+ * on miss. Validity is decided by the caller comparing `generation` to the
+ * current hub generation (see getHubGeneration).
+ */
+async function loadEpgCache(channelKey) {
+    if (!redis) return null;
+    try {
+        const raw = await redis.get(EPG_CACHE_PREFIX + channelKey);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        return { programs: obj.programs || [], generation: obj.generation || 0, savedAt: obj.savedAt || 0 };
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Batch-load EPG cache entries for many channels with ONE Redis MGET (avoids a
+ * round-trip per channel — important when a catalog page resolves 100 channels).
+ * Returns a Map<channelKey, {programs,generation,savedAt}|null>.
+ */
+async function mgetEpgCaches(channelKeys) {
+    const out = new Map();
+    if (!redis || !channelKeys || channelKeys.length === 0) return out;
+    try {
+        const raws = await redis.mget(channelKeys.map((k) => EPG_CACHE_PREFIX + k));
+        for (let i = 0; i < channelKeys.length; i++) {
+            const raw = raws[i];
+            if (!raw) { out.set(channelKeys[i], null); continue; }
+            try {
+                const obj = JSON.parse(raw);
+                out.set(channelKeys[i], { programs: obj.programs || [], generation: obj.generation || 0, savedAt: obj.savedAt || 0 });
+            } catch { out.set(channelKeys[i], null); }
+        }
+    } catch (e) {
+        console.error('[Redis Error] mgetEpgCaches:', e.message);
+    }
+    return out;
+}
+
+/** Current hub generation (0 if never bumped). */
+async function getHubGeneration() {
+    if (!redis) return 0;
+    try {
+        const raw = await redis.get(EPG_STATE_KEY);
+        if (!raw) return 0;
+        const obj = JSON.parse(raw);
+        return (obj && obj.generation) || 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+/** Bump the hub generation (called after a successful central-EPG merge cycle). */
+async function bumpGeneration(coverage) {
+    if (!redis) return;
+    try {
+        const raw = await redis.get(EPG_STATE_KEY);
+        const prev = raw ? (JSON.parse(raw).generation || 0) : 0;
+        await redis.set(EPG_STATE_KEY, JSON.stringify({ generation: prev + 1, last_update: Date.now(), coverage: coverage || 0 }));
+    } catch (e) {
+        console.error('[Redis Error] bumpGeneration:', e.message);
+    }
+}
+
+// --- Shared auth sessions (multi-worker safe) ------------------------------
+// Sessions were an in-memory Map (single-process only). For horizontal scaling
+// to more workers, a token must validate on ANY worker — stored in Redis with a
+// 30-day TTL (matches the previous in-memory expiry). Node cluster / replicas
+// only work once this is Redis-backed.
+const SESSION_PREFIX = 'nuvio:session:';
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+
+async function sessionGet(token) {
+    if (!redis || !token) return null;
+    try {
+        const raw = await redis.get(SESSION_PREFIX + token);
+        if (!raw) return null;
+        const s = JSON.parse(raw);
+        return s || null;
+    } catch { return null; }
+}
+
+async function sessionSet(token, session) {
+    if (!redis || !token) return;
+    try {
+        await redis.set(SESSION_PREFIX + token, JSON.stringify(session), 'EX', SESSION_TTL_SECONDS);
+    } catch (e) { console.error('[Redis Error] sessionSet:', e.message); }
+}
+
+async function sessionDelete(token) {
+    if (!redis || !token) return;
+    try { await redis.del(SESSION_PREFIX + token); } catch {}
+}
+
+/**
+ * Remove expired sessions. Redis auto-expires them on TTL, but this also prunes
+ * any session whose expiresAt passed without a TTL fire. Returns count scanned.
+ */
+async function sessionPruneExpired() {
+    if (!redis) return 0;
+    let cleared = 0;
+    try {
+        let cursor = '0';
+        do {
+            const [next, keys] = await redis.scan(cursor, { match: SESSION_PREFIX + '*', count: 200 });
+            cursor = next;
+            if (keys && keys.length) {
+                const raws = await redis.mget(keys);
+                const now = Date.now();
+                const toDel = [];
+                for (let i = 0; i < keys.length; i++) {
+                    try {
+                        const s = raws[i] ? JSON.parse(raws[i]) : null;
+                        if (!s || (s.expiresAt && s.expiresAt < now)) toDel.push(keys[i]);
+                    } catch { toDel.push(keys[i]); }
+                }
+                if (toDel.length) { await redis.del(toDel); cleared += toDel.length; }
+            }
+        } while (cursor !== '0');
+    } catch (e) { console.error('[Redis Error] sessionPrune:', e.message); }
+    return cleared;
+}
+
 module.exports = {
     saveCacheToRedis,
     loadCacheFromRedis,
@@ -196,5 +354,14 @@ module.exports = {
     loadLogoBuffer,
     saveLogoUrl,
     loadLogoUrl,
+    saveEpgCache,
+    loadEpgCache,
+    mgetEpgCaches,
+    getHubGeneration,
+    bumpGeneration,
+    sessionGet,
+    sessionSet,
+    sessionDelete,
+    sessionPruneExpired,
     hasRedis: !!redis
 };
