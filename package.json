@@ -90,7 +90,22 @@
     ],
     "plugins": [
       "@semantic-release/commit-analyzer",
-      "@semantic-release/release-notes-generator",
+      [
+        "./release-plugin.js",
+        {
+          "generator": [
+            "@semantic-release/release-notes-generator",
+            {
+              "preset": "conventionalcommits",
+              "writerOpts": {
+                "groupBy": "type",
+                "commitGroupsSort": ["feat", "fix", "perf", "refactor", "docs", "style", "test", "chore"],
+                "commitsSort": "scope"
+              }
+            }
+          ]
+        }
+      ],
       [
         "@semantic-release/changelog",
         {
