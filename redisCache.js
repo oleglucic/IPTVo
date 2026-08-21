@@ -50,8 +50,9 @@ function serializeCache(cacheData) {
 }
 
 /**
- * Reverse of serializeCache - rebuild Map/Set fields from the JSON-safe plain object.
- * @param {string} raw - the JSON string read back from Redis
+ * Reconstructs a cache object from its JSON representation.
+ * @param {string} raw - The JSON-encoded cache data.
+ * @return {Object} The cache data with map and set fields restored.
  */
 function deserializeCache(raw) {
     const obj = JSON.parse(raw);
@@ -181,9 +182,8 @@ async function loadLogoUrl(channelId) {
 }
 
 /**
- * List every config key currently persisted in Redis - used to pre-warm
- * the in-memory cache for all known configs on boot.
- * @returns {Promise<string[]>}
+ * Lists configuration keys stored in the Redis channel cache.
+ * @return {Promise<string[]>} The stored configuration-key suffixes, or an empty array when Redis is unavailable or the lookup fails.
  */
 async function listCachedConfigKeys() {
     if (!redis) return [];
@@ -206,11 +206,10 @@ const EPG_CACHE_PREFIX = 'nuvio:epg:';
 const EPG_STATE_KEY = 'nuvio:epg:hub_state';
 
 /**
- * Save a channel's merged EPG to the cache, stamped with the hub generation it
- * was built from.
- * @param {string} channelKey canonical cId
- * @param {Array} programs [{title,desc,start,stop}]
- * @param {number} generation current hub generation (from getHubGeneration)
+ * Saves merged EPG programs for a channel with the hub generation used to build them.
+ * @param {string} channelKey - The channel's canonical identifier.
+ * @param {Array} programs - The channel's merged EPG programs.
+ * @param {number} generation - The hub generation associated with the programs.
  */
 async function saveEpgCache(channelKey, programs, generation) {
     if (!redis) return;
@@ -222,9 +221,9 @@ async function saveEpgCache(channelKey, programs, generation) {
 }
 
 /**
- * Load a channel's EPG cache. Returns { programs, generation, savedAt } or null
- * on miss. Validity is decided by the caller comparing `generation` to the
- * current hub generation (see getHubGeneration).
+ * Loads cached EPG programs and their generation metadata for a channel.
+ * @param {string} channelKey - The key identifying the channel.
+ * @return {{programs: Array, generation: number, savedAt: number}|null} The cached EPG data, or `null` when unavailable, missing, or invalid.
  */
 async function loadEpgCache(channelKey) {
     if (!redis) return null;
@@ -239,9 +238,9 @@ async function loadEpgCache(channelKey) {
 }
 
 /**
- * Batch-load EPG cache entries for many channels with ONE Redis MGET (avoids a
- * round-trip per channel — important when a catalog page resolves 100 channels).
- * Returns a Map<channelKey, {programs,generation,savedAt}|null>.
+ * Loads cached EPG data for multiple channels.
+ * @param {string[]} channelKeys - The channel keys to retrieve.
+ * @return {Map<string, {programs: Array, generation: number, savedAt: number}|null>} A map of channel keys to cached EPG data, or `null` for missing or invalid entries.
  */
 async function mgetEpgCaches(channelKeys) {
     const out = new Map();
@@ -262,7 +261,10 @@ async function mgetEpgCaches(channelKeys) {
     return out;
 }
 
-/** Current hub generation (0 if never bumped). */
+/**
+ * Retrieves the current EPG hub generation.
+ * @return {number} The current generation, or `0` when unavailable or invalid.
+ */
 async function getHubGeneration() {
     if (!redis) return 0;
     try {
@@ -275,7 +277,10 @@ async function getHubGeneration() {
     }
 }
 
-/** Bump the hub generation (called after a successful central-EPG merge cycle). */
+/**
+ * Advances the central EPG hub generation after a successful merge cycle.
+ * @param {number} coverage - The coverage value to store with the updated generation.
+ */
 async function bumpGeneration(coverage) {
     if (!redis) return;
     try {
@@ -293,7 +298,11 @@ async function bumpGeneration(coverage) {
 // 30-day TTL (matches the previous in-memory expiry). Node cluster / replicas
 // only work once this is Redis-backed.
 const SESSION_PREFIX = 'nuvio:session:';
-const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; /**
+ * Retrieves a shared session by its token.
+ * @param {string} token - The session token.
+ * @return {Object|null} The parsed session data, or `null` if the token is missing, the session is unavailable, or the stored data is invalid.
+ */
 
 async function sessionGet(token) {
     if (!redis || !token) return null;
@@ -305,6 +314,11 @@ async function sessionGet(token) {
     } catch { return null; }
 }
 
+/**
+ * Stores a shared session with a 30-day expiration.
+ * @param {string} token - The token associated with the session.
+ * @param {Object} session - The session data to store.
+ */
 async function sessionSet(token, session) {
     if (!redis || !token) return;
     try {
@@ -312,14 +326,18 @@ async function sessionSet(token, session) {
     } catch (e) { console.error('[Redis Error] sessionSet:', e.message); }
 }
 
+/**
+ * Deletes a shared session.
+ * @param {string} token - The session token identifying the session.
+ */
 async function sessionDelete(token) {
     if (!redis || !token) return;
     try { await redis.del(SESSION_PREFIX + token); } catch {}
 }
 
 /**
- * Remove expired sessions. Redis auto-expires them on TTL, but this also prunes
- * any session whose expiresAt passed without a TTL fire. Returns count scanned.
+ * Remove expired or invalid shared session records.
+ * @return {number} The number of session records removed.
  */
 async function sessionPruneExpired() {
     if (!redis) return 0;

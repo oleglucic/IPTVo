@@ -3,6 +3,9 @@
 
 const pool = require('./db').pool;
 
+/**
+ * Initializes the PostgreSQL schema and supporting indexes when a database connection is available.
+ */
 async function initSchema() {
     if (!pool) {
         console.log('[DB Init] No DATABASE_URL - skipping schema init');

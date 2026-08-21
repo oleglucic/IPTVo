@@ -16,6 +16,11 @@ const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, confi
 // catalog links resolve to the Cloudflare assets Worker+edge instead of the
 // request host, offloading the Node server. Falls back to the request host.
 const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
+/**
+ * Resolves the base URL for application assets.
+ * @param {object} req - The Express request used to determine the protocol and host when no configured asset URL is available.
+ * @return {string} The configured asset base URL or the current request origin.
+ */
 function assetRoot(req) {
     return ASSET_BASE_URL || `${req.protocol}://${req.get('host')}`;
 }
@@ -109,10 +114,9 @@ function sanitizeForLog(str) {
 }
 
 /**
- * Validates a URL to prevent SSRF attacks.
- * Blocks private/internal IPs, localhost, and requires http/https scheme.
- * @param {string} url - The URL to validate
- * @returns {boolean} - True if URL is safe to fetch
+ * Determines whether a URL is allowed for external fetching.
+ * @param {string} url - The URL to evaluate.
+ * @returns {boolean} `true` if the URL uses HTTP or HTTPS and its host is not a blocked local, private, link-local, or metadata address, `false` otherwise.
  */
 function isSafeUrl(url) {
     if (!url || typeof url !== 'string') return false;
@@ -227,7 +231,10 @@ app.get('/api/releases', dashboardLimiter, async (req, res) => {
 app.use('/api/', apiLimiter);
 
 // Require a valid bearer session for external-fetch endpoints so the server
-// cannot be used as an anonymous fetch/SSRF proxy once open to the public.
+/**
+ * Authenticates requests using a valid bearer session.
+ * Attaches the authenticated session to `req.session` and passes valid requests to the next middleware.
+ */
 async function requireAuth(req, res, next) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -328,9 +335,10 @@ app.post('/api/test-config', requireAuth, testConfigLimiter, async (req, res) =>
 // ============ STREMIO ADDON ENDPOINTS ============
 
 /**
- * Extracts user configuration from request parameters, headers, or a legacy encoded configuration.
- * @param {Object} req - The request containing user ID or configuration data.
- * @returns {Object|null} The extracted user ID reference or decoded configuration, or `null` when extraction fails or no configuration is provided.
+ * Extracts a user identifier or legacy provider configuration from a request.
+ * User identifiers take precedence over encoded configuration values. Legacy configurations are decoded and normalized when needed.
+ * @param {Object} req - The request containing identifier or configuration data.
+ * @returns {Object|null} An object containing the user identifier, the decoded configuration, or `null` when extraction fails or no value is provided.
  */
 function extractConfig(req) {
     try {
@@ -367,7 +375,12 @@ function extractConfig(req) {
 // request: serve from the generation-stamped Redis EPG cache first (valid for
 // as long as the central DB's data lasts), fall back to promoting from the
 // central epg_programs store, and finally the per-entry forward data.
-// Returns a programme array [{title,desc,start,stop}] or null.
+/**
+ * Resolves upcoming electronic program guide data for a channel.
+ * @param {string} chKey - The channel key used to locate program data.
+ * @param {Object} entry - The provider entry containing a per-channel EPG fallback.
+ * @returns {Array<Object>|null} The channel's program array, or `null` when no program data is available.
+ */
 async function getEffectiveEpg(chKey, entry) {
     try {
         const gen = await getHubGeneration();
@@ -391,10 +404,10 @@ async function getEffectiveEpg(chKey, entry) {
 }
 
 /**
- * Batch resolve EPG for many channels with ONE Redis MGET (+ one DB fallback
- * pass), instead of N sequential per-channel getEffectiveEpg calls — the
- * catalog page loops 100 channels, so N× round-trips were the concurrency cost.
- * Returns a Map<chKey, programmes-array|null>.
+ * Resolve EPG programmes for multiple channels using shared cache and database fallbacks.
+ * @param {string[]} chKeys - Channel keys to resolve.
+ * @param {Object} entry - Provider entry containing optional per-channel EPG data.
+ * @returns {Map<string, Array<Object>>} A map of channel keys to resolved programme arrays.
  */
 async function getEffectiveEpgMany(chKeys, entry) {
     const out = new Map();
@@ -430,7 +443,16 @@ async function getEffectiveEpgMany(chKeys, entry) {
     return out;
 }
 
-// Ensure cache is populated before serving data routes
+/**
+ * Ensures a user's provider cache is available for data routes.
+ *
+ * Resolves user configurations, rehydrates ready caches from Redis, starts background
+ * loading or refresh operations when needed, and returns the current cache state.
+ *
+ * @param {string} config - Cache key for the provider configuration.
+ * @param {Object} configObj - Provider configuration, optionally containing a user identifier.
+ * @return {Promise<Object|null>} The provider cache, a loading cache during cold starts, or `null` when no configuration is provided.
+ */
 async function ensureCache(config, configObj) {
     // If configObj contains _userId, resolve the full config from database
     if (configObj && configObj._userId) {
@@ -1116,7 +1138,11 @@ builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
 const addonInterface = builder.getInterface();
 
 // Manifest is a shared static object; logo/background are absolute URLs keyed
-// to the requesting origin, so resolvel them per-request to the running host.
+/**
+ * Resolves relative manifest asset URLs against the requesting host.
+ * @param {import('express').Request} req - The incoming HTTP request.
+ * @return {object} A manifest with absolute logo and background URLs.
+ */
 function manifestFor(req) {
     const root = `${req.protocol}://${req.get('host')}`;
     const m = { ...addonInterface.manifest };
@@ -1128,6 +1154,11 @@ function manifestFor(req) {
 // Helper to extract configKey and configObj from request
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Resolves a request's user configuration and its corresponding cache key.
+ * @param {import('express').Request} req - The request containing a UUID-based or legacy configuration route parameter.
+ * @return {Promise<{configKey: string, configObj: object}>} The configuration key and extracted configuration object.
+ */
 async function getConfigFromReq(req) {
     // Check for user UUID first (new system). A legacy base64 config can land in
     // the same path segment; verify it is really a UUID so we never hand a base64

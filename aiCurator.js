@@ -22,7 +22,8 @@ const globalAiCache = new Map();
  * Resolves channel names into canonical base names using OpenRouter.
  * @param {Array<{name: string, scope: string}>} batchItems - Channel names and their parser-derived scopes.
  * @param {string} apiKey - OpenRouter API key.
- * @returns {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
+ * @param {string} [model] - OpenRouter model to use.
+ * @return {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
  */
 async function processAiBatch(batchItems, apiKey, model) {
     if (!apiKey) return {};

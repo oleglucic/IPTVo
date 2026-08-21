@@ -71,6 +71,11 @@ const MAX_T3_SCAN = 2000;
 const normalizeCache = new Map();
 const NORMALIZE_CACHE_MAX = 5000;
 
+/**
+ * Normalizes a string by lowercasing it and removing non-alphanumeric characters.
+ * @param {string} str - The string to normalize.
+ * @return {string} The normalized string, or an empty string for falsy input.
+ */
 function normalize(str) {
     if (!str) return '';
     const cached = normalizeCache.get(str);
@@ -86,10 +91,10 @@ function normalize(str) {
 }
 
 /**
- * Split a channel name into normalized tokens, dropping provider-suffix noise
- * (HD, +1, English, US/UK, Timeshift, …) so "CNN International HD" compares as
- * ["cnn","international"]. Tokens are also expanded through the alias table so
- * alternate brand spellings converge before comparison.
+ * Converts a channel name into normalized tokens and removes recognized noise terms.
+ * @param {string} name - The channel name to tokenize.
+ * @param {boolean} [applyAliases=true] - Whether to expand recognized brand aliases.
+ * @return {string[]} The normalized channel tokens.
  */
 function tokenize(name, applyAliases = true) {
     if (!name) return [];
@@ -118,10 +123,10 @@ function tokenize(name, applyAliases = true) {
     return toks.filter(t => !SUFFIX_WORDS.has(t) && t.length > 0);
 }
 
-/** Canonical key for a token list: expected order preserved but uniquified.
- *  For set matching we sort; for ordered prefix we keep. Handle both:
- *  - sortedKey: same token set == same key (robust to reorder, e.g. "News Fox")
- *  - orderedKey: exact phrase (e.g. "Sky Sports Main Event" vs "Sky Sports")
+/**
+ * Creates order-sensitive and order-insensitive keys from a token list.
+ * @param {string[]} tokens - The tokens used to build the keys.
+ * @returns {{sortedKey: string, orderedKey: string}} An object containing the alphabetically sorted token key and the original-order token key.
  */
 function tokensToKeys(tokens) {
     const sorted = [...tokens].sort((a, b) => a.localeCompare(b)).join(' ');
@@ -140,12 +145,24 @@ function tokensToKeys(tokens) {
 // candidate is "HBO Latin America", accepting it is a wrong-region false
 // positive — a stale-but-correct MISS is better than a wrong channel.
 const REGION_MARKERS = ['latin america', 'latinamerican', 'caribbean', 'amtv', 'brazil', 'mexico', 'latinamerica', 'nordic', 'emea', 'asia', 'europe', 'pacific'];
+/**
+ * Determines whether a channel name indicates a regional feed that conflicts with a specific country scope.
+ * @param {string} name - The channel name to evaluate.
+ * @param {string} countryScopeKey - The requested country scope.
+ * @return {boolean} `true` if the name contains a regional marker while a specific country scope is active, `false` otherwise.
+ */
 function isRegionConflicting(name, countryScopeKey) {
     if (!countryScopeKey || countryScopeKey === 'global') return false;
     const n = (name || '').toLowerCase();
     return REGION_MARKERS.some(m => n.includes(m));
 }
 
+/**
+ * Determines whether query tokens match candidate tokens in order.
+ * @param {string[]} query - The tokens to find.
+ * @param {string[]} cand - The candidate tokens to inspect.
+ * @return {boolean} `true` if each query token matches an equal or prefixed candidate token in order, `false` otherwise.
+ */
 function isSubsequence(query, cand) {
     let c = 0;
     for (const q of query) {
@@ -174,6 +191,11 @@ function isTokenSubset(query, cand) {
     return true;
 }
 
+/**
+ * Builds a standardized channel match entry from channel metadata.
+ * @param {Object} entry - Channel metadata containing its name, country scope, official ID, and categories.
+ * @return {Object} The standardized match entry with canonical name, logo, country scope, official ID, and categories.
+ */
 function buildMatchEntry(entry) {
     return {
         countryScopeKey: entry.country || 'global',
@@ -184,6 +206,11 @@ function buildMatchEntry(entry) {
     };
 }
 
+/**
+ * Refreshes channel, logo, and country indexes from iptv-org data.
+ *
+ * Failed refreshes preserve the existing indexes.
+ */
 async function refresh() {
     try {
         const [channelsRes, logosRes, countriesRes] = await Promise.all([
@@ -365,6 +392,11 @@ function lookupChannel(cleanName, countryScopeKey) {
     return null;
 }
 
+/**
+ * Builds a standardized channel match result from channel metadata.
+ * @param {Object} match - Channel metadata containing the name, country, official ID, and categories.
+ * @returns {Object} A match result with country scope, canonical name, logo, official ID, and categories.
+ */
 function buildMatchResult(match) {
     return {
         countryScopeKey: match.country || 'global',
@@ -376,11 +408,11 @@ function buildMatchResult(match) {
 }
 
 /**
- * Fuzzy fallback for names that don't exact-match.
- * Conservative: only accepts near-exact matches to avoid wrong assignments.
- * @param {string} cleanName - Already normalized channel name
- * @param {string} [countryScopeKey] - Optional country code to filter results
- * @returns {Object|null} Match object with fuzzy flag
+ * Finds a conservatively matched channel name using fuzzy search and optional country filtering.
+ * @param {string} cleanName - Normalized channel name to search for.
+ * @param {string} [countryScopeKey] - Country code used to filter matches.
+ * @param {string} [firstTokHint] - Leading token used to narrow the search index.
+ * @returns {Object|null} A fuzzy match with channel metadata and score, or `null` when no suitable match is found.
  */
 function lookupChannelFuzzy(cleanName, countryScopeKey, firstTokHint) {
     if (!fuseIndex || !cleanName || cleanName.length < 4) return null;
@@ -423,18 +455,10 @@ function lookupChannelFuzzy(cleanName, countryScopeKey, firstTokHint) {
 }
 
 /**
- * Token-aware + alias-aware matcher. Provider playlist names almost never
- * equal the iptv-org name, so this layers several tolerant tiers on top of the
- * exact single-string match:
- *   1. token-set exact (order-insensitive; "News Fox" == "Fox News")
- *   2. token-subsequence (abbreviation/prefix-insensitive; "CNN Intl" -> CNN International)
- *   3. token-prefix per-token (subsequence over the leading tokens)
- *   4. fuse fuzzy on the flattened name (already conservative)
- * Alias expansion (DW->Deutsche Welle, The Blaze->Blaze, …) happens in tokenize.
- *
- * @param {string} cleanName - Already cleaned channel name (lowercase, spaces intact)
- * @param {string} [countryScopeKey] - Optional country code like 'us','gb' or 'global'
- * @returns {Object|null} Match object (officialId, canonicalName, logo, fuzzy?)
+ * Matches a channel name using exact, token-based, alias-aware, and fuzzy matching.
+ * @param {string} cleanName - Channel name to match.
+ * @param {string} [countryScopeKey] - Country code used to restrict matching, or `global`.
+ * @returns {Object|null} A standardized channel match with canonical name, official ID, logo, and match metadata, or `null` when no match is found.
  */
 function lookupChannelSmart(cleanName, countryScopeKey) {
     if (!cleanName) return null;
@@ -503,6 +527,11 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     return null;
 }
 
+/**
+ * Determines whether a country code is present in the refreshed country-code index.
+ * @param {string} code - The country code to validate.
+ * @return {boolean} `true` if the code is valid, `false` otherwise.
+ */
 function isValidCountryCode(code) {
     if (!code) return false;
     return validCountryCodes.has(code.toLowerCase());
@@ -557,7 +586,11 @@ for (const [name, code] of Object.entries(COUNTRY_NAME_ALIASES)) {
     COUNTRY_ALIASES_NORM.set(name.toLowerCase().replace(/[^a-z]/g, ''), code);
 }
 
-let countryNameToCode = null; // "greece" -> "gr", built on refresh
+let countryNameToCode = null; /**
+ * Resolves a country name, alias, or ISO code to its lowercase country code.
+ * @param {string} name - The country name, alias, or ISO code to resolve.
+ * @return {string|null} The lowercase country code, or `null` if no match exists.
+ */
 
 function countryCodeFromName(name) {
     if (!name) return null;
@@ -570,11 +603,9 @@ function countryCodeFromName(name) {
 }
 
 /**
- * Resolve a group-title string to an ISO scope + display prefix.
- * Mirrors iptvParser's bare-country extraction, extended with region-container
- * support so "EURO | GREECE" yields { scope:'gr', prefix:'GR | ', rest:'GREECE' }.
- * @param {string} rawGroup raw group-title attribute (e.g. 'US | Sports')
- * @returns {{code:string|null, scope:string, prefix:string, rest:string}}
+ * Resolves a group title to a country scope and normalized display prefix.
+ * @param {string} rawGroup - The raw group title, such as `US | Sports` or `EURO | GREECE`.
+ * @return {{code: string|null, scope: string, prefix: string, rest: string}} The resolved country code, scope, display prefix, and remaining group text.
  */
 function resolveGroupScope(rawGroup) {
     const raw = (rawGroup || '').trim();
@@ -628,6 +659,9 @@ function resolveGroupScope(rawGroup) {
     return out;
 }
 
+/**
+ * Refreshes channel metadata immediately and schedules recurring daily refreshes.
+ */
 function startAutoRefresh() {
     refresh();
     setInterval(refresh, REFRESH_INTERVAL);

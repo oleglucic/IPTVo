@@ -24,13 +24,10 @@ function sanitizeForLog(str) {
 }
 
 /**
- * Choose the genre for a channel meta. iptv-org categories are authoritative
- * and deduped, so prefer them when the playlist group carries no useful genre
- * signal (generic "Uncategorized"/blank groups). Otherwise keep the group,
- * which is what the dashboard group filter and genre chips key off.
- * @param {Object} iptvOrgMatch - Result of iptv-org matching, may carry categories
- * @param {string} group - The playlist group/finalGrp label
- * @returns {string[]} Genre array
+ * Selects genres from iptv-org categories when the playlist group is generic; otherwise uses the playlist group.
+ * @param {Object} iptvOrgMatch - The iptv-org match, including available categories.
+ * @param {string} group - The playlist group label.
+ * @returns {string[]} The selected genre labels.
  */
 function pickGenres(iptvOrgMatch, group) {
     const cats = iptvOrgMatch && iptvOrgMatch.categories && iptvOrgMatch.categories.length ? iptvOrgMatch.categories : null;
@@ -142,6 +139,9 @@ let activeParses = 0;
 // cold-start requests can't saturate a small box; on a larger host, operators
 // can raise it via env to cut cold-start queue time for a bigger userbase.
 const MAX_CONCURRENT_PARSES = parseInt(process.env.MAX_CONCURRENT_PARSES || '4', 10) || 4;
+/**
+ * Waits for an available parsing slot and reserves it.
+ */
 async function semaphoreSlot() {
     while (activeParses >= MAX_CONCURRENT_PARSES) {
         await new Promise(r => setTimeout(r, 200));
@@ -149,6 +149,13 @@ async function semaphoreSlot() {
     activeParses++;
 }
 
+/**
+ * Coordinates parsing so concurrent requests for the same configuration share one in-flight operation.
+ * @param {string} configKey - The identifier used to group equivalent parse requests.
+ * @param {Object} configObj - The configuration passed to the parser.
+ * @param {Function} parseFn - The parser to execute when no matching operation is in progress.
+ * @return {*} The result produced by the parser.
+ */
 async function parseWithCoalescing(configKey, configObj, parseFn) {
     const existing = parseInFlight.get(configKey);
     if (existing) return existing;
@@ -168,6 +175,11 @@ async function parseWithCoalescing(configKey, configObj, parseFn) {
     }
 }
 
+/**
+ * Retrieves the cached IPTV data for a configuration.
+ * @param {string} configKey - The configuration key identifying the cache entry.
+ * @return {object|null} The cached data, or `null` when no entry exists.
+ */
 function getUserCache(configKey) {
     // Never evict a cache for staleness: an old-but-usable snapshot still beats
     // an empty catalog when the provider is down. Refresh decisions and retry
@@ -213,6 +225,11 @@ function normaliseFormat(str) {
     return str.split('').map(c => map[c] || c).join('');
 }
 
+/**
+ * Classifies a stream name by quality and supported stream attributes.
+ * @param {string} n - The stream name or description to classify.
+ * @return {{name: string, title: string, score: number}} The quality label, attribute title, and ranking score.
+ */
 function parseStreamInfo(n) {
     const norm = normaliseFormat(n).toLowerCase();
     const cleanN = " " + norm.replace(/[^a-z0-9]/g, " ") + " ";
@@ -249,6 +266,12 @@ function parseStreamInfo(n) {
     return { name, title: e.length > 0 ? e.join(" • ") : "Direct Stream", score };
 }
 
+/**
+ * Refreshes and parses an IPTV source while honoring cache freshness and retry backoff.
+ * @param {string} configKey - Unique key identifying the IPTV configuration.
+ * @param {Object} configObj - IPTV source configuration.
+ * @return {*} The result of parsing the IPTV source.
+ */
 async function streamFetchIPTV(configKey, configObj) {
     const now = Date.now();
     if (userCaches.has(configKey)) {
@@ -286,7 +309,7 @@ async function streamFetchIPTV(configKey, configObj) {
 /**
  * Parses an M3U playlist and stores its channels, streams, logos, groups, and EPG data in the user cache.
  * @param {string} configKey - The key identifying the playlist configuration and its cache entry.
- * @param {Object} configObj - Playlist settings, including the M3U URL and optional filtering, EPG, matching, and AI configuration.
+ * @param {Object} configObj - Playlist settings, including the M3U source and optional filtering, EPG, matching, and AI options.
  */
 async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
@@ -549,9 +572,9 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 }
 
 /**
- * Loads and normalizes live channel data from an Xtream server into the user cache.
+ * Loads, normalizes, and caches live channel data from an Xtream server, including stream metadata and EPG information.
  * @param {string} configKey - The key identifying the configuration and its cache entry.
- * @param {Object} configObj - Xtream connection and channel filtering configuration.
+ * @param {Object} configObj - Xtream connection, filtering, EPG, and enrichment configuration.
  */
 async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
@@ -778,11 +801,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
 }
 
 /**
- * Parses a streamed XMLTV EPG feed and maps programme schedules to known channels.
+ * Parses an XMLTV feed and maps programme schedules to known canonical channels.
  * @param {string} epgUrl - The XMLTV feed URL.
  * @param {Map} tMap - Map of known canonical channel IDs.
- * @param {Map} epgMap - Map of EPG channel identifiers to canonical channel IDs.
- * @returns {Object} A mapping of canonical channel IDs to programme schedules.
+ * @param {Map} epgMap - Map of XMLTV channel identifiers to canonical channel IDs.
+ * @return {{tEpg: Object, spanMs: number}} The channel programme mapping and its coverage span in milliseconds.
  */
 async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     const tEpg = {};
@@ -890,6 +913,10 @@ let iptvOrgGuideCache = null; // { byChannel: Map<officialId, [{url}]>, fetchedA
 const IPTVORG_GUIDE_TTL = 24 * 60 * 60 * 1000;
 const IPTVORG_GUIDE_URL = 'https://iptv-org.github.io/api/guides.json';
 
+/**
+ * Loads the iptv-org guide metadata indexed by channel identifier.
+ * @return {Promise<Map<string, Array>>} A map of channel identifiers to usable guide metadata with direct HTTP(S) sources.
+ */
 async function loadIptvOrgGuideMap() {
     const now = Date.now();
     if (iptvOrgGuideCache && now - iptvOrgGuideCache.fetchedAt < IPTVORG_GUIDE_TTL) return iptvOrgGuideCache.byId;
@@ -916,6 +943,11 @@ async function loadIptvOrgGuideMap() {
     return byId;
 }
 
+/**
+ * Fetches and maps IPTV-org programme schedules for matched channels.
+ * @param {Map} epgMap - Maps official IPTV-org channel identifiers to canonical channel IDs.
+ * @return {{tEpg: Object, spanMs: number}|null} The mapped programme schedules and maximum coverage span, or `null` when IPTV-org enrichment is unavailable.
+ */
 async function fetchIptvOrgEpg(configObj, epgMap) {
     if (!configObj || !configObj.iptvOrg) return null;
     const guideByChannel = await loadIptvOrgGuideMap();
@@ -953,13 +985,10 @@ function epgScheduleNextRefresh(spanMs) {
 }
 
 /**
- * Re-fetch EPG for a single configKey using its retained epgMap / epg URL —
- * the decoupled companion to the full-parse EPG fetch. Never touches the
- * channel/stream data; a failed fetch keeps the last good epgData and shortens
- * the next-refresh time so we retry soon. Also runs the iptv-org #41 guide
- * enrichment when the config opts in.
- * @returns {Promise<{epgData:Object, epgNextRefreshAt:number, epgCoverageMs:number}|null>}
- *         null if there is no EPG source to refresh.
+ * Refresh EPG data for a cached playlist entry without reloading its channels or streams.
+ * @param {Object} entry - Cached entry containing EPG mappings and previously fetched data.
+ * @param {Object} configObj - Configuration containing the EPG source and optional iptv-org enrichment.
+ * @return {Promise<{epgData: Object, epgNextRefreshAt: number, epgCoverageMs: number}|null>} Refreshed EPG data, next refresh time, and coverage duration; `null` if no EPG source is configured.
  */
 async function refreshEpgForEntry(entry, configObj) {
     if (!entry) return null;
@@ -995,6 +1024,13 @@ async function refreshEpgForEntry(entry, configObj) {
     return out;
 }
 
+/**
+ * Formats the current and next scheduled programs for a channel.
+ * @param {string} chKey - The channel identifier used to locate the schedule.
+ * @param {Object} epgData - EPG schedules keyed by channel identifier.
+ * @param {number} [offsetHours=0] - Number of hours to add to displayed times.
+ * @return {string} Formatted programme information or a fallback message when no schedule is available.
+ */
 function getEpgText(chKey, epgData, offsetHours = 0) {
     const now = Date.now(), sched = epgData[chKey];
     if (!sched || sched.length === 0) return "No TV guide mapped.";
@@ -1036,8 +1072,7 @@ async function saveLogoUrlsToRedis(configKey, tMap) {
 }
 
 /**
- * Refreshes channel logos when their URLs are new or have changed.
- * Tracks processed logo URLs persistently and pauses between refreshes to respect rate limits.
+ * Refreshes channel logos when their URLs are new, changed, or associated with a previous fetch failure.
  */
 async function backgroundLogoRefresh() {
     console.log('[LogoRefresh] Starting background logo refresh...');

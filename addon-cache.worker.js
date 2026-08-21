@@ -25,6 +25,12 @@ const MANIFEST_TTL = 24 * 60 * 60; // 1 day
 const CATALOG_TTL = 5 * 60;        // 5 min (re-parse invalidation via generation)
 const KV_GEN_KEY = 'addon-cache:generation';
 
+/**
+ * Determines whether an addon response is eligible for edge caching.
+ * @param {Request} request - The incoming request to evaluate.
+ * @param {Response} response - The response to evaluate.
+ * @return {Promise<boolean>} `true` if the request and response meet caching requirements, `false` otherwise.
+ */
 async function shouldCache(request, response) {
   const url = new URL(request.url);
   if (request.method !== 'GET') return false;         // never cache POST/etc (auth)
@@ -38,6 +44,11 @@ async function shouldCache(request, response) {
   return true;
 }
 
+/**
+ * Determines the custom cache duration for an addon resource URL.
+ * @param {URL} url - The resource URL to evaluate.
+ * @return {number|null} The cache duration in seconds, or `null` when no custom policy applies.
+ */
 function cachePolicy(url) {
   if (url.pathname.endsWith('/manifest.json')) return MANIFEST_TTL;
   if (url.pathname.includes('/catalog/')) return CATALOG_TTL;
