@@ -489,7 +489,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
-        userCaches.set(configKey, {
+userCaches.set(configKey, {
             status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
             epgMap, // retained for the decoupled EPG-only refresh
             epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
@@ -526,7 +526,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        // Serve last good: preserve the previous snapshot (channels, catalog,
+// Serve last good: preserve the previous snapshot (channels, catalog,
         // groups, EPG) so a failed refresh degrades to stale-but-working data
         // instead of an empty catalog. Retry with exponential backoff so a down
         // provider isn't re-fetched on every request.
@@ -736,7 +736,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
-        userCaches.set(configKey, {
+userCaches.set(configKey, {
             status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
             epgMap, // retained for the decoupled EPG-only refresh
             epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
@@ -756,7 +756,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        // Serve last good (same policy as parseM3uData): keep the previous
+// Serve last good (same as parseM3uData): keep the previous
         // snapshot so a down Xtream panel shows stale-but-working channels.
         const prev = userCaches.get(configKey);
         const attempts = (backoffAttempts.get(configKey) || 0) + 1;
@@ -868,7 +868,7 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
 
             saxStream.on('error', (err) => {
                 console.error('[EPG SAX Error]', sanitizeForLog(err.message));
-                resolve({ tEpg, spanMs: 0 });
+resolve({ tEpg, spanMs: 0 });
             });
 
             finalizedStream.pipe(saxStream);

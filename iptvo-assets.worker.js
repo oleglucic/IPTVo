@@ -35,10 +35,24 @@ function placeholderSvg(text = "Live TV") {
 // isSafeUrl.
 const BLOCKED_HOSTS = ["localhost", "metadata.google.internal", "metadata", ".internal", ".local"];
 function isPrivateHost(hostname) {
-  const h = (hostname || "").toLowerCase();
+  let h = (hostname || "").toLowerCase();
   if (BLOCKED_HOSTS.some((b) => b === h || h.endsWith(b))) return true;
-  if (/^127\.|^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\.|^169\.254\.|^0\.0\.0\.0$/.test(h)) return true;
-  if (/^\[?::1\]?$|^\[?fe80:|^\[?fc|^\[?fd/.test(h)) return true;
+  h = h.replace(/^\[/, "").replace(/\]$/, ""); // strip IPv6 brackets
+  // v4-mapped v6 normalizes to hex (::ffff:7f00:1) — decode the embedded IPv4
+  // (big-endian 32-bit) and fall through to the private-range checks so
+  // ::ffff:127.0.0.1 (metadata SSRF) cannot bypass them.
+  if (h.startsWith("::ffff:")) {
+    // hostname groups are 16-bit, possibly compressed (::ffff:7f00:1) — zero-pad
+    // each group so the big-endian decode lands on the correct octets.
+    const n = parseInt(h.slice(7).split(":").map(s => s.padStart(4, "0")).join("").padStart(8, "0"), 16);
+    h = String((n >> 24) & 255) + "." + ((n >> 16) & 255) + "." + ((n >> 8) & 255) + "." + (n & 255);
+  }
+  if (/^(127|10)\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  if (/^0\.0\.0\.0$/.test(h)) return true;
+  if (/^(::1|fe80:|fc|fd)/.test(h)) return true;
   return false;
 }
 function isValidHttp(u) {
