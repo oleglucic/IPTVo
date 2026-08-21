@@ -452,28 +452,63 @@ async function getUserById(userId) {
 }
 
 /**
- * Update user's encrypted config
+ * Sensitive credentials the server never returns to the client. When a save
+ * omits one (blank or '[REDACTED]'), the stored value is preserved instead of
+ * being overwritten with an empty string.
+ */
+const CONFIG_SENSITIVE_FIELDS = ['password', 'openrouterKey'];
+
+/**
+ * Update user's encrypted config, preserving stored credentials when the incoming
+ * config omits them.
+ *
+ * The read-merge-write happens inside a single transaction with a row lock
+ * (SELECT ... FOR UPDATE) so concurrent saves cannot overwrite each other's
+ * preserved secrets: a password update and an OpenRouter key update racing each
+ * other each begin from the latest committed config rather than a stale snapshot.
+ *
  * @param {string} userId - User UUID
  * @param {object} config - Config object to encrypt
  * @param {string} encryptionKey - Encryption key (from env)
- * @returns {Promise<boolean>}
+ * @returns {Promise<object|false>} The merged config actually persisted, or `false` on failure
  */
 async function updateUserConfig(userId, config, encryptionKey) {
     if (!pool) return false;
+    const client = await pool.connect();
     try {
-        const { encryptConfig } = require('./cryptoUtils');
-        const { encryptedConfig, iv, salt } = await encryptConfig(config, encryptionKey);
+        await client.query('BEGIN');
+        const { rows } = await client.query(
+            'SELECT encrypted_config, config_iv, config_salt FROM users WHERE user_id = $1 FOR UPDATE',
+            [userId]
+        );
+        const { decryptConfig, encryptConfig } = require('./cryptoUtils');
+        const row = rows[0];
+        let merged = config;
+        if (row && row.encrypted_config && row.config_iv && row.config_salt) {
+            const existing = await decryptConfig(row.encrypted_config, row.config_iv, row.config_salt, encryptionKey) || {};
+            merged = { ...config };
+            for (const field of CONFIG_SENSITIVE_FIELDS) {
+                const incoming = config[field];
+                const omitted = incoming === undefined || incoming === '' || incoming === '[REDACTED]';
+                if (omitted && existing[field]) merged[field] = existing[field];
+            }
+        }
 
-        await pool.query(
+        const { encryptedConfig, iv, salt } = await encryptConfig(merged, encryptionKey);
+        await client.query(
             `UPDATE users
              SET encrypted_config = $1, config_iv = $2, config_salt = $3, updated_at = now()
              WHERE user_id = $4`,
             [encryptedConfig, iv, salt, userId]
         );
-        return true;
+        await client.query('COMMIT');
+        return merged;
     } catch (e) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* connection may be broken */ }
         console.error('[DB Error] updateUserConfig:', e.message);
         return false;
+    } finally {
+        client.release();
     }
 }
 
