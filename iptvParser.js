@@ -257,10 +257,65 @@ const CACHE_BACKOFF_MIN = 60 * 1000;       // 1 min
 const CACHE_BACKOFF_MAX = 30 * 60 * 1000;  // 30 min
 const backoffAttempts = new Map(); // configKey -> consecutive failure count
 
+// Per-config generation guard: a config save bumps the generation, so an
+// in-flight parse that started under the old config cannot resurrect its stale
+// snapshot (into userCaches or Redis) after the save. The parse's loading
+// placeholder carries the generation it started under; publishParseResult
+// compares it to the live counter and discards mismatches.
+const configGenerations = new Map(); // configKey -> generation counter
+
+function getConfigGeneration(configKey) {
+    return configGenerations.get(configKey) || 0;
+}
+
+function bumpConfigGeneration(configKey) {
+    configGenerations.set(configKey, getConfigGeneration(configKey) + 1);
+}
+
+/**
+ * Adopt a generation a rehydrated Redis snapshot was written at. A fresh worker
+ * (or a restarted process) has a counter of 0, so without adoption a refresh of
+ * that snapshot would publish under the snapshot's higher generation and be
+ * discarded against the stale local 0. Adopting max(local, snapshot) keeps the
+ * equality-based publish check meaningful across restarts.
+ * @param {string} configKey
+ * @param {number|undefined} gen
+ */
+function adoptGeneration(configKey, gen) {
+    if (Number.isFinite(gen) && gen > getConfigGeneration(configKey)) {
+        configGenerations.set(configKey, gen);
+    }
+}
+
+/**
+ * Publishes a finished parse result, unless the config changed mid-parse.
+ * The loading placeholder (or, for a fresh rehydrate, the key stamp) carries the
+ * generation this parse started under. If a config change bumped the generation
+ * while we parsed, drop the result — it reflects the OLD config — so the next
+ * request re-parses under the new one instead of resurrecting a stale snapshot.
+ * @param {string} configKey
+ * @param {object} entry
+ * @return {boolean} true when the snapshot was accepted.
+ */
+function publishParseResult(configKey, entry) {
+    const loading = userCaches.get(configKey);
+    const startedGen = (loading && typeof loading._generation === 'number')
+        ? loading._generation
+        : getConfigGeneration(configKey);
+    if (startedGen !== getConfigGeneration(configKey)) {
+        console.log(`[parser] discarded stale parse for config=${configKeyFingerprint(configKey)}... (config changed mid-parse)`);
+        userCaches.delete(configKey);
+        return false;
+    }
+    entry._generation = startedGen;
+    userCaches.set(configKey, entry);
+    return true;
+}
+
 // Coalesce concurrent cold starts for the same configKey, and cap total
 // simultaneous provider parses so a wave of new users (hundreds of distinct
 // configs) queues instead of stampeding the box.
-const parseInFlight = new Map(); // configKey -> Promise (already-running parse)
+const parseInFlight = new Map(); // configKey::generation -> Promise (already-running parse)
 let activeParses = 0;
 // Concurrent provider parses. 4 is deliberately conservative so a wave of
 // cold-start requests can't saturate a small box; on a larger host, operators
@@ -298,7 +353,10 @@ function releaseParseSlot() {
  * @return {*} The result produced by the parser.
  */
 async function parseWithCoalescing(configKey, configObj, parseFn) {
-    const existing = parseInFlight.get(configKey);
+    // Coalescing is generation-scoped: a request for a config whose generation
+    // changed must not join a parse that still reflects the old config.
+    const key = `${configKey}::${getConfigGeneration(configKey)}`;
+    const existing = parseInFlight.get(key);
     if (existing) return existing;
     const promise = (async () => {
         await semaphoreSlot();
@@ -308,11 +366,11 @@ async function parseWithCoalescing(configKey, configObj, parseFn) {
             releaseParseSlot();
         }
     })();
-    parseInFlight.set(configKey, promise);
+    parseInFlight.set(key, promise);
     try {
         return await promise;
     } finally {
-        parseInFlight.delete(configKey);
+        parseInFlight.delete(key);
     }
 }
 
@@ -434,6 +492,11 @@ async function streamFetchIPTV(configKey, configObj) {
     // catch (serve-last-good) instead of the empty placeholder being preserved.
     const prevEntry = userCaches.get(configKey);
     const prior = (prevEntry && prevEntry.status !== 'loading') ? prevEntry : null;
+    // Stamp the generation this parse starts under; publishParseResult discards
+    // the result if a config change bumps it mid-parse.
+    const parseGen = (prevEntry && typeof prevEntry._generation === 'number')
+        ? prevEntry._generation
+        : getConfigGeneration(configKey);
     userCaches.set(configKey, {
         status: 'loading',
         channelMap: (prior && prior.channelMap) || new Map(),
@@ -441,7 +504,8 @@ async function streamFetchIPTV(configKey, configObj) {
         catalogItems: (prior && prior.catalogItems) || [],
         uniqueGroups: (prior && prior.uniqueGroups) || new Set(),
         epgData: (prior && prior.epgData) || {},
-        lastUpdated: (prior && prior.lastUpdated) || now
+        lastUpdated: (prior && prior.lastUpdated) || now,
+        _generation: parseGen
     });
 
     const parseFn = configObj && configObj.type === 'xtream' ? parseXtreamData : parseM3uData;
@@ -660,17 +724,17 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
-userCaches.set(configKey, {
+const published = publishParseResult(configKey, {
             status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
             epgMap, // retained for the decoupled EPG-only refresh
             epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
             lastUpdated: Date.now()
         });
-        console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
-        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
+        console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms${published ? '' : ' (discarded: config changed mid-parse)'}`);
+        if (published) saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
 
-        // Save logo URLs to Redis for change detection (background, non-blocking)
-        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
+        // Save logo and logo URLs to Redis (for change detection, background, non-blocking)
+        if (published) saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
 
         // Queue background logo pre-fetch for channels without iptv-org match
         const missingLogos = [];
@@ -705,7 +769,7 @@ userCaches.set(configKey, {
         const attempts = (backoffAttempts.get(configKey) || 0) + 1;
         backoffAttempts.set(configKey, attempts);
         console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms backoffAttempt=${sanitizeForLog(attempts)}`);
-        userCaches.set(configKey, {
+        publishParseResult(configKey, {
             status: 'error',
             channelMap: (prev && prev.channelMap) || new Map(),
             logoTracker: (prev && prev.logoTracker) || new Map(),
@@ -907,14 +971,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
-userCaches.set(configKey, {
+const published = publishParseResult(configKey, {
             status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
             epgMap, // retained for the decoupled EPG-only refresh
             epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
             lastUpdated: Date.now()
         });
         console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
-        saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
+        if (published) saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
         console.log(`[Xtream Engine] Categorized and loaded ${sanitizeForLog(tCat.length)} streams inside memory.`);
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
@@ -934,7 +998,7 @@ userCaches.set(configKey, {
         backoffAttempts.set(configKey, attempts);
         console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
         console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms backoffAttempt=${sanitizeForLog(attempts)}`);
-        userCaches.set(configKey, {
+        publishParseResult(configKey, {
             status: 'error',
             channelMap: (prev && prev.channelMap) || new Map(),
             logoTracker: (prev && prev.logoTracker) || new Map(),
@@ -1381,4 +1445,4 @@ async function queueLogoPrefetch(missingLogos) {
     }
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, CACHE_BACKOFF_MIN, CACHE_BACKOFF_MAX, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres, refreshEpgForEntry, epgScheduleNextRefresh, handleXmltvEpg };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, CACHE_BACKOFF_MIN, CACHE_BACKOFF_MAX, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres, refreshEpgForEntry, epgScheduleNextRefresh, handleXmltvEpg, bumpConfigGeneration, adoptGeneration, publishParseResult, getConfigGeneration };

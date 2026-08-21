@@ -45,7 +45,11 @@ function serializeCache(cacheData) {
         epgLastUpdated: cacheData.epgLastUpdated || 0,
         epgNextRefreshAt: cacheData.epgNextRefreshAt || 0,
         epgCoverageMs: cacheData.epgCoverageMs || 0,
-        lastUpdated: cacheData.lastUpdated || Date.now()
+        lastUpdated: cacheData.lastUpdated || Date.now(),
+        // Config-generation stamp: a rehydrating worker checks this against its
+        // own counter, so a snapshot taken from a prior config cannot be served
+        // as current after a config change (see ensureCache stale check).
+        generation: cacheData._generation
     });
 }
 
@@ -67,7 +71,8 @@ function deserializeCache(raw) {
         epgLastUpdated: obj.epgLastUpdated || 0,
         epgNextRefreshAt: obj.epgNextRefreshAt || 0,
         epgCoverageMs: obj.epgCoverageMs || 0,
-        lastUpdated: obj.lastUpdated || 0
+        lastUpdated: obj.lastUpdated || 0,
+        _generation: obj.generation
     };
 }
 
@@ -91,13 +96,20 @@ async function saveCacheToRedis(configKey, cacheData) {
  * config change (groups, iptv-org toggle, provider) re-parses on next request
  * instead of serving the stale snapshot until it ages out.
  * @param {string} configKey
+ * @return {Promise<boolean>} true when the entry is gone; false if the delete
+ *   failed (caller should surface that a stale snapshot may survive).
  */
 async function deleteCacheFromRedis(configKey) {
-    if (!redis) return;
+    if (!redis) return true;
     try {
         await redis.del(KEY_PREFIX + configKey);
+        return true;
     } catch (e) {
+        // Do not throw: a Redis outage must not fail a config save that already
+        // committed. Report the failure so the caller can warn that the old
+        // snapshot may be rehydrated until it ages out.
         console.error('[Redis Error] deleteCacheFromRedis:', e.message);
+        return false;
     }
 }
 
