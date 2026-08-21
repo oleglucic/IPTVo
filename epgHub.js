@@ -14,20 +14,17 @@
  */
 const axios = require('axios');
 const zlib = require('zlib');
-const readline = require('readline');
 const sax = require('sax');
 const { Readable } = require('stream');
 const { isSafeUrl, revalidateResponseUrl } = require('./iptvParser');
 const {
-    saveEpgPrograms, getEpgPrograms, listEpgSources, setEpgSourceStatus, upsertEpgSource, pruneEpgPrograms
+    saveEpgPrograms, listEpgSources, setEpgSourceStatus, upsertEpgSource, pruneEpgPrograms
 } = require('./db');
 const {
-    saveEpgCache, loadEpgCache, getHubGeneration, bumpGeneration, hasRedis
+    saveEpgCache, getHubGeneration, bumpGeneration
 } = require('./redisCache');
-const iptvOrgRef = require('./iptvOrgRef');
 
 const CONCURRENCY = parseInt(process.env.EPG_HUB_CONCURRENCY || '3', 10);
-const DEFAULT_INTERVAL = 30 * 60 * 1000; // 30 min full cycle
 
 let running = false;
 

@@ -20,15 +20,8 @@ const MANIFEST_TTL = 24 * 60 * 60;      // 1d
 
 // ---- logo proxy helpers (mirror logo-proxy.worker.js) ----------------------
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
-const DEAD_URL_TTL_SECONDS = 24 * 60 * 60;
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 2;
-/**
- * Encodes text as unpadded URL-safe Base64.
- * @param {string} str - The text to encode.
- * @return {string} The URL-safe Base64 representation of the text.
- */
-function b64u(str) { return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, ""); }
 /**
  * Decodes a URL-safe Base64-encoded string as UTF-8 text.
  * @param {string} str - The encoded string.

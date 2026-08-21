@@ -6,7 +6,7 @@ const { Readable } = require('stream');
 const { startAiQueue } = require('./aiCurator');
 const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
-const { lookupChannel, lookupChannelFuzzy, lookupChannelSmart, isValidCountryCode, resolveGroupScope } = require('./iptvOrgRef');
+const { lookupChannel, lookupChannelSmart, isValidCountryCode, resolveGroupScope } = require('./iptvOrgRef');
 const { configKeyFingerprint } = require('./cryptoUtils');
 
 /**
@@ -57,28 +57,37 @@ function isSafeUrl(url) {
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
 
     const hostname = parsed.hostname.toLowerCase();
+    // Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1) to the embedded IPv4 so the
+    // private-range/loopback checks below can't be bypassed (Node's URL parser
+    // returns the hex form, e.g. ::ffff:7f00:1 — decode big-endian like the
+    // Cloudflare asset worker's isPrivateHost).
+    let h = hostname.replace(/^\[/, '').replace(/\]$/, '');
+    if (h.startsWith('::ffff:')) {
+        const n = parseInt(h.slice(7).split(':').map(s => s.padStart(4, '0')).join('').padStart(8, '0'), 16);
+        h = String((n >> 24) & 255) + '.' + ((n >> 16) & 255) + '.' + ((n >> 8) & 255) + '.' + (n & 255);
+    }
 
     // Block localhost and loopback
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false;
+    if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
 
     // Block private IPv4 ranges
     // 10.0.0.0/8
-    if (/^10\./.test(hostname)) return false;
+    if (/^10\./.test(h)) return false;
     // 172.16.0.0/12
-    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)) return false;
+    if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)) return false;
     // 192.168.0.0/16
-    if (/^192\.168\./.test(hostname)) return false;
+    if (/^192\.168\./.test(h)) return false;
     // 169.254.0.0/16 (link-local)
-    if (/^169\.254\./.test(hostname)) return false;
+    if (/^169\.254\./.test(h)) return false;
 
     // Block private IPv6 ranges
     // fc00::/7 (ULA)
-    if (/^fc[0-9a-f]{2}:/i.test(hostname) || /^fd[0-9a-f]{2}:/i.test(hostname)) return false;
+    if (/^fc[0-9a-f]{2}:/i.test(h) || /^fd[0-9a-f]{2}:/i.test(h)) return false;
     // fe80::/10 (link-local)
-    if (/^fe8[0-9a-f]:/i.test(hostname) || /^fe9[0-9a-f]:/i.test(hostname) || /^fea[0-9a-f]:/i.test(hostname) || /^feb[0-9a-f]:/i.test(hostname)) return false;
+    if (/^fe8[0-9a-f]:/i.test(h) || /^fe9[0-9a-f]:/i.test(h) || /^fea[0-9a-f]:/i.test(h) || /^feb[0-9a-f]:/i.test(h)) return false;
 
     // Block metadata services (cloud provider internal endpoints)
-    if (hostname === '169.254.169.254' || hostname === '[fd00:ec2::254]') return false;
+    if (h === '169.254.169.254' || h === '[fd00:ec2::254]') return false;
 
     return true;
 }
@@ -394,11 +403,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 // Extract a leading 2-3 letter country code BEFORE stripping it, so
                 // "usa espn" scopes to 'us' (and matches ESPN.us, not ESPN.au).
                 let nameCountry = null;
-                const ncMatch = cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\|]*/i);
+                const ncMatch = cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\]*/i);
                 if (ncMatch && isValidCountryCode(ncMatch[1])) {
                     nameCountry = ncMatch[1].toLowerCase();
                 }
-                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
+                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\]*/gi, ' ');
                 cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
                 // The GROUP prefix (if any) is authoritative; otherwise infer from
@@ -666,11 +675,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
             cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
             // Fixed: removed nested quantifier \s* followed by character class with *
-            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
+            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\]*/gi, ' ');
             cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
             // Group prefix wins; else infer from a leading country word in the name.
-            const nameCountry = (cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\|]*/i) || [])[1];
+            const nameCountry = (cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\]*/i) || [])[1];
             const countryScopeKey = (countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : null)
                 || (nameCountry && isValidCountryCode(nameCountry) ? nameCountry.toLowerCase() : null)
                 || 'global';

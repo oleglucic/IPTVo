@@ -420,7 +420,7 @@ async function getEffectiveEpgMany(chKeys, entry) {
         if (c && c.generation === gen && c.programs.length) { out.set(k, c.programs); continue; }
         needDb.push(k);
         // Fall back to per-entry EPG (user-provided feed) — cheap, no store.
-        const sched = entry && entry.epgData && entry.epgData[k];
+        const sched = entry.epgData && entry.epgData[k];
         if (sched && sched.length) out.set(k, sched);
     }
     if (needDb.length) {

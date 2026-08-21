@@ -59,8 +59,6 @@ for (const [k, v] of Object.entries(ALIASES)) {
 let tokenIndex = new Map();        // sortedKey -> entry
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
 let fuseByFirst = new Map();       // leading token -> Fuse over entries sharing it
-let tokenEntryMap = new Map();     // tokenSetKey => first entry (for fast exact)
-const aliasMatchMap = new Map();     // normalized alias => entry
 
 // Cap for the tier-3 subsequence bucket scan. Single-letter first tokens
 // ("m", "tv") gather thousands of iptv-org entries; without a bound a single
@@ -222,7 +220,6 @@ async function refresh() {
         const newExactMap = new Map();
         const newFuseList = [];
         const newTokenIndex = new Map();   // sortedKey -> entry
-        const newAliasMap = new Map();     // normalized alias-ish token string -> entry
 
         for (const ch of channelsRes.data) {
             if (ch.closed) continue;
@@ -577,7 +574,7 @@ const COUNTRY_NAME_ALIASES = {
     'usa': 'us', 'america': 'us', 'united states': 'us',
     'uk': 'gb', 'united kingdom': 'gb', 'england': 'gb', 'britain': 'gb',
     'south korea': 'kr', 'korea': 'kr', 'north korea': 'kp',
-    'russia': 'ru', 'taiwan': 'tw', 'vietnam': 'vn',
+    'taiwan': 'tw', 'vietnam': 'vn',
 };
 // Normalize alias keys once ("latin america" -> "latinamerica") so lookup can
 // match subgroup names after the same non-letter stripping.
