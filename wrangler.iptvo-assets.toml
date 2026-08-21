@@ -3,7 +3,7 @@
 # Routing/dispatch is managed in the Cloudflare dashboard (zone route
 # assets.oleglucic.com/iptvo/assets/* -> this worker); do NOT declare routes
 # here so Workers Builds doesn't try to re-create the custom-domain binding that
-# belongs to the domain-owner worker (nuvio-iptv).
+# belongs to the domain-owner worker (iptvo-root).
 #
 # The `name` MUST match the worker name in the Cloudflare dashboard for
 # Workers Builds to deploy to it (see Workers name requirement).

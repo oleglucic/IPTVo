@@ -1,7 +1,6 @@
 /**
  * iptvo-assets.worker.js — serves ALL IPTVo assets off Cloudflare's edge under
- * assets.oleglucic.com (a NEW worker; the live `nuvio-iptv` logo proxy is not
- * touched until this is validated). Routes:
+ * assets.oleglucic.com/iptvo/assets/* (the prefix is stripped below). Routes:
  *   /logo?url=..&fallback=..    — logo proxy (base64, KV dead-URL, retries, svg placeholder)
  *   /poster/<cId>.png           — proxy Node poster, edge-cache 30d
  *   /<userId>/catalog|meta|manifest.json — proxy + edge-cache JSON (5min/1d)
