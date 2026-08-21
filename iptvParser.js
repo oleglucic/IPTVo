@@ -114,15 +114,34 @@ function applySynonyms(str) {
 const { saveCacheToRedis, saveLogoUrl } = require('./redisCache');
 const { getLogoUrl, setLogoUrl } = require('./db');
 
+// EPG refresh cadence is driven by the source's coverage span (task #42):
+//   cover / 3  →  when to re-fetch, clamped to [30min, 12h].
+// A feed that only covers a few hours is re-fetched often; a week-long feed
+// less so. Empty/failed feeds retry soon (5min) until obtained.
+const EPG_REFRESH_MIN = 30 * 60 * 1000;
+const EPG_REFRESH_MAX = 12 * 60 * 60 * 1000;
+const EPG_RETRY_FAIL = 5 * 60 * 1000;
+
 const userCaches = new Map();
 const MAX_CACHE_AGE = 60 * 60 * 1000; // 1 hour
+
+// Tiered cache refresh (task #42): a failed refresh must never leave an empty
+// catalog. On a parse error we preserve the last good snapshot and back off
+// retrying exponentially so a down provider isn't hammered by every request.
+// The entry is served (data) immediately; refresh resumes once retryAt passes.
+const CACHE_BACKOFF_MIN = 60 * 1000;       // 1 min
+const CACHE_BACKOFF_MAX = 30 * 60 * 1000;  // 30 min
+const backoffAttempts = new Map(); // configKey -> consecutive failure count
 
 // Coalesce concurrent cold starts for the same configKey, and cap total
 // simultaneous provider parses so a wave of new users (hundreds of distinct
 // configs) queues instead of stampeding the box.
 const parseInFlight = new Map(); // configKey -> Promise (already-running parse)
 let activeParses = 0;
-const MAX_CONCURRENT_PARSES = 4;
+// Concurrent provider parses. 4 is deliberately conservative so a wave of
+// cold-start requests can't saturate a small box; on a larger host, operators
+// can raise it via env to cut cold-start queue time for a bigger userbase.
+const MAX_CONCURRENT_PARSES = parseInt(process.env.MAX_CONCURRENT_PARSES || '4', 10) || 4;
 async function semaphoreSlot() {
     while (activeParses >= MAX_CONCURRENT_PARSES) {
         await new Promise(r => setTimeout(r, 200));
@@ -150,13 +169,10 @@ async function parseWithCoalescing(configKey, configObj, parseFn) {
 }
 
 function getUserCache(configKey) {
-    const cached = userCaches.get(configKey);
-    if (!cached) return null;
-    if (Date.now() - cached.lastUpdated > MAX_CACHE_AGE) {
-        userCaches.delete(configKey);
-        return null;
-    }
-    return cached;
+    // Never evict a cache for staleness: an old-but-usable snapshot still beats
+    // an empty catalog when the provider is down. Refresh decisions and retry
+    // backoff live in streamFetchIPTV/ensureCache, not here.
+    return userCaches.get(configKey) || null;
 }
 
 /**
@@ -234,19 +250,37 @@ function parseStreamInfo(n) {
 }
 
 async function streamFetchIPTV(configKey, configObj) {
+    const now = Date.now();
     if (userCaches.has(configKey)) {
         const existing = userCaches.get(configKey);
         if (existing.status === 'loading') return;
-        if (existing.status === 'ready' && (Date.now() - existing.lastUpdated < MAX_CACHE_AGE)) return;
+        // An errored entry carries the last good snapshot; don't refresh while
+        // its backoff window is open (the provider is likely still down and
+        // every request would otherwise hammer it).
+        if (existing.status === 'error' && now < (existing.retryAt || 0)) return;
+        if (existing.status === 'ready' && (now - existing.lastUpdated < MAX_CACHE_AGE)) return;
     }
 
+    // Cold start OR refresh. On a refresh, seed the 'loading' entry with the
+    // last good snapshot so a failure mid-parse can fall back to it in the
+    // catch (serve-last-good) instead of the empty placeholder being preserved.
+    const prevEntry = userCaches.get(configKey);
+    const prior = (prevEntry && prevEntry.status !== 'loading') ? prevEntry : null;
     userCaches.set(configKey, {
-        status: 'loading', channelMap: new Map(), logoTracker: new Map(),
-        catalogItems: [], uniqueGroups: new Set(), epgData: {}
+        status: 'loading',
+        channelMap: (prior && prior.channelMap) || new Map(),
+        logoTracker: (prior && prior.logoTracker) || new Map(),
+        catalogItems: (prior && prior.catalogItems) || [],
+        uniqueGroups: (prior && prior.uniqueGroups) || new Set(),
+        epgData: (prior && prior.epgData) || {},
+        lastUpdated: (prior && prior.lastUpdated) || now
     });
 
     const parseFn = configObj && configObj.type === 'xtream' ? parseXtreamData : parseM3uData;
-    return await parseWithCoalescing(configKey, configObj, parseFn);
+    const result = await parseWithCoalescing(configKey, configObj, parseFn);
+    // Full parse succeeded → clear this config's failure backoff.
+    backoffAttempts.delete(configKey);
+    return result;
 }
 
 /**
@@ -334,10 +368,19 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
                 cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
                 // Fixed: removed nested quantifier \s* followed by character class with *
+                // Extract a leading 2-3 letter country code BEFORE stripping it, so
+                // "usa espn" scopes to 'us' (and matches ESPN.us, not ESPN.au).
+                let nameCountry = null;
+                const ncMatch = cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\|]*/i);
+                if (ncMatch && isValidCountryCode(ncMatch[1])) {
+                    nameCountry = ncMatch[1].toLowerCase();
+                }
                 cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
                 cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-                
-                const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
+
+                // The GROUP prefix (if any) is authoritative; otherwise infer from
+                // the leading country word in the channel name ("usa espn" → us).
+                const countryScopeKey = (countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : null) || nameCountry || 'global';
                 const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
 
                 // No 'iptv:' prefix - colons in IDs can break client URL parsing
@@ -423,7 +466,21 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             }
         }
         
-        const tEpg = await handleXmltvEpg(configObj.epg, tMap, epgMap);
+        const epgCall = await handleXmltvEpg(configObj.epg, tMap, epgMap);
+        let tEpg = (epgCall && epgCall.tEpg) || {};
+        let epgCoverageMs = (epgCall && epgCall.spanMs) || 0;
+        // iptv-org guide enrichment (#41): when iptv-org matching is enabled,
+        // also merge in iptv-org guide programmes for matched channels (user's
+        // own EPG feed wins on conflict). Only fills channels we can map.
+        if (configObj.iptvOrg) {
+            const enrich = await fetchIptvOrgEpg(configObj, epgMap);
+            if (enrich && enrich.tEpg) {
+                epgCoverageMs = Math.max(epgCoverageMs, enrich.spanMs);
+                tEpg = Object.assign(tEpg, enrich.tEpg);
+            }
+        }
+        const epgLastUpdated = Date.now();
+        const epgNextRefreshAt = epgScheduleNextRefresh(epgCoverageMs);
 
         // Log iptv-org match statistics
         let iptvOrgMatchCount = 0;
@@ -432,7 +489,12 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
-        userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
+        userCaches.set(configKey, {
+            status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
+            epgMap, // retained for the decoupled EPG-only refresh
+            epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
+            lastUpdated: Date.now()
+        });
         console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
 
@@ -464,7 +526,25 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
-        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        // Serve last good: preserve the previous snapshot (channels, catalog,
+        // groups, EPG) so a failed refresh degrades to stale-but-working data
+        // instead of an empty catalog. Retry with exponential backoff so a down
+        // provider isn't re-fetched on every request.
+        const prev = userCaches.get(configKey);
+        const attempts = (backoffAttempts.get(configKey) || 0) + 1;
+        backoffAttempts.set(configKey, attempts);
+        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms backoffAttempt=${sanitizeForLog(attempts)}`);
+        userCaches.set(configKey, {
+            status: 'error',
+            channelMap: (prev && prev.channelMap) || new Map(),
+            logoTracker: (prev && prev.logoTracker) || new Map(),
+            catalogItems: (prev && prev.catalogItems) || [],
+            uniqueGroups: (prev && prev.uniqueGroups) || new Set(),
+            epgData: (prev && prev.epgData) || {},
+            lastUpdated: (prev && prev.lastUpdated) || 0, // keeps old clock so staleness grows naturally
+            message: sanitizeForLog(e.message),
+            retryAt: Date.now() + Math.min(CACHE_BACKOFF_MIN * (2 ** (attempts - 1)), CACHE_BACKOFF_MAX),
+        });
     }
 }
 
@@ -566,7 +646,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\|]*/gi, ' ');
             cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
-            const countryScopeKey = countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : 'global';
+            // Group prefix wins; else infer from a leading country word in the name.
+            const nameCountry = (cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\|]*/i) || [])[1];
+            const countryScopeKey = (countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : null)
+                || (nameCountry && isValidCountryCode(nameCountry) ? nameCountry.toLowerCase() : null)
+                || 'global';
             const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
             
             // No 'iptv:' prefix - colons in IDs can break client URL parsing
@@ -632,7 +716,18 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             tMap.get(cId).streams.push({ name: sInfo.name, title: sInfo.title, url: liveStreamUrl, score: sInfo.score, groupTags: groupTags });
         }
 
-        const tEpg = await handleXmltvEpg(epg, tMap, epgMap);
+        const epgCall = await handleXmltvEpg(epg, tMap, epgMap);
+        let tEpg = (epgCall && epgCall.tEpg) || {};
+        let epgCoverageMs = (epgCall && epgCall.spanMs) || 0;
+        if (configObj.iptvOrg) {
+            const enrich = await fetchIptvOrgEpg(configObj, epgMap);
+            if (enrich && enrich.tEpg) {
+                epgCoverageMs = Math.max(epgCoverageMs, enrich.spanMs);
+                tEpg = Object.assign(tEpg, enrich.tEpg);
+            }
+        }
+        const epgLastUpdated = Date.now();
+        const epgNextRefreshAt = epgScheduleNextRefresh(epgCoverageMs);
 
         // Log iptv-org match statistics
         let iptvOrgMatchCount = 0;
@@ -641,7 +736,12 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
         console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
-        userCaches.set(configKey, { status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg, lastUpdated: Date.now() });
+        userCaches.set(configKey, {
+            status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
+            epgMap, // retained for the decoupled EPG-only refresh
+            epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
+            lastUpdated: Date.now()
+        });
         console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
         saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
         console.log(`[Xtream Engine] Categorized and loaded ${sanitizeForLog(tCat.length)} streams inside memory.`);
@@ -656,8 +756,24 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         }
 
     } catch(e) {
+        // Serve last good (same policy as parseM3uData): keep the previous
+        // snapshot so a down Xtream panel shows stale-but-working channels.
+        const prev = userCaches.get(configKey);
+        const attempts = (backoffAttempts.get(configKey) || 0) + 1;
+        backoffAttempts.set(configKey, attempts);
         console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
-        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms`); userCaches.set(configKey, { status: 'error', message: sanitizeForLog(e.message) });
+        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms backoffAttempt=${sanitizeForLog(attempts)}`);
+        userCaches.set(configKey, {
+            status: 'error',
+            channelMap: (prev && prev.channelMap) || new Map(),
+            logoTracker: (prev && prev.logoTracker) || new Map(),
+            catalogItems: (prev && prev.catalogItems) || [],
+            uniqueGroups: (prev && prev.uniqueGroups) || new Set(),
+            epgData: (prev && prev.epgData) || {},
+            lastUpdated: (prev && prev.lastUpdated) || 0,
+            message: sanitizeForLog(e.message),
+            retryAt: Date.now() + Math.min(CACHE_BACKOFF_MIN * (2 ** (attempts - 1)), CACHE_BACKOFF_MAX),
+        });
     }
 }
 
@@ -670,12 +786,12 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
  */
 async function handleXmltvEpg(epgUrl, tMap, epgMap) {
     const tEpg = {};
-    if (!epgUrl) return tEpg;
+    if (!epgUrl) return { tEpg, spanMs: 0 };
 
     // Prevent SSRF: validate EPG URL before fetching
     if (!isSafeUrl(epgUrl)) {
         console.error('[handleXmltvEpg] Invalid EPG URL: private/internal addresses not allowed');
-        return tEpg;
+        return { tEpg, spanMs: 0 };
     }
 
     return new Promise(async (resolve) => {
@@ -737,21 +853,146 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
                 }
             });
 
-            saxStream.on('end', () => {
-                resolve(tEpg);
-            });
+            // Coverage span over all parsed programmes — drives the EPG refresh
+            // cadence (short feeds refresh more often, long feeds less so).
+            let minStart = Infinity, maxStop = 0, progs = 0;
+            for (const list of Object.values(tEpg)) {
+                for (const p of list) {
+                    progs++;
+                    if (p.start < minStart) minStart = p.start;
+                    if (p.stop > maxStop) maxStop = p.stop;
+                }
+            }
+            const spanMs = progs > 0 ? (maxStop - minStart) : 0;
+            resolve({ tEpg, spanMs });
 
             saxStream.on('error', (err) => {
                 console.error('[EPG SAX Error]', sanitizeForLog(err.message));
-                resolve(tEpg);
+                resolve({ tEpg, spanMs: 0 });
             });
 
             finalizedStream.pipe(saxStream);
-        } catch(e) { 
-            console.error("EPG Error", sanitizeForLog(e.message)); 
-            resolve(tEpg);
+        } catch(e) {
+            console.error("EPG Error", sanitizeForLog(e.message));
+            resolve({ tEpg, spanMs: 0 });
         }
     });
+}
+
+// --- iptv-org guide enrichment (#41) --------------------------------------
+// The iptv-org API exposes guides.json (officialId → site_id + sources[]), but
+// today almost no guide carries a ready-to-fetch XMLTV URL. We still leverage
+// the map: where a channel has a direct URL source we fetch it and map its
+// programmes onto matched channels via the retained epgMap; everything else
+// simply falls back to the user's own EPG / "No TV guide". No per-site
+// scraping, no fabricated feeds.
+let iptvOrgGuideCache = null; // { byChannel: Map<officialId, [{url}]>, fetchedAt }
+const IPTVORG_GUIDE_TTL = 24 * 60 * 60 * 1000;
+const IPTVORG_GUIDE_URL = 'https://iptv-org.github.io/api/guides.json';
+
+async function loadIptvOrgGuideMap() {
+    const now = Date.now();
+    if (iptvOrgGuideCache && now - iptvOrgGuideCache.fetchedAt < IPTVORG_GUIDE_TTL) return iptvOrgGuideCache.byId;
+    const byId = new Map();
+    try {
+        const res = await axios.get(IPTVORG_GUIDE_URL, { timeout: 30000, responseType: 'json' });
+        const list = Array.isArray(res.data) ? res.data : [];
+        for (const g of list) {
+            const chanId = (g && g.channel) ? String(g.channel).toLowerCase().trim() : '';
+            if (!chanId) continue;
+            const urls = ((g && g.sources) || [])
+                .map(s => s && s.url)
+                .filter(u => typeof u === 'string' && u.startsWith('http'));
+            if (urls.length === 0) continue; // only direct-URL guides are usable
+            let arr = byId.get(chanId);
+            if (!arr) { arr = []; byId.set(chanId, arr); }
+            arr.push({ siteId: g.site_id || '', lang: g.lang || (g.sources && g.sources[0] && g.sources[0].lang) || '', urls });
+        }
+        iptvOrgGuideCache = { byId, fetchedAt: now };
+        console.log(`[iptv-org] Guide map loaded: ${byId.size} channels with direct URL sources`);
+    } catch (e) {
+        console.error('[iptv-org] Guide map load failed:', sanitizeForLog(e.message));
+    }
+    return byId;
+}
+
+async function fetchIptvOrgEpg(configObj, epgMap) {
+    if (!configObj || !configObj.iptvOrg) return null;
+    const guideByChannel = await loadIptvOrgGuideMap();
+    if (!guideByChannel) return null;
+
+    const tEpg = {};
+    let maxSpan = 0;
+    // Filter to matched channels (their officialId is registered in epgMap).
+    for (const [officialId, cId] of epgMap.entries()) {
+        const guides = guideByChannel.get(String(officialId).toLowerCase());
+        if (!guides || guides.length === 0) continue;
+        const url = guides[0].urls[0];
+        if (!url) continue;
+        try {
+            // Map this channel's programmes onto the canonical channel id.
+            const fakeMap = new Map([[officialId, cId]]);
+            const res = await handleXmltvEpg(url, new Map(), fakeMap);
+            const progs = res && res.tEpg ? res.tEpg[cId] : null;
+            if (progs && progs.length) {
+                tEpg[cId] = progs;
+                if (res.spanMs > maxSpan) maxSpan = res.spanMs;
+            }
+        } catch (e) {
+            // A single guide failure must not break the whole enrichment.
+        }
+    }
+    if (!Object.keys(tEpg).length) return { tEpg, spanMs: 0 };
+    return { tEpg, spanMs: maxSpan };
+}
+
+/** Map a parsed EPG programme-list span into a next-refresh timestamp (clamped). */
+function epgScheduleNextRefresh(spanMs) {
+    if (!spanMs || spanMs <= 0) return Date.now() + EPG_RETRY_FAIL; // empty/failed → retry soon
+    return Date.now() + Math.min(Math.max(spanMs / 3, EPG_REFRESH_MIN), EPG_REFRESH_MAX);
+}
+
+/**
+ * Re-fetch EPG for a single configKey using its retained epgMap / epg URL —
+ * the decoupled companion to the full-parse EPG fetch. Never touches the
+ * channel/stream data; a failed fetch keeps the last good epgData and shortens
+ * the next-refresh time so we retry soon. Also runs the iptv-org #41 guide
+ * enrichment when the config opts in.
+ * @returns {Promise<{epgData:Object, epgNextRefreshAt:number, epgCoverageMs:number}|null>}
+ *         null if there is no EPG source to refresh.
+ */
+async function refreshEpgForEntry(entry, configObj) {
+    if (!entry) return null;
+    const epgUrl = configObj && (configObj.epg || configObj.epgUrl);
+    const epgMap = entry.epgMap || new Map();
+    if (!epgUrl && !(configObj && configObj.iptvOrg)) return null;
+
+    let out = { epgData: entry.epgData || {}, epgNextRefreshAt: 0, epgCoverageMs: 0 };
+    let span = 0;
+    let tEpg = {};
+    if (epgUrl) {
+        const res = await handleXmltvEpg(epgUrl, new Map(), epgMap);
+        tEpg = res && res.tEpg ? res.tEpg : {};
+        span = res && res.spanMs ? res.spanMs : 0;
+    }
+    if (configObj && configObj.iptvOrg) {
+        const enrich = await fetchIptvOrgEpg(configObj, epgMap);
+        if (enrich && enrich.tEpg) {
+            // merge: user feed wins on conflict (starts with user, add iptv-org)
+            for (const [chId, progs] of Object.entries(tEpg)) if (!tEpg[chId]) tEpg[chId] = progs;
+            span = span || (enrich.spanMs || 0);
+            tEpg = Object.assign(tEpg, enrich.tEpg);
+        }
+    }
+    if (span > 0) {
+        out.epgData = tEpg;
+        out.epgCoverageMs = span;
+        out.epgNextRefreshAt = epgScheduleNextRefresh(span);
+    } else {
+        // keep last good data; retry soon
+        out.epgNextRefreshAt = Date.now() + EPG_RETRY_FAIL;
+    }
+    return out;
 }
 
 function getEpgText(chKey, epgData, offsetHours = 0) {
@@ -853,6 +1094,34 @@ async function backgroundLogoRefresh() {
             }
         }
 
+        // Task #42 retry-miss pass: a logo whose last fetch FAILED sits in the
+        // dead-URL window (isLogoMissPending). The DB still recorded its URL
+        // (setLogoUrl is called even on failure), so the changed-URL pass above
+        // can't see it — re-attempt those on the same short expiring window
+        // until they succeed. Success calls markDeadUrl(url, true) clearing it.
+        const { isLogoMissPending, markDeadUrl: markLogoOk } = require('./imageEngine');
+        for (const [_configKey, cached] of userCaches.entries()) {
+            if (!cached || !cached.channelMap) continue;
+            for (const [cId, channel] of cached.channelMap.entries()) {
+                const meta = channel.meta;
+                if (!meta || !meta.logo) continue;
+                const primary = meta.iptvOrgLogo || meta.logo;
+                if (!isLogoMissPending(primary)) continue;
+                try {
+                    const { getPremiumPoster } = require('./imageEngine');
+                    const fallbackLogo = meta.iptvOrgLogo ? meta.logo : null;
+                    await getPremiumPoster(cId, primary, fallbackLogo, meta.name);
+                    markLogoOk(primary);
+                    refreshed++;
+                    await setLogoUrl(cId, meta.logo, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
+                    await saveLogoUrl(cId, meta.logo, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
+                } catch (err) {
+                    errors++;
+                    console.error(`[LogoRefresh] retry-miss failed for ${sanitizeForLog(cId)}: ${sanitizeForLog(err.message)}`);
+                }
+            }
+        }
+
         console.log(`[LogoRefresh] Complete: checked=${sanitizeForLog(checked)}, refreshed=${sanitizeForLog(refreshed)}, unchanged=${sanitizeForLog(unchanged)}, errors=${sanitizeForLog(errors)}`);
 
     } catch (err) {
@@ -891,4 +1160,4 @@ async function queueLogoPrefetch(missingLogos) {
     }
 }
 
-module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres };
+module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CACHE_AGE, CACHE_BACKOFF_MIN, CACHE_BACKOFF_MAX, backgroundLogoRefresh, isSafeUrl, revalidateResponseUrl, pickGenres, refreshEpgForEntry, epgScheduleNextRefresh };

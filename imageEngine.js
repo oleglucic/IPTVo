@@ -8,8 +8,13 @@ const { loadLogoBuffer, saveLogoBuffer, hasRedis } = require('./redisCache');
 const cacheDir = path.join(__dirname, 'cache');
 if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 
-const DEAD_URL_TTL_BASE = 6 * 60 * 60 * 1000; // 6h base TTL for dead URLs
-const DEAD_URL_TTL_MAX = 24 * 60 * 60 * 1000; // 24h max TTL
+// Task #42: logos that failed to fetch must be re-attempted more frequently
+// until obtained (they rarely change once they exist), instead of growing a
+// dead-URL entry that permanently shadows retries. Base is now minutes so a
+// transient blip recovers quickly; the exponential cap still prevents a truly
+// dead URL from being hammered more than ~once/hour.
+const DEAD_URL_TTL_BASE = 2 * 60 * 1000;    // 2 min
+const DEAD_URL_TTL_MAX = 60 * 60 * 1000;    // 60 min
 const MAX_CACHE_FILES = 5000; // soft cap on disk cache to avoid unbounded growth
 const FETCH_TIMEOUT = 10000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB - reject absurd payloads before sharp touches them
@@ -26,8 +31,10 @@ const deadUrlCache = new Map(); // logoUrl -> {timestamp: number, failCount: num
 const inFlight = new Map();     // cId -> Promise, de-dupes concurrent requests for the same poster
 const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 
-// Cloudflare Worker proxy URL - set via environment variable
-const LOGO_PROXY_URL = process.env.LOGO_PROXY_URL || 'https://logo-proxy.your-worker.workers.dev/logo';
+// Cloudflare Worker proxy URL - set via environment variable. Defaults to the
+// assets worker (/logo) on assets.oleglucic.com when ASSET_BASE_URL is set.
+const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
+const LOGO_PROXY_URL = process.env.LOGO_PROXY_URL || (ASSET_BASE_URL ? ASSET_BASE_URL.replace(/\/$/, '') + '/logo' : 'https://logo-proxy.your-worker.workers.dev/logo');
 
 function isSvgBuffer(buffer) {
     if (!buffer || buffer.length === 0) return false;
@@ -389,7 +396,12 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
         throw new Error("Path traversal attempt detected");
     }
 
-    if (fs.existsSync(cachePath)) return cachePath;
+    // Serve a cached poster, but NEVER permanently: a fallback SVG can ride on
+    // disk and shadow re-fetching a URL that has since recovered. Only return
+    // the cached file while the URL is inside its (short, expiring) dead-URL
+    // retry window; once that expires the next request re-fetches and the
+    // success overwrites it (and clears the dead-URL mark).
+    if (fs.existsSync(cachePath) && !isDeadUrl(primaryUrl)) return cachePath;
 
     const inFlightKey = cachePath;
     if (inFlight.has(inFlightKey)) {
@@ -406,4 +418,10 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     return promise;
 }
 
-module.exports = { getPremiumPoster };
+// Task #42 retry pass: the logo refresh loop re-attempts URLs whose last fetch
+// FAILED, on the same (short, expiring) retry window. Success clears the mark.
+function isLogoMissPending(url) {
+    return isDeadUrl(url);
+}
+
+module.exports = { getPremiumPoster, isLogoMissPending, markDeadUrl };
