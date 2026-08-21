@@ -1,3 +1,10 @@
+# [0.10.0](https://github.com/oleglucic/IPTVo/compare/v0.9.2...v0.10.0) (2026-08-21)
+
+
+### Features
+
+* **auth:** add Cloudflare Turnstile to login/register ([bc2c205](https://github.com/oleglucic/IPTVo/commit/bc2c205a17a4ecf009096b91808ef6fa19e5ae62))
+
 ## [0.9.2](https://github.com/oleglucic/IPTVo/compare/v0.9.1...v0.9.2) (2026-08-21)
 
 
