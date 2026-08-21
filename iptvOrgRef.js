@@ -340,7 +340,7 @@ async function refresh() {
         // lookupChannelSmart scans the handful that share the query's leading
         // token, instead of the full 48k-index on every miss.
         const newTokenByFirst = new Map();
-        for (const [sk, entry] of newTokenIndex.entries()) {
+        for (const [, entry] of newTokenIndex.entries()) {
             const leadToks = tokenize(entry.name, false);
             const firstTok = leadToks[0] || '';
             if (!firstTok) continue;
