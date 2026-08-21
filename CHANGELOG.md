@@ -1,3 +1,7 @@
+## 🤝 Contributors
+
+- Oleg Lučić (@183150217+oleglucic)
+
 # [0.10.0](https://github.com/oleglucic/IPTVo/compare/v0.9.2...v0.10.0) (2026-08-21)
 
 
