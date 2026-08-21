@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/oleglucic/IPTVo/compare/v0.7.0...v0.8.0) (2026-08-21)
+
+
+### Features
+
+* **cache+epg+match+assets:** production-hardening for launch ([#27](https://github.com/oleglucic/IPTVo/issues/27)) ([36c3af9](https://github.com/oleglucic/IPTVo/commit/36c3af9243dab400f7f3e850ca526b07091e560a))
+
 # [0.7.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.6.0...v0.7.0) (2026-08-20)
 
 
