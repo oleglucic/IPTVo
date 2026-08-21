@@ -607,15 +607,24 @@ Font packages are required for Sharp text rendering (poster initials badge).
 ## Environment Variables
 
 | Variable | Required | Description |
-| ---------- | ---------- | ------------- |
-| `PORT` | No | Server port (default: 3000) |
+| ---------- | -------- | ------------- |
 | `ENCRYPTION_KEY` | Yes | 32+ char secret for AES-GCM config encryption |
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `REDIS_URL` | Yes | Redis connection string |
 | `LOGO_PROXY_URL` | Yes* | Cloudflare Worker logo proxy URL (required for production) |
+| `PORT` | No | Server port (default: 3000) |
+| `CLUSTER_WORKERS` | No | Horizontal scaling: `0` = single process (default), `auto` = half the CPU cores, or an explicit worker count. Requires the cluster build. |
+| `ASSET_BASE_URL` | No | Base URL for posters/logos/catalog links when served via the Cloudflare assets Worker+edge instead of the request host. Default: empty (use request origin). |
+| `ADDON_CACHE_URL` | No | Addon-cache Worker URL (e.g. `https://addon-cache.worker.dev`) used by the `/api/_edge-purge` endpoint to drop stale edge pages after a re-parse. |
+| `EDGE_PURGE_SECRET` | No | Shared secret guarding `POST /api/_edge-purge`. Unset disables the endpoint. |
+| `EPG_HUB_CONCURRENCY` | No | Concurrent fetches for the central multi-source EPG hub (default 3, clamped 1–16). |
+| `MAX_CONCURRENT_PARSES` | No | Max concurrent provider (M3U/Xtream) parses (default 4). |
+| `PREWARM_CONCURRENCY` | No | Concurrent cache pre-warm fetches on startup (default 8). |
+| `TURNSTILE_SECRET` | No | Cloudflare Turnstile secret for login/register bot protection. Unset disables the check (auth still works). |
+| `TURNSTILE_HOSTNAMES` | No | Comma-separated hostnames the Turnstile token's source host must match (e.g. `iptvo.oleglucic.com`). Do NOT include `localhost`/`127.0.0.1` in production. |
 | `OPENROUTER_API_KEY` | No** | Deprecated — use per-config `openrouterKey` instead |
 
-*Required for production to avoid rate limits. Optional for local dev (falls back to direct fetch).
+*Required for production to avoid direct fetch rate limits. Optional for local dev (falls back to direct fetch).
 **Server env var is deprecated. Provide OpenRouter key in dashboard config per-addon instance.
 
 ## Release Process
