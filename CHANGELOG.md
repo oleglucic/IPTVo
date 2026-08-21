@@ -1,3 +1,15 @@
+## [0.9.2](https://github.com/oleglucic/IPTVo/compare/v0.9.1...v0.9.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* **health:** guard cache-status keys so /health/detailed can't 500 ([4a7e989](https://github.com/oleglucic/IPTVo/commit/4a7e98991c02f9e25f720b368825fecf95f929a8))
+
+
+### Performance Improvements
+
+* **cache:** serve last-good snapshot while a refresh is loading ([3c69c51](https://github.com/oleglucic/IPTVo/commit/3c69c515d5f4ad9d494af211443efde3009209dc))
+
 ## [0.9.1](https://github.com/oleglucic/IPTVo/compare/v0.9.0...v0.9.1) (2026-08-21)
 
 
