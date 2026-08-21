@@ -29,12 +29,36 @@ function escapeHtml(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").r
 function placeholderSvg(text = "Live TV") {
   return `<svg width="640" height="640" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#1e293b"/></linearGradient></defs><rect width="640" height="640" fill="url(#g)"/><text x="320" y="320" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="40" font-weight="600" fill="#94a3b8">${escapeHtml(text)}</text></svg>`;
 }
-function isValidHttp(u) { try { const p = new URL(u); return p.protocol === "http:" || p.protocol === "https:"; } catch { return false; } }
+// SSRF guard: only http/https to PUBLIC hosts. Blocks loopback, private,
+// link-local, and cloud-metadata ranges so a caller can't make the worker fetch
+// internal/credential endpoints (e.g. 169.254.169.254). Mirrors iptvParser's
+// isSafeUrl.
+const BLOCKED_HOSTS = ["localhost", "metadata.google.internal", "metadata", ".internal", ".local"];
+function isPrivateHost(hostname) {
+  const h = (hostname || "").toLowerCase();
+  if (BLOCKED_HOSTS.some((b) => b === h || h.endsWith(b))) return true;
+  if (/^127\.|^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\.|^169\.254\.|^0\.0\.0\.0$/.test(h)) return true;
+  if (/^\[?::1\]?$|^\[?fe80:|^\[?fc|^\[?fd/.test(h)) return true;
+  return false;
+}
+function isValidHttp(u) {
+  try {
+    const p = new URL(u);
+    if (p.protocol !== "http:" && p.protocol !== "https:") return false;
+    return !isPrivateHost(p.hostname);
+  } catch { return false; }
+}
 async function fetchWithRetry(url, attempt = 0) {
   const ctl = new AbortController(); const tid = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; IPTVo-Assets/1.0)", "Accept": "image/*,*/*;q=0.8" }, signal: ctl.signal, redirect: "follow" });
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; IPTVo-Assets/1.0)", "Accept": "image/*,*/*;q=0.8" }, signal: ctl.signal, redirect: "manual" });
     clearTimeout(tid);
+    // Reject a redirect whose target resolves to a blocked/private host (a logo
+    // URL that bounces to an internal endpoint must not be followed).
+    if (r.status >= 300 && r.status < 400) {
+      const loc = r.headers.get("location");
+      if (loc && !isValidHttp(new URL(loc, url).toString())) return { status: "error", error: "unsafe redirect" };
+    }
     if (r.status === 200) { const ct = r.headers.get("content-type") || ""; if (ct.startsWith("image/")) { const b = await r.arrayBuffer(); return { status: "success", buffer: b, ct }; } return { status: "error", error: "non-image" }; }
     if ((r.status === 403 || r.status === 404)) return { status: "dead", code: r.status };
     if ((r.status === 429 || r.status >= 500) && attempt < MAX_RETRIES) { await new Promise(x => setTimeout(x, 500 * Math.pow(2, attempt))); return fetchWithRetry(url, attempt + 1); }
