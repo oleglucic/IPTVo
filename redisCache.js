@@ -87,7 +87,22 @@ async function saveCacheToRedis(configKey, cacheData) {
 }
 
 /**
- * Load a channel cache entry from Redis, if present.
+ * Delete a channel cache entry from Redis. Drops the persisted snapshot so a
+ * config change (groups, iptv-org toggle, provider) re-parses on next request
+ * instead of serving the stale snapshot until it ages out.
+ * @param {string} configKey
+ */
+async function deleteCacheFromRedis(configKey) {
+    if (!redis) return;
+    try {
+        await redis.del(KEY_PREFIX + configKey);
+    } catch (e) {
+        console.error('[Redis Error] deleteCacheFromRedis:', e.message);
+    }
+}
+
+/**
+ * Load a channel cache snapshot from Redis, if present.
  * @param {string} configKey
  * @returns {Promise<object | null>}
  */
@@ -436,6 +451,7 @@ async function sessionPruneExpired() {
 module.exports = {
     saveCacheToRedis,
     loadCacheFromRedis,
+    deleteCacheFromRedis,
     listCachedConfigKeys,
     saveLogoBuffer,
     loadLogoBuffer,

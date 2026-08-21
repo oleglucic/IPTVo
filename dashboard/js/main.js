@@ -727,7 +727,11 @@ async function handleSaveConfig() {
     elements.saveStatus.hidden = true;
 
     try {
-        await api.updateConfig(state.config);
+        // Send the canonical field names the backend/parser read (`include`,
+        // `iptvOrg`), not the UI-internal ones (`selectedGroups`,
+        // `iptvOrgEnabled`) — sending the raw state.config silently turned off
+        // group filtering and iptv-org matching.
+        await api.updateConfig(getters.getConfigForAPI());
 
         // Build addon URL
         const protocol = window.location.protocol;

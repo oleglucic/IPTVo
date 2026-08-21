@@ -25,6 +25,28 @@ function sanitizeForLog(str) {
 }
 
 /**
+ * Normalizes a stored config object into the field names the parser reads.
+ *
+ * The dashboard saves group selection under `selectedGroups` and the iptv-org
+ * toggle under `iptvOrgEnabled` (old configs, and the raw state.config shape),
+ * but the parser gates/filters on `include` and `iptvOrg`. Older configs were
+ * persisted with only the dashboard names, leaving both features silently off.
+ * Healing at the parse boundary fixes already-stored rows without a re-save.
+ * Returns a new object; does not mutate the input.
+ */
+function normalizeConfig(config) {
+    if (!config || typeof config !== 'object') return config;
+    const out = { ...config };
+    if (typeof out.iptvOrg === 'undefined' && typeof out.iptvOrgEnabled !== 'undefined') {
+        out.iptvOrg = out.iptvOrgEnabled;
+    }
+    if (typeof out.include === 'undefined' && Array.isArray(out.selectedGroups)) {
+        out.include = out.selectedGroups.filter(Boolean);
+    }
+    return out;
+}
+
+/**
  * Selects genres from iptv-org categories when the playlist group is generic; otherwise uses the playlist group.
  * @param {Object} iptvOrgMatch - The iptv-org match, including available categories.
  * @param {string} group - The playlist group label.
@@ -392,6 +414,10 @@ function parseStreamInfo(n) {
  * @return {*} The result of parsing the IPTV source.
  */
 async function streamFetchIPTV(configKey, configObj) {
+    // Heal legacy dashboard field names into the parser's canonical ones so
+    // stored configs that only ever carried `iptvOrgEnabled`/`selectedGroups`
+    // still enable iptv-org matching and group filtering.
+    configObj = normalizeConfig(configObj);
     const now = Date.now();
     if (userCaches.has(configKey)) {
         const existing = userCaches.get(configKey);

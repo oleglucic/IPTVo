@@ -116,6 +116,13 @@ export const mutations = {
             next.selectedGroups = [...next.include];
             delete next.include;
         }
+        // The parser exposes the iptv-org toggle as `iptvOrg`; the dashboard
+        // tracks it as `iptvOrgEnabled`. Coerce on load so the checkbox reflects
+        // what is actually saved and a later save does not wipe it.
+        if (typeof next.iptvOrg !== 'undefined') {
+            next.iptvOrgEnabled = next.iptvOrg;
+            delete next.iptvOrg;
+        }
         state.config = { ...state.config, ...next };
     },
 
