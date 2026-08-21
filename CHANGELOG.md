@@ -1,3 +1,10 @@
+## [0.8.1](https://github.com/oleglucic/IPTVo/compare/v0.8.0...v0.8.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **auth:** preserve stored credentials when config save omits them ([f7d9b5f](https://github.com/oleglucic/IPTVo/commit/f7d9b5f25946807ae445b435d32dcb059fbf1dfb))
+
 # [0.8.0](https://github.com/oleglucic/IPTVo/compare/v0.7.0...v0.8.0) (2026-08-21)
 
 
