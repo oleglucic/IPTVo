@@ -650,10 +650,64 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
 // Apply stricter rate limiting to auth endpoints
 app.use('/api/auth/', authLimiter);
 
+// Cloudflare Turnstile: canonical server-side siteverify. Gated on the
+// presence of a TURNSTILE_SECRET — when unset, the check is skipped, so local
+// dev without the env var never breaks auth. Tokens are single-use.
+async function verifyTurnstileToken(token, expectedAction, req) {
+    const secret = process.env.TURNSTILE_SECRET;
+    if (!secret) return { success: true, disabled: true };
+
+    if (typeof token !== 'string' || !token || token.length > 2048) {
+        return { success: false, disabled: false, reason: 'missing-token' };
+    }
+
+    // Canonical hostname allowlist from env (deployment-specific). Unset =
+    // accept any host (the widget's registered domains still constrain it).
+    const expectedHostnames = new Set(
+        (process.env.TURNSTILE_HOSTNAMES || '')
+            .split(',')
+            .map(s => s.trim().toLowerCase())
+            .filter(Boolean)
+    );
+
+    const forwarded = req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : null;
+    const clientIp = forwarded || req.ip || '';
+
+    try {
+        const r = await axios.post('https://challenges.cloudflare.com/turnstile/v0/siteverify', new URLSearchParams({
+            secret,
+            response: token,
+            remoteip: clientIp
+        }), { timeout: 10000 });
+        if (r.status !== 200) return { success: false, disabled: false, reason: 'siteverify-http' };
+        const data = r.data;
+        if (data.success !== true) return { success: false, disabled: false, reason: 'siteverify-false' };
+        if (data.action !== expectedAction)
+            return { success: false, disabled: false, reason: 'action-mismatch' };
+        if (allowedHostnames(data.hostname, expectedHostnames))
+            return { success: true, disabled: false };
+        return { success: false, disabled: false, reason: 'hostname-mismatch', hostname: data.hostname };
+    } catch (e) {
+        console.error('[Turnstile] siteverify call failed:', sanitizeForLog(e.message));
+        return { success: false, disabled: false, reason: 'siteverify-error' };
+    }
+}
+
+function allowedHostnames(h, set) {
+    if (!set || set.size === 0) return true; // not configured: don't reject
+    if (!h) return false;
+    const lower = h.toLowerCase();
+    // Allow exact + subdomains of an allowed host (cloudflare claims subdomain matches).
+    return [...set].some(a => lower === a || lower.endsWith(`.${a}`));
+}
+
 // Register new user
 app.post('/api/auth/register', async (req, res) => {
     try {
         const { username, password, config } = req.body;
+        // Turnstile: token in cf-turnstile-response; verify unless disabled.
+        const tt = await verifyTurnstileToken(req.body['cf-turnstile-response'], 'register', req);
+        if (!tt.success) return res.status(403).json({ error: 'Bot verification failed. Please try again.' });
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required' });
         }
@@ -696,6 +750,9 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
+        // Turnstile: token in cf-turnstile-response; verify unless disabled.
+        const tt = await verifyTurnstileToken(req.body['cf-turnstile-response'], 'login', req);
+        if (!tt.success) return res.status(403).json({ error: 'Bot verification failed. Please try again.' });
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required' });
         }

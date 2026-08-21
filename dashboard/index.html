@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/dashboard/css/base.css">
     <link rel="stylesheet" href="/dashboard/css/components.css">
     <link rel="stylesheet" href="/dashboard/css/layout.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
     <div class="app">
@@ -170,6 +171,7 @@
                             <input type="password" id="loginPassword" name="password" required autocomplete="current-password" placeholder="Your password">
                             <small class="form-hint">Stored only as a secure hash — we can't read it, and neither can anyone else.</small>
                         </div>
+                        <div class="cf-turnstile" data-sitekey="0x4AAAAAAEX6LBlfimjUKlZ1" data-action="login" data-theme="auto"></div>
                         <button type="submit" class="btn btn-primary btn-block">Sign In</button>
                         <p class="form-error" id="loginError" hidden></p>
                     </form>
@@ -189,6 +191,7 @@
                             <label for="regPasswordConfirm">Confirm Password</label>
                             <input type="password" id="regPasswordConfirm" name="passwordConfirm" required autocomplete="new-password" placeholder="One more time">
                         </div>
+                        <div class="cf-turnstile" data-sitekey="0x4AAAAAAEX6LBlfimjUKlZ1" data-action="register" data-theme="auto"></div>
                         <button type="submit" class="btn btn-primary btn-block">Create Account</button>
                         <p class="form-error" id="registerError" hidden></p>
                     </form>

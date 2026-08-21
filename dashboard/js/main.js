@@ -106,6 +106,39 @@ function showAuthTab(tab) {
  * Authenticates the user and initializes the application with the returned account data.
  * @param {SubmitEvent} e - The login form submission event.
  */
+/**
+ * Collects the current Turnstile token for the given action. The widget stores
+ * its response in a hidden input named `cf-turnstile-response` inside its
+ * container; read it from the active form (login or register panel).
+ * Returns '' if the widget isn't present (e.g. local dev without the widget).
+ */
+function getTurnstileToken() {
+    try {
+        const input = document.querySelector('.tab-panel:not([hidden]) .cf-turnstile input[name="cf-turnstile-response"]') ||
+                      document.querySelector('.cf-turnstile input[name="cf-turnstile-response"]');
+        return typeof window.turnstile === 'object' && input ? (input.value || '') : '';
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * Resets the Turnstile widget in a panel so a retry produces a fresh token
+ * (tokens are single-use — after a failed submit the widget must reset).
+ * No-ops when the widget/script isn't present.
+ */
+function resetTurnstile(action) {
+    try {
+        if (typeof window.turnstile !== 'object') return;
+        const container = document.getElementById(`${action}Panel`);
+        (container ? container.querySelectorAll('.cf-turnstile') : []).forEach(el => {
+            window.turnstile.reset(el);
+        });
+    } catch {
+        // best-effort reset — ignore
+    }
+}
+
 async function handleLogin(e) {
     e.preventDefault();
     const formData = new FormData(elements.loginForm);
@@ -116,12 +149,15 @@ async function handleLogin(e) {
     elements.loginError.textContent = '';
 
     try {
-        const { userId, username: userDisplay, token, config } = await api.login(username, password);
+        // Turnstile token (empty on local dev where the secret is unset is fine)
+        const ttToken = getTurnstileToken();
+        const { userId, username: userDisplay, token, config } = await api.login(username, password, ttToken);
         mutations.setAuth({ userId, username: userDisplay, config }, token);
         closeAuthModal();
         await initializeApp();
         toast.success('Welcome back!', `Signed in as ${username}`);
     } catch (error) {
+        resetTurnstile('login');
         elements.loginError.textContent = error.message;
         elements.loginError.hidden = false;
     }
@@ -148,12 +184,14 @@ async function handleRegister(e) {
     }
 
     try {
-        const { userId, username: userDisplay, token } = await api.register(username, password);
+        const ttToken = getTurnstileToken();
+        const { userId, username: userDisplay, token } = await api.register(username, password, {}, ttToken);
         mutations.setAuth({ userId, username: userDisplay, config: {} }, token);
         closeAuthModal();
         await initializeApp();
         toast.success('Account created!', `Welcome, ${username}`);
     } catch (error) {
+        resetTurnstile('register');
         elements.registerError.textContent = error.message;
         elements.registerError.hidden = false;
     }

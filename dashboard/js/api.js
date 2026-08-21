@@ -69,17 +69,17 @@ class APIClient {
     }
 
     // Auth endpoints
-    async register(username, password, config = {}) {
+    async register(username, password, config = {}, turnstileToken = '') {
         return this.request('/api/auth/register', {
             method: 'POST',
-            body: JSON.stringify({ username, password, config })
+            body: JSON.stringify({ username, password, config, 'cf-turnstile-response': turnstileToken })
         });
     }
 
-    async login(username, password) {
+    async login(username, password, turnstileToken = '') {
         return this.request('/api/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, 'cf-turnstile-response': turnstileToken })
         });
     }
 
