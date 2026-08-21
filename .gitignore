@@ -51,3 +51,5 @@ test-output/
 # Local diagnostic harnesses (not part of the addon)
 .bench-*
 .harness-*
+.stress-*
+.cl-*

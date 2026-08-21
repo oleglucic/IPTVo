@@ -26,6 +26,9 @@ const SUFFIX_WORDS = new Set([
     'vod','dolby','audio','vision','atmos','dv','dovi','ac3','eac3','vip','live',
     'backup','alt','online','english','french','german','spanish','intl','international',
     'uk','us','usa','america','east','west','timeshift','plus','premium','quality'
+    // Note: 'm' (the Movistar+ brand) is intentionally NOT a stop-word here —
+    // a leading "m laliga"/"m deportes" is the M+ operator, and the matcher
+    // must keep the single-letter brand token so it aligns to "por Movistar".
 ]);
 // Brand aliases so alternate or abbreviated spellings converge on one channel.
 const ALIASES = {
@@ -39,6 +42,12 @@ const ALIASES = {
     'bbc world news': 'bbc world',
     // language qualifier spells the channel's global variant
     'france 24 english': 'france 24',
+    // Spanish operator "M+" (Movistar): playlists write "m laliga" / "m deportes",
+    // iptv-org spells "LaLiga por Movistar+" / "Deportes por Movistar+".
+    // Spanish operator "M+" (Movistar): playlists write "m laliga" / "m deportes",
+    // iptv-org spells "LaLiga por Movistar+" / "Deportes por Movistar+".
+    'm': 'movistar',
+    'm+': 'movistar',
 };
 // Reverse direction too: iptv-org's official short name -> playlist long name.
 const ALIAS_BILATERAL = new Map();
@@ -97,6 +106,12 @@ function tokenize(name, applyAliases = true) {
                 if (pat.test(s)) { s = s.replace(pat, v); break; }
             }
         }
+        // Expand a bare single-letter brand token: "m" -> "movistar". The
+        // ALIASES loop above only fires for phrases; this handles a lone "m".
+        if (!long && /^\s*[a-z0-9]\s*$/.test(s)) {
+            const single = ALIAS_BILATERAL.get(s.trim());
+            if (single) s = single;
+        }
     }
     const toks = s.split(TOKEN_SPLIT).filter(Boolean);
     // Drop noise tokens (HD/UK/Plus/…)
@@ -120,6 +135,17 @@ function tokensToKeys(tokens) {
  * query ["bbc","world"] vs ["bbc","world","news"] → true (prefix).
  * Uses per-token prefix for abbreviation tolerance.
  */
+// Region markers that make a channel a regional/pan-regional feed, NOT the
+// specific country the user scoped to. If the user asked for scope 'us' and a
+// candidate is "HBO Latin America", accepting it is a wrong-region false
+// positive — a stale-but-correct MISS is better than a wrong channel.
+const REGION_MARKERS = ['latin america', 'latinamerican', 'caribbean', 'amtv', 'brazil', 'mexico', 'latinamerica', 'nordic', 'emea', 'asia', 'europe', 'pacific'];
+function isRegionConflicting(name, countryScopeKey) {
+    if (!countryScopeKey || countryScopeKey === 'global') return false;
+    const n = (name || '').toLowerCase();
+    return REGION_MARKERS.some(m => n.includes(m));
+}
+
 function isSubsequence(query, cand) {
     let c = 0;
     for (const q of query) {
@@ -129,6 +155,21 @@ function isSubsequence(query, cand) {
             c++;
         }
         if (!found) return false;
+    }
+    return true;
+}
+
+/**
+ * Order-insensitive token containment: every query token appears in cand
+ * (prefix-tolerant). Used for branded queries (e.g. "m vamos" = [movistar,
+ * vamos]) where the iptv-org entry may list the brand token at ANY position —
+ * "Vamos por Movistar+" is [vamos, movistar, plus]. Ordered subsequence would
+ * wrongly require movistar to precede vamos.
+ */
+function isTokenSubset(query, cand) {
+    for (const q of query) {
+        const hit = cand.some(c => c === q || c.startsWith(q));
+        if (!hit) return false;
     }
     return true;
 }
@@ -364,6 +405,9 @@ function lookupChannelFuzzy(cleanName, countryScopeKey, firstTokHint) {
 
         // Country filtering
         if (countryScopeKey && match.country !== countryScopeKey) continue;
+        // Reject regional/pan-regional feeds that share the scope code (e.g.
+        // "HBO Latin America" is country 'us' but is not the US feed).
+        if (isRegionConflicting(match.name, countryScopeKey)) continue;
 
         return {
             countryScopeKey: match.country || 'global',
@@ -417,17 +461,32 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     // Oversized buckets (single-letter tokens like "m", "tv" gather thousands
     // of entries) are capped so a handful of degenerate names can't turn a
     // 47-second parse into a minutes-long stall.
+    // Extend: when the query literally carries a brand token (e.g. "movistar"),
+    // ALSO scan the brand's own bucket — entries like "Vamos por Movistar+" list
+    // "movistar" as their leading token after transform, even if the bucket key
+    // is "vamos". This catches "m vamos" → "Vamos por Movistar+".
     if (tokenByFirst) {
         const first = toks[0];
-        const bucket = tokenByFirst.get(first) || [];
-        const scanLimit = bucket.length > MAX_T3_SCAN ? MAX_T3_SCAN : bucket.length;
-        for (let i = 0; i < scanLimit; i++) {
-            const entry = bucket[i];
-            if (countryScopeKey && countryScopeKey !== 'global' && entry.country && entry.country !== countryScopeKey) continue;
-            const candToks = tokenize(entry.name, false);
-            if (candToks.length < toks.length) continue;
-            if (isSubsequence(toks, candToks)) {
-                return { ...buildMatchEntry(entry), fuzzy: true, matchFuzzy: 'subsequence' };
+        const brandsToScan = new Set([first]);
+        // An alias-expanded brand token ("movistar" from "m") may not be the
+        // query's first token for reordered playlist names; add it explicitly.
+        if (first !== 'movistar' && toks.includes('movistar')) brandsToScan.add('movistar');
+        // Ordered subsequence for single-brand queries; ORDER-INSENSITIVE
+        // subset when the query carries the brand token ("m vamos" = [movistar,
+        // vamos] against "Vamos por Movistar+" = [vamos, movistar, plus]).
+        const orderSensitive = !toks.includes('movistar');
+        for (const brand of brandsToScan) {
+            const bucket = tokenByFirst.get(brand) || [];
+            const scanLimit = bucket.length > MAX_T3_SCAN ? MAX_T3_SCAN : bucket.length;
+            for (let i = 0; i < scanLimit; i++) {
+                const entry = bucket[i];
+                if (countryScopeKey && countryScopeKey !== 'global' && entry.country && entry.country !== countryScopeKey) continue;
+                const candToks = tokenize(entry.name, false);
+                if (candToks.length < toks.length) continue;
+                if (orderSensitive ? isSubsequence(toks, candToks) : isTokenSubset(toks, candToks)) {
+                    if (isRegionConflicting(entry.name, countryScopeKey)) continue;
+                    return { ...buildMatchEntry(entry), fuzzy: true, matchFuzzy: 'subsequence' };
+                }
             }
         }
     }
