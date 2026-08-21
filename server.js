@@ -980,28 +980,37 @@ const builder = new addonBuilder({
     idPrefixes: ['global_', 'us_', 'uk_', 'gb_', 'de_', 'fr_', 'es_', 'it_', 'ca_', 'au_', 'nl_', 'be_', 'pt_', 'gr_', 'pl_', 'cz_', 'hu_', 'ro_', 'rs_', 'hr_', 'si_', 'sk_', 'lt_', 'lv_', 'ee_', 'fi_', 'se_', 'no_', 'dk_', 'at_', 'ch_', 'ie_', 'bg_', 'cy_', 'mt_', 'lu_', 'is_', 'li_', 'mc_', 'sm_', 'va_', 'ad_', 'me_', 'mk_', 'al_', 'ba_', 'xk_', 'md_', 'ge_', 'am_', 'az_', 'by_', 'ua_', 'ru_', 'kz_', 'uz_', 'kg_', 'tj_', 'tm_', 'mn_', 'cn_', 'jp_', 'kr_', 'kp_', 'tw_', 'hk_', 'mo_', 'sg_', 'my_', 'th_', 'vn_', 'ph_', 'id_', 'bn_', 'kh_', 'la_', 'mm_', 'np_', 'bd_', 'lk_', 'mv_', 'bt_', 'af_', 'pk_', 'ir_', 'iq_', 'il_', 'jo_', 'lb_', 'sy_', 'ps_', 'sa_', 'ye_', 'om_', 'ae_', 'qa_', 'bh_', 'kw_', 'tr_', 'eg_', 'ly_', 'tn_', 'dz_', 'ma_', 'mr_', 'ml_', 'ne_', 'td_', 'cf_', 'cm_', 'ga_', 'gq_', 'st_', 'ao_', 'zw_', 'zm_', 'mw_', 'mz_', 'na_', 'bw_', 'ls_', 'sz_', 'za_', 'ng_', 'gh_', 'ci_', 'sn_', 'sl_', 'lr_', 'gn_', 'gw_', 'cv_', 'sc_', 'mu_', 'mg_', 'km_', 'dj_', 'er_', 'et_', 'so_', 'ke_', 'ug_', 'rw_', 'bi_', 'tz_', 'cd_', 'cg_', 'rn_', 're_', 'yt_', 'tf_', 'hm_', 'bv_', 'sj_', 'aq_']
 });
 
+// The Stremio SDK can surface catalog extras (`genre`, `search`, `skip`) as a
+// string or as an array (trailing-segment extras arrive as multi-value arrays).
+// Normalize to a single string so the filters below never crash on a non-string.
+function extraValue(extra, key) {
+    const v = extra && typeof extra === 'object' ? extra[key] : undefined;
+    if (Array.isArray(v)) return (v[0] ?? '');
+    return typeof v === 'string' ? v : '';
+}
+
 // Catalog handler (tv catalogs)
 builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
-    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extra?.genre)}, search=${sanitizeForLog(extra?.search)}`);
+    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extraValue(extra, 'genre'))}, search=${sanitizeForLog(extraValue(extra, 'search'))}`);
     if (!configObj) return { metas: [] };
 
     const ud = await ensureCache(configKey, configObj);
     if (!ud || !ud.channelMap) return { metas: [] };
 
-    const selectedGenre = extra?.genre?.replace(/-/g, ' ') || null;
-    const selectedSearch = extra?.search?.toLowerCase() || null;
+    const selectedGenre = extraValue(extra, 'genre')?.replace(/-/g, ' ') || null;
+    const selectedSearch = extraValue(extra, 'search')?.toLowerCase() || null;
 
     // Stremio catalogs must page via `skip` (default 100). Without this, a
     // 40k+ channel catalog returns one unbounded JSON response and stalls the client.
-    const skip = Math.max(0, parseInt(extra?.skip, 10) || 0);
+    const skip = Math.max(0, parseInt(extraValue(extra, 'skip'), 10) || 0);
     const limit = 100;
 
     // Cache hit: same config + page + genre/search + same cache generation →
     // serve the previously-rendered metas without re-walking the channelMap.
-    const cacheKey = `${configKey}|${skip}|${extra?.genre || ''}|${extra?.search || ''}|${ud.lastUpdated || 0}`;
+    const cacheKey = `${configKey}|${skip}|${selectedGenre || ''}|${selectedSearch || ''}|${ud.lastUpdated || 0}`;
     const cachedPage = catalogPageCache.get(cacheKey);
     if (cachedPage && Date.now() - cachedPage.at < CATALOG_PAGE_CACHE_TTL) {
         const r0 = { metas: cachedPage.metas };
@@ -1058,7 +1067,7 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const result = { metas };
     // Only cache the common paginated pages (skip=0, no search) to bound memory;
     // search/genre pages are cheap enough to rebuild and would bloat the cache.
-    if (skip === 0 && !extra?.search) {
+    if (skip === 0 && !selectedSearch) {
         if (catalogPageCache.size > 2000) catalogPageCache.clear();
         catalogPageCache.set(cacheKey, { metas, at: Date.now() });
     }
