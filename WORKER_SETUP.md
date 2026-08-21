@@ -151,3 +151,39 @@ wrangler tail --format json | jq 'select(.request.url | contains("imgur"))'
 # Add custom domain
 wrangler custom-domain add logo-proxy.iptv.cam
 ```
+
+---
+
+## Edge Asset Worker (`iptvo-assets`)
+
+A second worker serves posters, logos, and cached catalog/manifest JSON at
+`assets.oleglucic.com` (see `iptvo-assets.worker.js`). It is separate from the
+`nuvio-iptv` logo proxy and uses its own KV namespace (`iptvo-assets-kv`,
+binding `ASSETS_KV`) to stamp a catalog generation for edge-cache invalidation.
+
+Its Wrangler config lives in **`wrangler.iptvo-assets.toml`** (the root
+`wrangler.toml` targets `nuvio-iptv`, so it cannot deploy this worker).
+
+### Deploy manually
+
+```bash
+wrangler deploy -c wrangler.iptvo-assets.toml
+```
+
+### Connect to Workers Builds (auto-deploy on push)
+
+1. In the Cloudflare dashboard, go to **Workers & Pages** and select the
+   `iptvo-assets` worker.
+2. Select **Settings → Builds → Connect**, choose **GitHub**, and pick the
+   `IPTVo` repository. The Cloudflare GitHub App must already be installed
+   (it is, from the `nuvio-iptv` connection).
+3. Build settings:
+   - **Deploy command**: `npx wrangler deploy -c wrangler.iptvo-assets.toml`
+   - **Production branch**: `main`
+4. The worker **name in the dashboard must match** `wrangler.iptvo-assets.toml`
+   (`iptvo-assets`) or the build fails (Workers name requirement).
+5. Push a commit to `main` → Workers Builds runs the deploy command.
+
+The `nuvio-iptv` worker is already connected this way and automatically
+builds on every branch push, surfaced as the "Workers Builds: nuvio-iptv"
+check.

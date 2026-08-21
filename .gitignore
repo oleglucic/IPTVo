@@ -37,6 +37,9 @@ Thumbs.db
 *.temp
 diff_output.txt
 
+# Backup files
+*.bak
+
 # Supabase backup
 db.js.supabase-backup
 
@@ -44,3 +47,9 @@ db.js.supabase-backup
 test-output/
 # Playwright MCP test artifacts
 .playwright-mcp/
+
+# Local diagnostic harnesses (not part of the addon)
+.bench-*
+.harness-*
+.stress-*
+.cl-*

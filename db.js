@@ -169,9 +169,10 @@ async function saveEpgSnapshot(channelKey, programs) {
 
 // -- getEpgHistory ----------------------------------------------------------------
 /**
- * Fetch a channel's recorded program history for the last N hours.
- * @param {string} channelKey
- * @param {number} [hoursBack=48]
+ * Retrieves recorded programs for a channel within a lookback period.
+ * @param {string} channelKey - The channel identifier.
+ * @param {number} [hoursBack=48] - The number of hours to look back.
+ * @return {Array} Programs ending within the lookback period, or an empty array if unavailable.
  */
 async function getEpgHistory(channelKey, hoursBack = 48) {
     if (!pool) return [];
@@ -187,6 +188,193 @@ async function getEpgHistory(channelKey, hoursBack = 48) {
     } catch (e) {
         console.error('[DB Error] getEpgHistory:', e.message);
         return [];
+    }
+}
+
+// -- pruneEpgHistory ------------------------------------------------------------
+/**
+ * Removes EPG history records older than the specified retention window.
+ * @param {number} [maxAgeMs=7*24*60*60*1000] - Maximum age of records to retain, in milliseconds.
+ * @return {Promise<number>} The number of deleted records, or `0` if the database is unavailable or the operation fails.
+ */
+async function pruneEpgHistory(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
+    if (!pool) return 0;
+    const cutoff = Date.now() - maxAgeMs;
+    try {
+        const res = await pool.query('DELETE FROM epg_history WHERE start_time < $1', [cutoff]);
+        if (res && res.rowCount > 0) {
+            console.log(`[EPG][Prune] Deleted ${res.rowCount} old rows (cutoff=${new Date(cutoff).toISOString()})`);
+        }
+        return res ? res.rowCount : 0;
+    } catch (e) {
+        console.error('[DB Error] pruneEpgHistory:', e.message);
+        return 0;
+    }
+}
+
+// -- epg_programs / epg_sources (central multi-source EPG) --------------------
+// epg_programs is the server-side central EPG store merged from multiple sources
+// (see epgHub.js); user-facing requests read it via a Redis cache (redisCache.js).
+// epg_sources is the registry of enabled providers, extensible by users.
+
+/**
+ * Stores a channel's programs for a provider in the central EPG store.
+ * @param {string} channelKey - The canonical channel identifier.
+ * @param {string} source - The provider name.
+ * @param {Array<{title: string, desc?: string, start: number, stop: number}>} programs - Programs to create or update.
+ */
+async function saveEpgPrograms(channelKey, source, programs) {
+    if (!pool || !programs || programs.length === 0) return;
+    // Accumulate rows and batch in ONE client/transaction (a fresh connect per
+    // row was very slow for multi-channel feeds with thousands of programmes).
+    const params = [];
+    const values = [];
+    let idx = 1;
+    const seenStarts = new Set(); // (channel,source,start_time) unique in one batch (ON CONFLICT limit)
+    for (const p of programs) {
+        const startK = `${channelKey} ${source} ${p.start}`;
+        if (seenStarts.has(startK)) continue;
+        seenStarts.add(startK);
+        values.push(`($${idx++},$${idx++},$${idx++},$${idx++},$${idx++},$${idx++})`);
+        params.push(channelKey, source, p.title || 'Unknown', p.desc || null, p.start, p.stop);
+    }
+    if (values.length === 0) return;
+    try {
+        const client = await pool.connect();
+        try {
+            await client.query(
+                `INSERT INTO epg_programs (channel_key, source, title, description, start_time, stop_time)
+                 VALUES ${values.join(',')}
+                 ON CONFLICT (channel_key, source, start_time)
+                 DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description, stop_time = EXCLUDED.stop_time`,
+                params
+            );
+        } finally {
+            client.release();
+        }
+    } catch (e) {
+        console.error('[DB Error] saveEpgPrograms:', e.message);
+    }
+}
+
+/**
+ * Retrieves a channel's programs from the central EPG store within a time range.
+ * @param {string} channelKey - The canonical channel identifier.
+ * @param {number} from - The start of the time range as an epoch timestamp in milliseconds.
+ * @param {number} to - The end of the time range as an epoch timestamp in milliseconds.
+ * @return {Array<Object>} Programs ordered by start time, with one program selected for each start time.
+ */
+async function getEpgPrograms(channelKey, from, to) {
+    if (!pool) return [];
+    try {
+        const { rows } = await pool.query(
+            `SELECT DISTINCT ON (start_time) title, description, start_time, stop_time
+             FROM epg_programs
+             WHERE channel_key = $1 AND start_time <= $3 AND stop_time >= $2
+             ORDER BY start_time ASC`,
+            [channelKey, from || 0, to || Date.now() + 14 * 24 * 60 * 60 * 1000]
+        );
+        return rows || [];
+    } catch (e) {
+        console.error('[DB Error] getEpgPrograms:', e.message);
+        return [];
+    }
+}
+
+/**
+ * Fetches central EPG programs for many channels in one query, grouped by channel.
+ * @param {string[]} channelKeys - The channel keys to fetch programs for.
+ * @param {number} from - The start of the time range as an epoch timestamp in milliseconds.
+ * @param {number} to - The end of the time range as an epoch timestamp in milliseconds.
+ * @return {Map<string, Array<Object>>} A map of channel key to its ordered programs (program selection per start time).
+ */
+async function getEpgProgramsMany(channelKeys, from, to) {
+    const out = new Map();
+    if (!pool || !channelKeys || channelKeys.length === 0) return out;
+    try {
+        const { rows } = await pool.query(
+            `SELECT DISTINCT ON (channel_key, start_time) channel_key, title, description, start_time, stop_time
+             FROM epg_programs
+             WHERE channel_key = ANY($1) AND start_time <= $3 AND stop_time >= $2
+             ORDER BY channel_key, start_time ASC`,
+            [channelKeys, from || 0, to || Date.now() + 14 * 24 * 60 * 60 * 1000]
+        );
+        for (const r of rows) {
+            if (!out.has(r.channel_key)) out.set(r.channel_key, []);
+            out.get(r.channel_key).push({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) });
+        }
+        return out;
+    } catch (e) {
+        console.error('[DB Error] getEpgProgramsMany:', e.message);
+        return out;
+    }
+}
+
+/** List all registered EPG sources (registry). */
+async function listEpgSources() {
+    if (!pool) return [];
+    try {
+        const { rows } = await pool.query('SELECT * FROM epg_sources');
+        return rows || [];
+    } catch (e) {
+        console.error('[DB Error] listEpgSources:', e.message);
+        return [];
+    }
+}
+
+/** Update a source's fetch/success/error tracking. */
+async function setEpgSourceStatus(source, { last_fetch, last_success, error_count } = {}) {
+    if (!pool) return;
+    try {
+        await pool.query(
+            `UPDATE epg_sources SET
+                last_fetch = COALESCE($2, last_fetch),
+                last_success = COALESCE($3, last_success),
+                error_count = COALESCE($4, error_count)
+             WHERE source = $1`,
+            [source, last_fetch || 0, last_success || 0, error_count == null ? null : error_count]
+        );
+    } catch (e) {
+        console.error('[DB Error] setEpgSourceStatus:', e.message);
+    }
+}
+
+/**
+ * Creates or updates an EPG source registry entry.
+ * @param {Object} src - EPG source configuration, including its identifier and optional status, type, URL, region, and notes.
+ */
+async function upsertEpgSource(src) {
+    if (!pool) return;
+    try {
+        // On conflict, refresh metadata but preserve the stored `enabled` flag so
+        // a source a user disabled in the registry is not re-enabled by seeding.
+        await pool.query(
+            `INSERT INTO epg_sources (source, enabled, kind, url, region, notes)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT (source) DO UPDATE SET
+                kind = EXCLUDED.kind,
+                url = EXCLUDED.url, region = EXCLUDED.region, notes = EXCLUDED.notes`,
+            [src.source, src.enabled !== false, src.kind || 'general', src.url || '', src.region || 'global', src.notes || null]
+        );
+    } catch (e) {
+        console.error('[DB Error] upsertEpgSource:', e.message);
+    }
+}
+
+/**
+ * Deletes central EPG records older than the retention window.
+ * @param {number} [maxAgeMs=1209600000] - Retention window in milliseconds.
+ * @returns {number} The number of deleted records.
+ */
+async function pruneEpgPrograms(maxAgeMs = 14 * 24 * 60 * 60 * 1000) {
+    if (!pool) return 0;
+    const cutoff = Date.now() - maxAgeMs;
+    try {
+        const res = await pool.query('DELETE FROM epg_programs WHERE start_time < $1', [cutoff]);
+        return res ? res.rowCount : 0;
+    } catch (e) {
+        console.error('[DB Error] pruneEpgPrograms:', e.message);
+        return 0;
     }
 }
 
@@ -239,12 +427,18 @@ async function getUserByUsername(username) {
 }
 
 /**
- * Get user by user_id
- * @param {string} userId - User UUID
- * @returns {Promise<object|null>}
+ * Retrieves a user by UUID.
+ * @param {string} userId - The user's UUID.
+ * @returns {Promise<object|null>} The matching user record, or `null` if the UUID is invalid, the user is not found, or the database is unavailable.
  */
 async function getUserById(userId) {
     if (!pool) return null;
+    // A legacy base64 config key can reach this erroneously via `_userId`;
+    // Postgres rejects non-UUID input as noisy ERROR spam on every request.
+    // Short-circuit before the query — it is never a real user.
+    if (typeof userId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+        return null;
+    }
     try {
         const { rows } = await pool.query(
             'SELECT user_id, username, password_hash, encrypted_config, config_iv, config_salt, created_at, updated_at FROM users WHERE user_id = $1',
@@ -341,6 +535,15 @@ module.exports = {
     hasSupabase,
     saveEpgSnapshot,
     getEpgHistory,
+    pruneEpgHistory,
+    // Central multi-source EPG (epg_programs / epg_sources)
+    saveEpgPrograms,
+    getEpgPrograms,
+    getEpgProgramsMany,
+    listEpgSources,
+    setEpgSourceStatus,
+    upsertEpgSource,
+    pruneEpgPrograms,
     // Logo URL tracking (persistent, no expiry)
     getLogoUrl,
     setLogoUrl,

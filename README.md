@@ -545,7 +545,7 @@ getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
 | File | Purpose |
 | ------ | --------- |
 | `server.js` | Express routes, auth, Stremio addon, health endpoints, cold-start pre-warm |
-| `iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline, country extraction, AI queue |
+| `iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline, country extraction, XMLTV/EPG mapping, AI queue |
 | `iptvOrgRef.js` | iptv-org data fetch + exact/fuzzy lookup (daily refresh) |
 | `aiCurator.js` | AI deduplication queue, OpenRouter integration, batching |
 | `imageEngine.js` | Poster generation (Sharp), logo cache, Worker proxy, SVG fallbacks |
@@ -553,12 +553,11 @@ getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
 | `dbInit.js` | Auto-initialize database schema on startup |
 | `redisCache.js` | Playlist cache read/write, logo buffer persist/get, pre-warm job |
 | `catchup.js` | Catch-up metadata extraction (M3U `catchup`/`catchup-days`, Xtream) |
-| `universalEpg.js` | XMLTV EPG parsing (SAX streaming) |
 | `cryptoUtils.js` | AES-GCM encryption/decryption, PBKDF2 password hashing, session tokens |
 | `logo-proxy.worker.js` | Cloudflare Worker logo proxy with KV dead URL tracking |
 | `wrangler.toml` | Worker config (KV bindings, compatibility date) |
-| `dashboard.html` | Apple HIG/Liquid Glass tabbed UI, auth integration |
-| `docker-compose.yaml` | Container orchestration |
+| `dashboard/index.html` | Apple HIG/Liquid Glass tabbed UI, auth integration |
+| `docker-compose.yml` | Container orchestration |
 
 ## Docker
 
@@ -590,19 +589,15 @@ docker run -d \
 ### Building from source
 
 ```dockerfile
-# Multi-stage build
-FROM node:24-bookworm-slim AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-
-FROM node:24-bookworm-slim
+FROM node:26-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig fonts-inter fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
+COPY package*.json ./
+RUN npm install
 COPY . .
+RUN npm prune --omit=dev
 EXPOSE 3000
 CMD ["node", "server.js"]
 ```
@@ -630,17 +625,17 @@ IPTVo uses **semantic versioning** with automated releases via GitHub Actions.
 ### Version Management
 
 - Source of truth: `package.json` version
-- Commits drive version bumps via `standard-version`:
+- Commits drive version bumps via `semantic-release` (in the Release job):
   - `feat:` → MINOR
   - `fix:` → PATCH
   - `BREAKING CHANGE:` → MAJOR
   - Other prefixes (`docs:`, `chore:`, `refactor:`) → no version bump
 
-### Release Workflow (`.github/workflows/release.yml`)
+### Release Workflow (`.github/workflows/ci-cd.yml`)
 
-Triggers on push to tag `v*`:
+Release runs on every push to `main` (CI + Release jobs in the same pipeline):
 
-1. **Determine version** — from git tag
+1. **Bump version** — `semantic-release` drives the version bump from commit prefixes (`feat:` → minor, `fix:` → patch, `BREAKING CHANGE:` → major)
 2. **Multi-arch Docker build** — linux/amd64, linux/arm64 via Buildx
 3. **Push to registries** — Docker Hub (`itsoleglucic/iptvo`) + GHCR (`ghcr.io/oleglucic/iptvo`)
 4. **Generate changelog** — from git log since last tag
@@ -648,19 +643,7 @@ Triggers on push to tag `v*`:
 
 ### Manual Release
 
-Version tags are created manually — no auto-bump on main branch pushes.
-
-```bash
-# Create and push a version tag (triggers release workflow)
-git tag v1.2.3
-git push origin v1.2.3
-
-# Or with message
-git tag -a v1.2.3 -m "Release v1.2.3"
-git push origin v1.2.3
-```
-
-The release workflow only runs on version tags (`v*`). Push to `main` no longer triggers releases.
+Releases are automatic: merging to `main` via a Pull Request triggers the Release job in `ci-cd.yml`, which bumps the version and publishes the Docker images + GitHub release. No manual tag creation or push is needed.
 
 To preview what the changelog would contain:
 
