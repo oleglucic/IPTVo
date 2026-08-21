@@ -195,7 +195,13 @@ async function tryFetchUrl(env, url) {
 // Main handler
 export default {
     async fetch(request, env, _ctx) {
-        const url = new URL(request.url);
+        let url = new URL(request.url);
+
+        // Service coherent under assets.oleglucic.com/iptvo/fetcher/*. Strip the
+        // shared /iptvo/fetcher prefix so the routes below see /logo directly.
+        if (url.pathname.startsWith('/iptvo/fetcher')) {
+            url.pathname = url.pathname.slice('/iptvo/fetcher'.length) || '/';
+        }
 
         // Health check
         if (url.pathname === '/health') {
@@ -204,7 +210,7 @@ export default {
             });
         }
 
-        // Only handle /logo endpoint
+        // Only handle /logo endpoint (also tolerate a bare /iptvo/fetcher/logo)
         if (url.pathname !== '/logo') {
             return new Response('Not Found', { status: 404 });
         }
