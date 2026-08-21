@@ -1,3 +1,10 @@
+## [0.9.1](https://github.com/oleglucic/IPTVo/compare/v0.9.0...v0.9.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **catalog:** coerce Stremio extra arrays so search/genre don't crash ([c5021bf](https://github.com/oleglucic/IPTVo/commit/c5021bf3001c45c23e5816e527de6bc1d5c0b306))
+
 # [0.9.0](https://github.com/oleglucic/IPTVo/compare/v0.8.1...v0.9.0) (2026-08-21)
 
 
