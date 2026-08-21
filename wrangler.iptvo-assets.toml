@@ -1,0 +1,20 @@
+# Cloudflare Worker: IPTVo edge asset proxy (logo/poster/catalog edge-cache).
+#
+# This is a SEPARATE worker from `nuvio-iptv` (the live logo proxy). It is
+# deployed under assets.oleglucic.com. `iptvo-assets.worker.js` reads the
+# ASSETS_KV generation stamp to invalidate edge-cached catalog pages.
+#
+# The `name` here MUST match the worker name in the Cloudflare dashboard for
+# Workers Builds to deploy to it (see Workers name requirement).
+name = "iptvo-assets"
+main = "iptvo-assets.worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace for the catalog generation stamp (cache invalidation on re-parse).
+[[kv_namespaces]]
+binding = "ASSETS_KV"
+id = "0832a13b6c6242c38b78c515fe2dae9f"
+preview_id = "0832a13b6c6242c38b78c515fe2dae9f"
+
+limits = { cpu_ms = 50 }
