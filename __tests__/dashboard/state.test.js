@@ -138,8 +138,13 @@ describe('dashboard/js/state.js', () => {
         });
 
         test('setConfig preserves selectedGroups when include is absent', () => {
+            // A non-empty selection is tracked in the UI even when the stored
+            // config carries no include field; loading other fields must not
+            // wipe it.
+            mutations.setConfigField('selectedGroups', ['News', 'Sports']);
             mutations.setConfig({ m3uUrl: 'http://a' });
-            expect(state.config.selectedGroups).toEqual([]);
+            expect(state.config.selectedGroups).toEqual(['News', 'Sports']);
+            expect(state.config).not.toHaveProperty('include');
         });
 
         test('setConfigField updates a single field', () => {
