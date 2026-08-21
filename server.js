@@ -1,3 +1,4 @@
+const querystring = require('querystring');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -5,7 +6,7 @@ const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
 const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry } = require('./iptvParser');
 const { run: runEpgHub, seedSources: seedEpgHub } = require('./epgHub');
-const { loadCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
+const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
@@ -912,12 +913,20 @@ app.put('/api/auth/config', async (req, res) => {
             return res.status(500).json({ error: 'Failed to update config' });
         }
 
-        // Update session config (persisted to Redis so any worker sees it) with the
-        // merged config so workers hold the preserved secrets, not blanks.
+        // A config change (groups, iptv-org toggle, provider) must re-parse. Drop
+        // the in-memory snapshot and its Redis copy so the next request rebuilds
+        // from the saved config instead of serving the stale one until it ages out.
+        const userId = session.userId;
+        userCaches.delete(userId);
+        await deleteCacheFromRedis(userId);
+        catalogPageCache.clear();
+
+        // Update session config (persisted to Redis so the running worker holds the
+        // preserved secrets, not blanks).
         session.config = savedConfig;
         await sessionSet(token, session);
 
-        console.log(`[Auth] Config updated for user: ${sanitizeForLog(session.userId)}`);
+        console.log(`[Auth] Config updated for user: ${sanitizeForLog(userId)}`);
 console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
 console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
@@ -1049,8 +1058,15 @@ const builder = new addonBuilder({
 
 // The Stremio SDK can surface catalog extras (`genre`, `search`, `skip`) as a
 // string or as an array (trailing-segment extras arrive as multi-value arrays).
-// Normalize to a single string so the filters below never crash on a non-string.
+// Our catalog routes pass `req.params.extra` (a raw query string like
+// "search=espn&skip=0") straight through, so parse it into an object first, then
+// normalize values to a single string so the filters below never crash.
 function extraValue(extra, key) {
+    // Catalog routes pass `req.params.extra` as a raw query string (e.g.
+    // "search=espn&skip=0"); parse it so the filters below can read it.
+    if (typeof extra === 'string') {
+        extra = querystring.parse(extra) || {};
+    }
     const v = extra && typeof extra === 'object' ? extra[key] : undefined;
     if (Array.isArray(v)) return (v[0] ?? '');
     return typeof v === 'string' ? v : '';
