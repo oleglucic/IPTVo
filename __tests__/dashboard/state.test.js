@@ -129,6 +129,19 @@ describe('dashboard/js/state.js', () => {
             expect(state.config.type).toBe('m3u'); // untouched default preserved
         });
 
+        test('setConfig coerces a server-sent include array back into selectedGroups', () => {
+            // The server persists the selection under `include`; on load the
+            // dashboard must map it back so checkboxes reflect what is saved.
+            mutations.setConfig({ include: ['News', 'Sports'] });
+            expect(state.config.selectedGroups).toEqual(['News', 'Sports']);
+            expect(state.config).not.toHaveProperty('include');
+        });
+
+        test('setConfig preserves selectedGroups when include is absent', () => {
+            mutations.setConfig({ m3uUrl: 'http://a' });
+            expect(state.config.selectedGroups).toEqual([]);
+        });
+
         test('setConfigField updates a single field', () => {
             mutations.setConfigField('timezoneOffset', 5.5);
             expect(state.config.timezoneOffset).toBe(5.5);
