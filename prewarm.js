@@ -35,8 +35,10 @@ function posterPathFor(cId, logoUrl) {
 }
 
 /**
- * Warm one channel. Returns 'rendered' | 'cached' | 'skipped' | 'error-<reason>'.
- * Always persists the URL map to Postgres when a URL is known.
+ * Ensures a channel logo is registered and available in the poster cache.
+ * @param {string} officialId - The IPTV-org channel identifier.
+ * @param {string} logoUrl - The channel logo URL.
+ * @returns {'rendered'|'cached'|'skipped'|string} The processing status, including an error message when rendering fails.
  */
 async function warmOne(officialId, logoUrl) {
     if (!logoUrl || typeof logoUrl !== 'string' || !logoUrl.startsWith('http')) {
@@ -64,8 +66,8 @@ async function warmOne(officialId, logoUrl) {
 }
 
 /**
- * Prewarm full iptv-org logo set. Resolves once iptv-org data is refreshed.
- * Returns a summary object; throws only on unrecoverable issues.
+ * Prewarms the complete IPTV-org channel logo set.
+ * @returns {Promise<Object>} A status summary indicating whether the run was already active, failed while awaiting refreshed data, or completed with rendered, cached, skipped, and error counts.
  */
 async function prewarm() {
     if (running) return { status: 'already-running' };

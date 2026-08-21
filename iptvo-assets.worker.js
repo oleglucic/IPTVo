@@ -23,9 +23,29 @@ const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DEAD_URL_TTL_SECONDS = 24 * 60 * 60;
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 2;
+/**
+ * Encodes text as unpadded URL-safe Base64.
+ * @param {string} str - The text to encode.
+ * @return {string} The URL-safe Base64 representation of the text.
+ */
 function b64u(str) { return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, ""); }
+/**
+ * Decodes a URL-safe Base64-encoded string as UTF-8 text.
+ * @param {string} str - The encoded string.
+ * @return {?string} The decoded text, or `null` when decoding fails.
+ */
 function b64ud(str) { try { const p = str.length % 4; const pad = p ? str + "=".repeat(4 - p) : str; return decodeURIComponent(escape(atob(pad.replace(/-/g, "+").replace(/_/g, "/")))); } catch { return null; } }
+/**
+ * Escapes characters with special meaning in HTML text.
+ * @param {string} s - The text to escape.
+ * @return {string} The text with HTML-sensitive characters replaced by entities.
+ */
 function escapeHtml(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+/**
+ * Creates an SVG placeholder image with centered text.
+ * @param {string} [text="Live TV"] - The text displayed in the placeholder.
+ * @return {string} The generated SVG markup.
+ */
 function placeholderSvg(text = "Live TV") {
   return `<svg width="640" height="640" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#1e293b"/></linearGradient></defs><rect width="640" height="640" fill="url(#g)"/><text x="320" y="320" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="40" font-weight="600" fill="#94a3b8">${escapeHtml(text)}</text></svg>`;
 }
@@ -55,6 +75,13 @@ function isPrivateHost(hostname) {
   if (/^(::1|fe80:|fc|fd)/.test(h)) return true;
   return false;
 }
+
+/**
+ * Determines whether a value is a valid public HTTP(S) URL (SSRF-safe: blocks
+ * loopback, private, link-local, and cloud-metadata hosts).
+ * @param {*} u - The value to validate as a URL.
+ * @return {boolean} `true` if the value uses HTTP/HTTPS to a public host, `false` otherwise.
+ */
 function isValidHttp(u) {
   try {
     const p = new URL(u);
@@ -62,6 +89,13 @@ function isValidHttp(u) {
     return !isPrivateHost(p.hostname);
   } catch { return false; }
 }
+/**
+ * Fetches an image URL with timeout handling, retries for transient failures,
+ * and a guard that rejects unsafe redirects.
+ * @param {string} url - The image URL to fetch.
+ * @param {number} [attempt=0] - The current retry attempt.
+ * @returns {Promise<Object>} The fetch result, indicating success, a dead URL, or an error.
+ */
 async function fetchWithRetry(url, attempt = 0) {
   const ctl = new AbortController(); const tid = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
   try {

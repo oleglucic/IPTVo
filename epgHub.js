@@ -49,10 +49,10 @@ async function seedSources() {
 }
 
 /**
- * Fetch a single XMLTV source and return programmes grouped by the channel id
- * the feed actually uses (e.g. <programme channel="...">). Emits
- *   { byChannel: Map<rawId, [{title,desc,start,stop}]>, spanMs }
- * Streams + auto-detects gzip, with full SSRF guards.
+ * Fetches and parses an XMLTV feed, grouping programmes by their normalized raw channel IDs.
+ * @param {string} url - The XMLTV feed URL.
+ * @returns {Promise<{byChannel: Map<string, Array<{title: string, desc: string, start: number, stop: number}>>, spanMs: number}>} The grouped programmes and the feed's overall programme time span in milliseconds.
+ * @throws {Error} If the URL is unsafe or the feed cannot be fetched, decompressed, or parsed.
  */
 async function fetchSourceRaw(url) {
     if (!isSafeUrl(url)) throw new Error('Unsafe EPG source URL');
@@ -104,6 +104,11 @@ async function fetchSourceRaw(url) {
     });
 }
 
+/**
+ * Converts an XMLTV timestamp to Unix time in milliseconds.
+ * @param {string} x - The XMLTV timestamp.
+ * @return {number} The timestamp in milliseconds, or `0` for an invalid or missing value.
+ */
 function parseXmlDate(x) {
     if (!x || x.length < 14) return 0;
     try {
@@ -115,9 +120,9 @@ function parseXmlDate(x) {
 }
 
 /**
- * Normalize a source's raw channel id to a canonical iptv-org-style officialId.
- * - Ids already of form `<name>.<cc>` (epgshare01, iptv-org) pass through.
- * - Name-keyed ids (`mjh-*`, globetvapp raw) fall back to iptv-org lookups.
+ * Normalize a raw channel identifier to a canonical country-qualified ID.
+ * @param {string} rawId - The source channel identifier.
+ * @return {string|null} The normalized identifier if it uses a supported country suffix, or `null` otherwise.
  */
 function normalizeSourceId(rawId) {
     if (!rawId) return null;
@@ -130,8 +135,9 @@ function normalizeSourceId(rawId) {
 }
 
 /**
- * Pick the best programme list for a channel across sources.
- * Prefers the source with the longest coverage span; dedupes by (start,title).
+ * Combines programme listings from multiple sources for a channel.
+ * @param {Array<{source: string, spanMs: number, programs: Array}>} candidates - Source listings to merge, ordered by programme count.
+ * @return {Array} The merged programmes with duplicate start-time and title pairs removed.
  */
 function mergeForChannel(candidates) {
     // candidates: [{source, spanMs, programs}]
@@ -153,8 +159,9 @@ function mergeForChannel(candidates) {
 }
 
 /**
- * Run one full hub cycle: fetch all enabled sources in parallel (capped), merge
- * into epg_programs, bump the generation, and warm the Redis cache.
+ * Executes a complete EPG ingestion cycle.
+ *
+ * @return {{status: string, fetched?: number, failed?: number, mergedChannels?: number, mergedPrograms?: number, generation?: number}} Cycle status and processing statistics, or an `already-running` or `no-sources` status.
  */
 async function run() {
     if (running) return { status: 'already-running' };

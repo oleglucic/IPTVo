@@ -36,6 +36,11 @@ const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
 const LOGO_PROXY_URL = process.env.LOGO_PROXY_URL || (ASSET_BASE_URL ? ASSET_BASE_URL.replace(/\/$/, '') + '/logo' : 'https://logo-proxy.your-worker.workers.dev/logo');
 
+/**
+ * Determines whether a buffer begins with SVG markup.
+ * @param {Buffer} buffer - The buffer to inspect.
+ * @return {boolean} `true` if the buffer contains SVG markup, `false` otherwise.
+ */
 function isSvgBuffer(buffer) {
     if (!buffer || buffer.length === 0) return false;
     const header = buffer.subarray(0, Math.min(50, buffer.length)).toString().trim().toLowerCase();
@@ -419,7 +424,11 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
 }
 
 // Task #42 retry pass: the logo refresh loop re-attempts URLs whose last fetch
-// FAILED, on the same (short, expiring) retry window. Success clears the mark.
+/**
+ * Determines whether a logo URL is within its retry window after a failed fetch.
+ * @param {string} url - The logo URL to check.
+ * @return {boolean} `true` if the URL is pending retry, `false` otherwise.
+ */
 function isLogoMissPending(url) {
     return isDeadUrl(url);
 }

@@ -169,9 +169,10 @@ async function saveEpgSnapshot(channelKey, programs) {
 
 // -- getEpgHistory ----------------------------------------------------------------
 /**
- * Fetch a channel's recorded program history for the last N hours.
- * @param {string} channelKey
- * @param {number} [hoursBack=48]
+ * Retrieves recorded programs for a channel within a lookback period.
+ * @param {string} channelKey - The channel identifier.
+ * @param {number} [hoursBack=48] - The number of hours to look back.
+ * @return {Array} Programs ending within the lookback period, or an empty array if unavailable.
  */
 async function getEpgHistory(channelKey, hoursBack = 48) {
     if (!pool) return [];
@@ -192,11 +193,9 @@ async function getEpgHistory(channelKey, hoursBack = 48) {
 
 // -- pruneEpgHistory ------------------------------------------------------------
 /**
- * Delete epg_history rows older than a retention window (default 7 days).
- * Called on a daily interval so catch-up's forward-only snapshots don't grow
- * the table without bound (rows are only read for the 48h catch-up window).
- * @param {number} [maxAgeMs=7*24*60*60*1000]
- * @returns {Promise<number>} number of rows deleted (0 if no pool / error)
+ * Removes EPG history records older than the specified retention window.
+ * @param {number} [maxAgeMs=7*24*60*60*1000] - Maximum age of records to retain, in milliseconds.
+ * @return {Promise<number>} The number of deleted records, or `0` if the database is unavailable or the operation fails.
  */
 async function pruneEpgHistory(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
     if (!pool) return 0;
@@ -219,10 +218,10 @@ async function pruneEpgHistory(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
 // epg_sources is the registry of enabled providers, extensible by users.
 
 /**
- * Upsert one channel's programmes from a source into the central store.
- * @param {string} channelKey canonical cId (e.g. 'global_cnn.us')
- * @param {string} source source name (e.g. 'epgshare01')
- * @param {Array<{title:string, desc?:string, start:number, stop:number}>} programs
+ * Stores a channel's programs for a provider in the central EPG store.
+ * @param {string} channelKey - The canonical channel identifier.
+ * @param {string} source - The provider name.
+ * @param {Array<{title: string, desc?: string, start: number, stop: number}>} programs - Programs to create or update.
  */
 async function saveEpgPrograms(channelKey, source, programs) {
     if (!pool || !programs || programs.length === 0) return;
@@ -259,10 +258,11 @@ async function saveEpgPrograms(channelKey, source, programs) {
 }
 
 /**
- * Fetch a channel's merged programmes from the central store.
- * @param {string} channelKey canonical cId
- * @param {number} from epoch ms
- * @param {number} to epoch ms
+ * Retrieves a channel's programs from the central EPG store within a time range.
+ * @param {string} channelKey - The canonical channel identifier.
+ * @param {number} from - The start of the time range as an epoch timestamp in milliseconds.
+ * @param {number} to - The end of the time range as an epoch timestamp in milliseconds.
+ * @return {Array<Object>} Programs ordered by start time, with one program selected for each start time.
  */
 async function getEpgPrograms(channelKey, from, to) {
     if (!pool) return [];
@@ -310,7 +310,10 @@ async function setEpgSourceStatus(source, { last_fetch, last_success, error_coun
     }
 }
 
-/** Upsert a source into the registry (used to seed + for user-added sources). */
+/**
+ * Creates or updates an EPG source registry entry.
+ * @param {Object} src - EPG source configuration, including its identifier and optional status, type, URL, region, and notes.
+ */
 async function upsertEpgSource(src) {
     if (!pool) return;
     try {
@@ -327,7 +330,11 @@ async function upsertEpgSource(src) {
     }
 }
 
-/** Delete central EPG rows older than a retention window. */
+/**
+ * Deletes central EPG records older than the retention window.
+ * @param {number} [maxAgeMs=1209600000] - Retention window in milliseconds.
+ * @returns {number} The number of deleted records.
+ */
 async function pruneEpgPrograms(maxAgeMs = 14 * 24 * 60 * 60 * 1000) {
     if (!pool) return 0;
     const cutoff = Date.now() - maxAgeMs;
@@ -389,9 +396,9 @@ async function getUserByUsername(username) {
 }
 
 /**
- * Get user by user_id
- * @param {string} userId - User UUID
- * @returns {Promise<object|null>}
+ * Retrieves a user by UUID.
+ * @param {string} userId - The user's UUID.
+ * @returns {Promise<object|null>} The matching user record, or `null` if the UUID is invalid, the user is not found, or the database is unavailable.
  */
 async function getUserById(userId) {
     if (!pool) return null;
