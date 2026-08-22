@@ -71,4 +71,62 @@ describe('imageEngine square posters', () => {
         await getPremiumPoster(id, 'https://cdn.example.com/icon3.png', 'USA News');
         expect(axios.get.mock.calls.length).toBe(fetchCountAfterFirst);
     });
+
+    test('falls back to a direct fetch when the Worker proxy returns a quota error', async () => {
+        const id = `quota_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        const uniqueUrl = `https://cdn.quota.example.com/icon_${Date.now()}_${Math.floor(Math.random() * 1e6)}.png`;
+        // The module reads LOGO_PROXY_URL at load time to decide whether a proxy is
+        // configured, and both the module and axios must be re-required so the fresh
+        // instance uses the fresh axios mock (jest.resetModules gives a new registry).
+        jest.resetModules();
+        process.env.LOGO_PROXY_URL = 'https://logo.proxy.example/logo'; // proxy "configured"
+        const freshAxios = require('axios');
+        const quotaEngine = require('../imageEngine');
+        const { getPremiumPoster: quotaPoster } = quotaEngine;
+        // Worker returns HTTP 429 (quota exceeded) → axios rejects in fetchLogoViaProxy
+        freshAxios.get
+            .mockReset()
+            .mockImplementation(async (...args) => {
+                // Simulate a transport/HTTP 429 from the Worker proxy (axios rejects
+                // with a status attached), and a normal image response for direct fetch.
+                if (args[0] && String(args[0]).startsWith('https://logo.proxy.example/')) {
+                    const err = new Error('Quota exceeded');
+                    err.response = { status: 429 };
+                    throw err;
+                }
+                return { data: await pngBuffer(), headers: { 'content-type': 'image/png' } };
+            });
+        const posterPath = await quotaPoster(id, uniqueUrl, 'Quota TV');
+        const proxyCalls = freshAxios.get.mock.calls.filter(([u]) => String(u).includes('proxy.example')).length;
+        const directCalls = freshAxios.get.mock.calls.filter(([u]) => String(u).includes('cdn.quota')).length;
+        expect(proxyCalls).toBe(1); // worker(429)
+        expect(directCalls).toBe(1); // direct fetch fallback
+        expect(fs.existsSync(posterPath)).toBe(true);
+        // restore env so later tests run with proxy unconfigured as before
+        delete process.env.LOGO_PROXY_URL;
+        jest.resetModules();
+    });
+
+    test('keeps serving the existing server-side poster instead of overwriting with a placeholder', async () => {
+        const id = 'sticky';
+        const url = 'https://cdn.sticky.example.com/icon.png';
+        // Render once successfully (disk poster exists)
+        await getPremiumPoster(id, url, 'Sticky TV');
+        const firstFetchCount = axios.get.mock.calls.length;
+        // Now every fetch fails (dead upstream) — the previous real poster must survive
+        axios.get.mockImplementation(async () => {
+            const err = new Error('fetch failed');
+            err.response = { status: 503 };
+            throw err;
+        });
+        const posterPath = await getPremiumPoster(id, url, 'Sticky TV');
+        // Still the earlier real render is served (exists, non-empty PNG)
+        expect(fs.existsSync(posterPath)).toBe(true);
+        const meta = await sharp(posterPath).metadata();
+        expect(meta.width).toBe(meta.height);
+        // The on-disk file must NOT have been overwritten by a placeholder SVG
+        const raw = fs.readFileSync(posterPath);
+        const isSvg = raw.subarray(0, 5).toString() === '<svg';
+        expect(isSvg).toBe(false);
+    });
 });

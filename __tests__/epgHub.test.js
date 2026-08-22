@@ -1,6 +1,6 @@
 // Unit tests for epgHub (central multi-source EPG).
-// Mock db/redisCache before importing epgHub so requiring it never creates real
-// database or Redis clients (the module top-levels a connection pool).
+// Mock db/redisCache/iptvOrgRef before importing epgHub so requiring it never
+// creates real database/Redis clients or loads the iptv-org reference indexes.
 jest.mock('../db', () => ({
   saveEpgPrograms: jest.fn(),
   listEpgSources: jest.fn(async () => []),
@@ -15,8 +15,13 @@ jest.mock('../redisCache', () => ({
   setHubState: jest.fn(async () => 1),
   hasRedis: false
 }));
+jest.mock('../iptvOrgRef', () => ({
+  lookupChannelSmart: jest.fn(() => null),
+  lookupChannel: jest.fn(() => null),
+  isValidCountryCode: jest.fn((cc) => /^[a-z]{2}$/.test(cc))
+}));
 
-const { normalizeSourceId, mergeForChannel } = require('../epgHub');
+const { normalizeSourceId, mergeForChannel, resolveCanonicalSourceId } = require('../epgHub');
 
 describe('epgHub normalizeSourceId', () => {
   test('passes through iptv-org-style id (name.cc)', () => {
@@ -73,5 +78,35 @@ describe('epgHub mergeForChannel', () => {
   test('returns [] for empty input', () => {
     expect(mergeForChannel([])).toEqual([]);
     expect(mergeForChannel(null)).toEqual([]);
+  });
+});
+
+describe('epgHub resolveCanonicalSourceId', () => {
+  const ref = require('../iptvOrgRef');
+
+  test('returns null when no iptv-org match exists', async () => {
+    ref.lookupChannelSmart.mockReturnValue(null);
+    ref.lookupChannel.mockReturnValue(null);
+    const result = await resolveCanonicalSourceId('no.such.channel.xx');
+    expect(result).toBeNull();
+  });
+
+  test('returns official + cc-stripped base for a match', async () => {
+    ref.lookupChannelSmart.mockReturnValue({ officialId: 'SkySportsNews.uk', countryScopeKey: 'gb' });
+    const result = await resolveCanonicalSourceId('sky.sports.news.hd.uk');
+    expect(result).toEqual({
+      official: 'skysportsnews.uk',
+      base: 'skysportsnews'
+    });
+  });
+
+  test('caches results so repeated calls do not re-match', async () => {
+    ref.lookupChannelSmart.mockReturnValue({ officialId: 'CNN.us' });
+    ref.lookupChannel.mockReturnValue(null);
+    const first = await resolveCanonicalSourceId('cnn.usa');
+    const before = ref.lookupChannelSmart.mock.calls.length;
+    const second = await resolveCanonicalSourceId('cnn.usa');
+    expect(second).toEqual(first);
+    expect(ref.lookupChannelSmart.mock.calls.length).toBe(before);
   });
 });

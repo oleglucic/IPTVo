@@ -31,6 +31,16 @@ const deadUrlCache = new Map(); // logoUrl -> {timestamp: number, failCount: num
 const inFlight = new Map();     // cId -> Promise, de-dupes concurrent requests for the same poster
 const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 
+// Cloudflare Workers free plan caps request volume (100k/day across all
+// Workers). When that quota is exhausted the proxy returns a non-200 error and
+// every poster render would otherwise fail to the SVG placeholder. Once a proxy
+// failure is observed, stop hitting the worker for a cooldown window and fall
+// back to the server's own cache/direct fetch, so posters still render.
+const WORKER_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
+let workerCooldownUntil = 0;
+function isWorkerInCooldown() { return Date.now() < workerCooldownUntil; }
+function armWorkerCooldown() { workerCooldownUntil = Date.now() + WORKER_COOLDOWN_MS; }
+
 // Cloudflare Worker proxy URL - set via environment variable. Defaults to the
 // assets worker (/logo) on assets.oleglucic.com when ASSET_BASE_URL is set.
 const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
@@ -218,47 +228,65 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
     }
 
     // 4. Fetch via Cloudflare Worker proxy (handles rate limits, fallbacks, caching)
-    try {
-        const { buffer, contentType, source } = await fetchLogoViaProxy(logoUrl, fallbackUrl, fallbackName);
-        sourceLog.push(`worker:${source}`);
-
-        if (source === 'placeholder') {
-            // Worker returned placeholder - generate locally for consistency
-            return await generateFallback(cachePath, fallbackName, sourceLog);
-        }
-
-        // Valid image - cache it
-        setLogoCache(logoUrl, buffer);
-        if (hasRedis) {
-            await saveLogoBuffer(logoUrl, buffer);
-        }
-        markDeadUrl(logoUrl, true); // success
-
-        return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
-
-    } catch (err) {
-        console.error(`[imageEngine] Worker proxy fetch failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
-        sourceLog.push('worker:error');
-    }
-
-    // 5. Final fallback: direct fetch (if Worker proxy not configured)
-    if (!PROXY_CONFIGURED) {
+    //    Skip the worker while it is in cooldown (quota exhausted / repeated
+    //    failure) so we don't burn quota or block poster renders on a dead proxy.
+    if (PROXY_CONFIGURED && !isWorkerInCooldown()) {
         try {
-            const { buffer, contentType } = await fetchLogoDirect(logoUrl);
-            sourceLog.push('direct');
+            const { buffer, contentType, source } = await fetchLogoViaProxy(logoUrl, fallbackUrl, fallbackName);
+            sourceLog.push(`worker:${source}`);
+
+            if (source === 'placeholder') {
+                // Worker returned placeholder - generate locally for consistency
+                return await generateFallback(cachePath, fallbackName, sourceLog);
+            }
+
+            // Valid image - cache it
             setLogoCache(logoUrl, buffer);
             if (hasRedis) {
                 await saveLogoBuffer(logoUrl, buffer);
             }
-            markDeadUrl(logoUrl, true);
+            markDeadUrl(logoUrl, true); // success
+
             return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
-        } catch (directErr) {
-            console.error(`[imageEngine] Direct fetch also failed for ${logoUrl}: ${directErr.message}`);
-            sourceLog.push('direct:error');
+
+        } catch (err) {
+            console.error(`[imageEngine] Worker proxy fetch failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
+            sourceLog.push('worker:error');
+            // Quota exhaustion returns HTTP 429 (or an edge error page). Either
+            // way the next N minutes should skip the worker and use the server's
+            // own fetch path below, so posters keep rendering.
+            if (err.response && (err.response.status === 429 || err.response.status === 503 || err.response.status === 403)) {
+                armWorkerCooldown();
+            }
         }
+    } else if (PROXY_CONFIGURED) {
+        sourceLog.push('worker:cooldown');
     }
 
-    // 6. Ultimate fallback: generated SVG
+    // 5. Direct fetch fallback (Worker proxy unavailable, quota-exhausted, or
+    //    not configured). The server's own cache path — and a direct upstream
+    //    fetch — keeps posters rendering without the edge proxy.
+    try {
+        const { buffer, contentType } = await fetchLogoDirect(logoUrl);
+        sourceLog.push('direct');
+        setLogoCache(logoUrl, buffer);
+        if (hasRedis) {
+            await saveLogoBuffer(logoUrl, buffer);
+        }
+        markDeadUrl(logoUrl, true);
+        return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
+    } catch (directErr) {
+        console.warn(`[imageEngine] Direct fetch also failed for ${logoUrl}: ${directErr.message}`);
+        sourceLog.push('direct:error');
+    }
+
+    // 6. Ultimate fallback: generated SVG. Only when the server has no cached
+    //    poster for this channel yet — never overwrite an existing server-side
+    //    poster (a real render from before the outage) with a placeholder.
+    if (fs.existsSync(cachePath)) {
+        sourceLog.push('server-cached');
+        return cachePath;
+    }
     markDeadUrl(logoUrl, false);
     return await generateFallback(cachePath, fallbackName, sourceLog);
 }
@@ -399,8 +427,11 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
         channelName = arguments[4] || fallbackName; // channelName is 4th in new, 3rd in old
     }
 
-    // Validate channel ID to prevent path traversal (CodeQL: path injection)
-    if (!cId || !/^[a-zA-Z0-9_-]+$/.test(cId)) {
+    // Validate channel ID to prevent path traversal (CodeQL: path injection).
+    // Channel ids embed iptv-org country suffixes (e.g. uk_SkySportsNews.uk),
+    // so dots are legal; only reject anything that could traverse (slashes,
+    // backslashes, .. sequences).
+    if (!cId || !/^[a-zA-Z0-9_.-]+$/.test(cId) || cId.includes('..')) {
         throw new Error("Invalid channel ID");
     }
 
@@ -417,11 +448,12 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     }
 
     // Serve a cached poster, but NEVER permanently: a fallback SVG can ride on
-    // disk and shadow re-fetching a URL that has since recovered. Only return
-    // the cached file while the URL is inside its (short, expiring) dead-URL
-    // retry window; once that expires the next request re-fetches and the
-    // success overwrites it (and clears the dead-URL mark).
-    if (isDeadUrl(primaryUrl) && fs.existsSync(cachePath)) return cachePath;
+    // disk and shadow re-fetching a URL that has since recovered. Return the
+    // cached file while its URL is inside its (short, expiring) dead-URL retry
+    // window, or while the logo worker proxy is in cooldown (quota exhausted) —
+    // in both cases re-fetching is pointless, so serve the poster the server
+    // already rendered instead of re-generating.
+    if (fs.existsSync(cachePath) && (isDeadUrl(primaryUrl) || isWorkerInCooldown())) return cachePath;
 
     const inFlightKey = cachePath;
     if (inFlight.has(inFlightKey)) {

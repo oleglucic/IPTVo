@@ -5,8 +5,8 @@ const cors = require('cors');
 const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
 const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry, bumpConfigGeneration, adoptGeneration } = require('./iptvParser');
-const { run: runEpgHub, seedSources: seedEpgHub } = require('./epgHub');
-const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
+const { run: runEpgHub, seedSources: seedEpgHub, backfillCanonicalAliases } = require('./epgHub');
+const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
@@ -382,26 +382,33 @@ function extractConfig(req) {
  * @param {Object} entry - The provider entry containing a per-channel EPG fallback.
  * @returns {Array<Object>|null} The channel's program array, or `null` when no program data is available.
  */
+// The central EPG hub (epgHub) publishes programmes under BOTH the raw source
+// channel id (global_<sourceId>) and, when it can be resolved, the canonical
+// iptv-org official id (global_<officialId>). User channels reference the
+// official id under a country scope (e.g. uk_SkySportsNews.uk), so a lookup
+// must also try the scoped-stripped canonical global key.
+/**
+ * Expands a channel key into the candidate keys to query the central EPG store.
+ * @param {string} chKey - The channel key (e.g. "uk_SkySportsNews.uk").
+ * @return {string[]} The channel key itself plus its canonical global form.
+ */
+function epgLookupKeys(chKey) {
+    const s = String(chKey || '');
+    const i = s.indexOf('_');
+    const stripped = i > 0 ? s.slice(i + 1) : s; // scoped prefix dropped
+    const official = stripped.toLowerCase();
+    const keys = new Set([s, `global_${official}`]);
+    // Country-suffix-stripped bridge key: a .uk user channel can find rows the
+    // EPG sources published under a different country variant of the same brand
+    // (e.g. SkySportsNews.ie), which the hub writes to global_<base>.
+    const cc = /\.([a-z]{2})$/i.exec(official);
+    if (cc) keys.add(`global_${official.slice(0, -cc[0].length)}`);
+    return [...keys];
+}
+
 async function getEffectiveEpg(chKey, entry) {
-    try {
-        const gen = await getHubGeneration();
-        const cached = hasRedis ? await loadEpgCache(chKey) : null;
-        if (cached && cached.generation === gen && cached.programs.length) {
-            return cached.programs;
-        }
-        // Cache miss or stale: read the merged store and warm the cache.
-        const dbRows = await require('./db').getEpgPrograms(chKey, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
-        if (dbRows.length) {
-            const progs = dbRows.map(r => ({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) }));
-            if (hasRedis) await saveEpgCache(chKey, progs, gen);
-            return progs;
-        }
-    } catch (e) {
-        console.error('[EPG][Central] resolution failed:', sanitizeForLog(e.message));
-    }
-    // Fall back to the per-entry forward EPG (user-provided feed).
-    const sched = entry && entry.epgData && entry.epgData[chKey];
-    return (sched && sched.length) ? sched : null;
+    const resolved = await getEffectiveEpgMany([chKey], entry);
+    return resolved.get(chKey) || (entry && entry.epgData && entry.epgData[chKey] && entry.epgData[chKey].length ? entry.epgData[chKey] : null);
 }
 
 /**
@@ -414,15 +421,30 @@ async function getEffectiveEpgMany(chKeys, entry) {
     const out = new Map();
     if (!chKeys.length) return out;
     const gen = hasRedis ? await getHubGeneration() : 0;
-    const cached = hasRedis ? await mgetEpgCaches(chKeys) : new Map();
-    const needDb = [];
+    // Each channel may be stored under its own id or its canonical global form;
+    // build every candidate lookup key and remember which channel each maps back to.
+    const lookupToCh = new Map(); // lookupKey -> chKey
     for (const k of chKeys) {
-        const c = cached.get(k);
-        if (c && c.generation === gen && c.programs.length) { out.set(k, c.programs); continue; }
-        needDb.push(k);
+        for (const lk of epgLookupKeys(k)) {
+            if (!lookupToCh.has(lk)) lookupToCh.set(lk, k);
+        }
+    }
+    const allLookups = [...lookupToCh.keys()];
+    const cached = hasRedis ? await mgetEpgCaches(allLookups) : new Map();
+    const needDb = [];
+    for (const lk of allLookups) {
+        const c = cached.get(lk);
+        if (c && c.generation === gen && c.programs.length) {
+            if (!out.has(lookupToCh.get(lk))) out.set(lookupToCh.get(lk), c.programs);
+            continue;
+        }
+        needDb.push(lk);
         // Fall back to per-entry EPG (user-provided feed) — cheap, no store.
-        const sched = entry.epgData && entry.epgData[k];
-        if (sched && sched.length) out.set(k, sched);
+        // Only the primary key (not the canonical alias) carries user feed data.
+        if (lk === lookupToCh.get(lk)) {
+            const sched = entry.epgData && entry.epgData[lk];
+            if (sched && sched.length && !out.has(lk)) out.set(lk, sched);
+        }
     }
     if (needDb.length) {
         try {
@@ -430,10 +452,10 @@ async function getEffectiveEpgMany(chKeys, entry) {
             // reads were capped at 50, silently dropping EPG for later channels
             // on a page). Warm each result into the Redis cache.
             const byKey = await require('./db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
-            for (const k of byKey.keys()) {
-                const progs = byKey.get(k);
-                if (hasRedis) await saveEpgCache(k, progs, gen);
-                out.set(k, progs);
+            for (const [lk, progs] of byKey) {
+                const orig = lookupToCh.get(lk);
+                if (hasRedis) await saveEpgCache(lk, progs, gen);
+                if (orig && !out.has(orig)) out.set(orig, progs);
             }
         } catch (e) {
             console.error('[EPG][Central] batched resolution failed:', sanitizeForLog(e.message));
@@ -1260,15 +1282,62 @@ const addonInterface = builder.getInterface();
 
 // Manifest is a shared static object; logo/background are absolute URLs keyed
 /**
- * Resolves relative manifest asset URLs against the requesting host.
- * @param {import('express').Request} req - The incoming HTTP request.
- * @return {object} A manifest with absolute logo and background URLs.
+ * Resolves the distinct channel groups for a request's configured provider,
+ * used to populate the catalog genre dropdown (Nuvio/Stremio read the genre
+ * extra's `options` from the manifest). Reads the already-parsed cache — in
+ * memory or the Redis snapshot — and never triggers a parse:
+ * a cold config's manifest simply carries no options until its first load.
+ * @param {import('express').Request} req - The incoming request.
+ * @return {Promise<string[]>} Sorted group names, or an empty array when the provider cache has not been parsed yet.
  */
-function manifestFor(req) {
+async function genreOptionsFor(req) {
+    const userId = req.params.userId;
+    const configKey = (userId && UUID_RE.test(userId)) ? userId : req.params.config;
+    if (!configKey) return [];
+    const asList = (g) => Array.from(g || []).filter(x => typeof x === 'string' && x).sort();
+    const cached = userCaches.get(configKey);
+    if (cached && cached.status === 'ready') return asList(cached.uniqueGroups);
+    try {
+        const fromRedis = await loadCacheFromRedis(configKey);
+        if (fromRedis && fromRedis.status === 'ready') return asList(fromRedis.uniqueGroups);
+    } catch (_) { /* silently fall through to empty options */ }
+    return [];
+}
+
+/**
+ * Resolves relative manifest asset URLs against the requesting host and
+ * populates the catalog genre options from the user's parsed groups.
+ * @param {import('express').Request} req - The incoming HTTP request.
+ * @return {Promise<object>} A manifest with absolute logo/background URLs and genre options.
+ */
+async function manifestFor(req) {
     const root = `${req.protocol}://${req.get('host')}`;
-    const m = { ...addonInterface.manifest };
+    // Deep-copy only the catalog extras: the shared/static manifest is frozen,
+    // and per-user genre options must never leak into responses for other users.
+    const m = {
+        ...addonInterface.manifest,
+        catalogs: (addonInterface.manifest.catalogs || []).map(c => ({
+            ...c,
+            extra: (c.extra || []).map(e => ({ ...e }))
+        }))
+    };
     if (m.logo && m.logo.startsWith('/')) m.logo = `${root}${m.logo}`;
     if (m.background && m.background.startsWith('/')) m.background = `${root}${m.background}`;
+
+    try {
+        const options = await genreOptionsFor(req);
+        if (options.length > 0) {
+            for (const c of m.catalogs) {
+                const genreExtra = (c.extra || []).find(e => e.name === 'genre');
+                if (genreExtra) {
+                    genreExtra.options = options;
+                    genreExtra.optionsLimit = 1;
+                }
+            }
+        }
+    } catch (e) {
+        console.error('[Manifest] genre options skipped:', sanitizeForLog(e.message));
+    }
     return m;
 }
 
@@ -1297,8 +1366,10 @@ async function getConfigFromReq(req) {
 }
 
 // Mount the addon routes on express - NEW USER SYSTEM ROUTES
-app.get('/:userId/manifest.json', (req, res) => {
-    res.json(manifestFor(req));
+app.get('/:userId/manifest.json', async (req, res, next) => {
+    try {
+        res.json(await manifestFor(req));
+    } catch (e) { next(e); }
 });
 
 app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
@@ -1370,8 +1441,11 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
     const { configKey, configObj } = await getConfigFromReq(req);
     const id = decodeURIComponent(req.params.id);
 
-    // Validate channel ID to prevent path traversal (CodeQL: path injection)
-    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    // Validate channel ID to prevent path traversal (CodeQL: path injection).
+    // Channel ids embed iptv-org country suffixes (e.g. uk_SkySportsNews.uk),
+    // so dots are legal; only reject anything that could traverse (slashes,
+    // backslashes, .. sequences).
+    if (!id || !/^[a-zA-Z0-9_.-]+$/.test(id) || id.includes('..')) {
         return res.status(400).send("Invalid channel ID");
     }
 
@@ -1402,8 +1476,10 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
 });
 
 // Legacy routes for backward compatibility (base64 config)
-app.get('/:config/manifest.json', (req, res) => {
-    res.json(manifestFor(req));
+app.get('/:config/manifest.json', async (req, res, next) => {
+    try {
+        res.json(await manifestFor(req));
+    } catch (e) { next(e); }
 });
 
 app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
@@ -1480,8 +1556,11 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
     const id = decodeURIComponent(req.params.id);
     const configObj = extractConfig(req);
 
-    // Validate channel ID to prevent path traversal (CodeQL: path injection)
-    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    // Validate channel ID to prevent path traversal (CodeQL: path injection).
+    // Channel ids embed iptv-org country suffixes (e.g. uk_SkySportsNews.uk),
+    // so dots are legal; only reject anything that could traverse (slashes,
+    // backslashes, .. sequences).
+    if (!id || !/^[a-zA-Z0-9_.-]+$/.test(id) || id.includes('..')) {
         return res.status(400).send("Invalid channel ID");
     }
 
@@ -1624,6 +1703,13 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     setTimeout(() => {
         withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] initial run failed:', sanitizeForLog(e.message)));
     }, 10 * 60 * 1000); // 10 min after startup, after DB/iptv-org are up
+
+    // Copy existing raw source-id EPG rows into their canonical iptv-org keys
+    // (responses now look up both forms). Runs at most once per day cluster-wide;
+    // thereafter the hub cycle itself writes the canonical keys as new data lands.
+    setTimeout(() => {
+        withOnceLock('epgAliasBackfill', 24 * 60 * 60, backfillCanonicalAliases).catch(e => console.error('[epgHub] backfill failed:', sanitizeForLog(e.message)));
+    }, 2 * 60 * 1000); // 2 min after startup, once iptv-org reference is loaded
 
     // Proactively refresh any cached config older than MAX_CACHE_AGE, independent of
     // incoming requests - so the cache stays fresh even during idle periods.
