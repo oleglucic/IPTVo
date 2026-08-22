@@ -22,7 +22,8 @@ const globalAiCache = new Map();
  * Resolves channel names into canonical base names using OpenRouter.
  * @param {Array<{name: string, scope: string}>} batchItems - Channel names and their parser-derived scopes.
  * @param {string} apiKey - OpenRouter API key.
- * @returns {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
+ * @param {string} [model] - OpenRouter model to use.
+ * @return {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
  */
 async function processAiBatch(batchItems, apiKey, model) {
     if (!apiKey) return {};
@@ -50,7 +51,16 @@ Input: ${JSON.stringify(batchItems)}`;
             }
         });
 
-        let content = res.data.choices[0].message.content.trim();
+        // OpenRouter returns content:null for safety refusals (finish_reason
+        // "safety") and JSON wrapped in prose for others. Never assume content
+        // is a string — the refusal shape (no JSON inside) must not crash the
+        // whole batch queue cycle.
+        const rawContent = res.data?.choices?.[0]?.message?.content;
+        if (typeof rawContent !== 'string' || !rawContent.trim()) {
+            console.error('[AI Curator] Empty or non-string content in response (refusal/finish_reason=safety).');
+            return {};
+        }
+        let content = rawContent.trim();
         content = content.replace(/```json/g, '').replace(/```/g, '');
 
         const jsonStart = content.indexOf("{");
@@ -59,9 +69,18 @@ Input: ${JSON.stringify(batchItems)}`;
             content = content.substring(jsonStart, jsonEnd + 1);
         } else {
             console.error(`[AI Curator] No JSON object found in response. Raw snippet: ${sanitizeForLog(content.substring(0, 300))}`);
+            return {};
         }
 
-        return JSON.parse(content);
+        try {
+            const parsed = JSON.parse(content);
+            // The AI must return a JSON object mapping names → base names; arrays
+            // or null would downstream be treated as (garbage) name entries.
+            return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+        } catch {
+            console.error(`[AI Curator] response was not valid JSON. Raw snippet: ${sanitizeForLog(content)}`);
+            return {};
+        }
     } catch (e) {
         const status = e.response ? e.response.status : null;
         if (status === 429 || status === 402) {

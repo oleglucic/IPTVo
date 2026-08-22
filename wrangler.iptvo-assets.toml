@@ -1,0 +1,28 @@
+# Cloudflare Worker: IPTVo edge asset proxy (logo/poster/catalog edge-cache).
+# Serves under assets.oleglucic.com/iptvo/assets/* (the worker strips the prefix).
+# Routing/dispatch is managed in the Cloudflare dashboard (zone route
+# assets.oleglucic.com/iptvo/assets/* -> this worker); do NOT declare routes
+# here so Workers Builds doesn't try to re-create the custom-domain binding that
+# belongs to the domain-owner worker (iptvo-root).
+#
+# The `name` MUST match the worker name in the Cloudflare dashboard for
+# Workers Builds to deploy to it (see Workers name requirement).
+name = "iptvo-assets"
+main = "iptvo-assets.worker.js"
+compatibility_date = "2024-01-01"
+
+# Worker limits — MUST be top-level (a `limits` key after [[kv_namespaces]]
+# would be parsed as part of the KV entry, not the worker).
+limits = { cpu_ms = 50 }
+
+# KV namespace for the catalog generation stamp (cache invalidation on re-parse).
+# No separate preview namespace exists, so no preview_id is set — `wrangler dev`
+# falls back to this production id.
+[[kv_namespaces]]
+binding = "ASSETS_KV"
+id = "0832a13b6c6242c38b78c515fe2dae9f"
+
+# Secret (set via `wrangler secret put PURGE_TOKEN` in production) guarding the
+# /_purge endpoint that bumps the generation. Not set here; would be plaintext.
+# [vars]
+# PURGE_TOKEN = ""

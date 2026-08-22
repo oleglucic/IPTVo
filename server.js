@@ -1,14 +1,30 @@
+const querystring = require('querystring');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
-const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE } = require('./iptvParser');
-const { loadCacheFromRedis, listCachedConfigKeys } = require('./redisCache');
+const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry, bumpConfigGeneration, adoptGeneration } = require('./iptvParser');
+const { run: runEpgHub, seedSources: seedEpgHub } = require('./epgHub');
+const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, loadEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
 const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
-const { hashPassword, verifyPassword, generateSessionToken, decryptConfig } = require('./cryptoUtils');
+const { pruneEpgHistory } = require('./db');
+const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, configKeyFingerprint } = require('./cryptoUtils');
+
+// Assets base URL. When set (e.g. https://assets.oleglucic.com), poster/logo/
+// catalog links resolve to the Cloudflare assets Worker+edge instead of the
+// request host, offloading the Node server. Falls back to the request host.
+const ASSET_BASE_URL = process.env.ASSET_BASE_URL || '';
+/**
+ * Resolves the base URL for application assets.
+ * @param {object} req - The Express request used to determine the protocol and host when no configured asset URL is available.
+ * @return {string} The configured asset base URL or the current request origin.
+ */
+function assetRoot(req) {
+    return ASSET_BASE_URL || `${req.protocol}://${req.get('host')}`;
+}
 
 const app = express();
 app.use(cors());
@@ -99,10 +115,9 @@ function sanitizeForLog(str) {
 }
 
 /**
- * Validates a URL to prevent SSRF attacks.
- * Blocks private/internal IPs, localhost, and requires http/https scheme.
- * @param {string} url - The URL to validate
- * @returns {boolean} - True if URL is safe to fetch
+ * Determines whether a URL is allowed for external fetching.
+ * @param {string} url - The URL to evaluate.
+ * @returns {boolean} `true` if the URL uses HTTP or HTTPS and its host is not a blocked local, private, link-local, or metadata address, `false` otherwise.
  */
 function isSafeUrl(url) {
     if (!url || typeof url !== 'string') return false;
@@ -145,14 +160,22 @@ function isSafeUrl(url) {
 }
 
 // Session store (in-memory, for simplicity - can be moved to Redis later)
-const sessions = new Map(); // token -> { userId, expiresAt, config }
+// Sessions now live in Redis (sessionGet/sessionSet/sessionDelete) so any worker
+// can validate any token — required for horizontal scaling / cluster mode.
 
-// Session cleanup (every hour)
+// Catalog page cache: thousands of concurrent users hit the same paginated
+// catalog; re-walking the full 7k-entry channelMap + serializing 100 metas on
+// every request saturates the (single-threaded) Node CPU and raised latency at
+// high concurrency. Cache the rendered metas per (configKey, page, genre, search)
+// for a short window, keyed by ud.lastUpdated so a re-parse invalidates it.
+const catalogPageCache = new Map(); // "configKey|skip|genre|search|lastUpdated" -> { metas, at }
+const CATALOG_PAGE_CACHE_TTL = 30 * 1000; // 30s
+
+// Session cleanup (every hour): sessions live in Redis (so any worker validates
+// any token — required for cluster/replicas). Redis auto-expires on TTL; this
+// prunes any whose expiresAt passed without firing, across all workers.
 setInterval(() => {
-    const now = Date.now();
-    for (const [token, session] of sessions.entries()) {
-        if (session.expiresAt < now) sessions.delete(token);
-    }
+    sessionPruneExpired().catch(e => console.error('[SessionPrune] failed:', sanitizeForLog(e.message)));
 }, 60 * 60 * 1000);
 
 // Serve dashboard (new structure)
@@ -209,16 +232,19 @@ app.get('/api/releases', dashboardLimiter, async (req, res) => {
 app.use('/api/', apiLimiter);
 
 // Require a valid bearer session for external-fetch endpoints so the server
-// cannot be used as an anonymous fetch/SSRF proxy once open to the public.
-function requireAuth(req, res, next) {
+/**
+ * Authenticates requests using a valid bearer session.
+ * Attaches the authenticated session to `req.session` and passes valid requests to the next middleware.
+ */
+async function requireAuth(req, res, next) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     const token = authHeader.slice(7);
-    const session = sessions.get(token);
+    const session = await sessionGet(token);
     if (!session || session.expiresAt < Date.now()) {
-        if (session) sessions.delete(token);
+        if (session) await sessionDelete(token);
         return res.status(401).json({ error: 'Unauthorized' });
     }
     req.session = session;
@@ -310,9 +336,10 @@ app.post('/api/test-config', requireAuth, testConfigLimiter, async (req, res) =>
 // ============ STREMIO ADDON ENDPOINTS ============
 
 /**
- * Extracts user configuration from request parameters, headers, or a legacy encoded configuration.
- * @param {Object} req - The request containing user ID or configuration data.
- * @returns {Object|null} The extracted user ID reference or decoded configuration, or `null` when extraction fails or no configuration is provided.
+ * Extracts a user identifier or legacy provider configuration from a request.
+ * User identifiers take precedence over encoded configuration values. Legacy configurations are decoded and normalized when needed.
+ * @param {Object} req - The request containing identifier or configuration data.
+ * @returns {Object|null} An object containing the user identifier, the decoded configuration, or `null` when extraction fails or no value is provided.
  */
 function extractConfig(req) {
     try {
@@ -330,7 +357,13 @@ function extractConfig(req) {
             while (rawB64.length % 4 !== 0) rawB64 += '=';
             const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
             try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch {}
-            return JSON.parse(decoded);
+            const parsed = JSON.parse(decoded);
+            // Legacy configs shipped with `iptvOrgEnabled` (dashboard alias) but
+            // the parser gates on `iptvOrg`. Normalize so both shapes enable it.
+            if (parsed && typeof parsed.iptvOrgEnabled !== 'undefined' && typeof parsed.iptvOrg === 'undefined') {
+                parsed.iptvOrg = parsed.iptvOrgEnabled;
+            }
+            return parsed;
         }
         return null;
     } catch (e) {
@@ -339,7 +372,86 @@ function extractConfig(req) {
     }
 }
 
-// Ensure cache is populated before serving data routes
+// Resolve the effective EPG for a channel without hitting the DB on every
+// request: serve from the generation-stamped Redis EPG cache first (valid for
+// as long as the central DB's data lasts), fall back to promoting from the
+// central epg_programs store, and finally the per-entry forward data.
+/**
+ * Resolves upcoming electronic program guide data for a channel.
+ * @param {string} chKey - The channel key used to locate program data.
+ * @param {Object} entry - The provider entry containing a per-channel EPG fallback.
+ * @returns {Array<Object>|null} The channel's program array, or `null` when no program data is available.
+ */
+async function getEffectiveEpg(chKey, entry) {
+    try {
+        const gen = await getHubGeneration();
+        const cached = hasRedis ? await loadEpgCache(chKey) : null;
+        if (cached && cached.generation === gen && cached.programs.length) {
+            return cached.programs;
+        }
+        // Cache miss or stale: read the merged store and warm the cache.
+        const dbRows = await require('./db').getEpgPrograms(chKey, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
+        if (dbRows.length) {
+            const progs = dbRows.map(r => ({ title: r.title, desc: r.description, start: Number(r.start_time), stop: Number(r.stop_time) }));
+            if (hasRedis) await saveEpgCache(chKey, progs, gen);
+            return progs;
+        }
+    } catch (e) {
+        console.error('[EPG][Central] resolution failed:', sanitizeForLog(e.message));
+    }
+    // Fall back to the per-entry forward EPG (user-provided feed).
+    const sched = entry && entry.epgData && entry.epgData[chKey];
+    return (sched && sched.length) ? sched : null;
+}
+
+/**
+ * Resolve EPG programmes for multiple channels using shared cache and database fallbacks.
+ * @param {string[]} chKeys - Channel keys to resolve.
+ * @param {Object} entry - Provider entry containing optional per-channel EPG data.
+ * @returns {Map<string, Array<Object>>} A map of channel keys to resolved programme arrays.
+ */
+async function getEffectiveEpgMany(chKeys, entry) {
+    const out = new Map();
+    if (!chKeys.length) return out;
+    const gen = hasRedis ? await getHubGeneration() : 0;
+    const cached = hasRedis ? await mgetEpgCaches(chKeys) : new Map();
+    const needDb = [];
+    for (const k of chKeys) {
+        const c = cached.get(k);
+        if (c && c.generation === gen && c.programs.length) { out.set(k, c.programs); continue; }
+        needDb.push(k);
+        // Fall back to per-entry EPG (user-provided feed) — cheap, no store.
+        const sched = entry.epgData && entry.epgData[k];
+        if (sched && sched.length) out.set(k, sched);
+    }
+    if (needDb.length) {
+        try {
+            // One batched query covers every missing channel (Earlier per-channel
+            // reads were capped at 50, silently dropping EPG for later channels
+            // on a page). Warm each result into the Redis cache.
+            const byKey = await require('./db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
+            for (const k of byKey.keys()) {
+                const progs = byKey.get(k);
+                if (hasRedis) await saveEpgCache(k, progs, gen);
+                out.set(k, progs);
+            }
+        } catch (e) {
+            console.error('[EPG][Central] batched resolution failed:', sanitizeForLog(e.message));
+        }
+    }
+    return out;
+}
+
+/**
+ * Ensures a user's provider cache is available for data routes.
+ *
+ * Resolves user configurations, rehydrates ready caches from Redis, starts background
+ * loading or refresh operations when needed, and returns the current cache state.
+ *
+ * @param {string} config - Cache key for the provider configuration.
+ * @param {Object} configObj - Provider configuration, optionally containing a user identifier.
+ * @return {Promise<Object|null>} The provider cache, a loading cache during cold starts, or `null` when no configuration is provided.
+ */
 async function ensureCache(config, configObj) {
     // If configObj contains _userId, resolve the full config from database
     if (configObj && configObj._userId) {
@@ -355,15 +467,25 @@ async function ensureCache(config, configObj) {
         }
     }
 
-    console.log(`[ensureCache] called for config=${config ? config.substring(0,12) : 'null'}... configObj=${!!configObj}`);
+    console.log(`[ensureCache] called for config=${configKeyFingerprint(config)}... configObj=${!!configObj}`);
     if (!configObj) { console.log('[ensureCache] no configObj, returning null'); return null; }
     let cached = userCaches.get(config);
+    // Stash the config reference so the decoupled EPG-only refresh loop and the
+    // proactive refresh can re-fetch without decoding the cache key (user-system
+    // keys are plaintext UUIDs the base64 decode can't handle). Saved on the
+    // entry so it survives a rehydrate.
+    if (cached) cached._configObj = configObj;
     console.log(`[ensureCache] cache state: ${sanitizeForLog(cached ? cached.status : 'MISSING')}`);
 
-    // Total cache miss (cold start): check Redis first, then start background parse
+    // Total cache miss (Reduced cold start): check Redis first, then start background parse
     if (!cached) {
         const redisCached = await loadCacheFromRedis(config);
         if (redisCached && redisCached.status === 'ready') {
+            redisCached._configObj = configObj;
+            // Sync the local generation counter to the one the snapshot was
+            // written under, so a later refresh survives the publish check
+            // instead of being discarded against a fresh worker's counter of 0.
+            adoptGeneration(config, redisCached._generation);
             userCaches.set(config, redisCached);
             // Log iptv-org match rate from cached data
             let iptvOrgMatchCount = 0;
@@ -391,14 +513,23 @@ async function ensureCache(config, configObj) {
             catalogItems: [],
             uniqueGroups: new Set(),
             epgData: {},
-            lastUpdated: Date.now()
+            lastUpdated: Date.now(),
+            _configObj: configObj
         };
         userCaches.set(config, loadingCache);
         return loadingCache;
     }
 
-    // Already loading (e.g. triggered by a parallel request): wait for it with a generous timeout
+    // Already loading (a background refresh is in flight, or a parallel request
+    // kicked off a cold start). A refresh seeds the loading entry with the last
+    // good snapshot (its channelMap is populated), so serve it immediately — the
+    // client never waits on the re-parse, and the fresh snapshot swaps in when it
+    // completes. Only a true cold start (empty channelMap) blocks, and then on a
+    // bounded poll so a slow first parse can't wedge requests indefinitely.
     if (cached.status === 'loading') {
+        if (cached.channelMap && cached.channelMap.size > 0) {
+            return cached;
+        }
         const pollPromise = (async () => {
             while (userCaches.get(config) && userCaches.get(config).status === 'loading') {
                 await new Promise(r => setTimeout(r, 500));
@@ -409,9 +540,14 @@ async function ensureCache(config, configObj) {
         return userCaches.get(config);
     }
 
-    // Ready but stale, or errored previously: refresh in the background, serve what we have now.
-    if (cached.status === 'error' ||
-        (cached.status === 'ready' && (Date.now() - cached.lastUpdated > 60 * 60 * 1000))) {
+    // Ready but stale: refresh in the background, serve what we have now. An
+    // errored entry carries the last good snapshot (serve immediately) and is
+    // only refreshed once its backoff window (retryAt) has elapsed — the tier
+    // gate in streamFetchIPTV also skips inside that window, so the request
+    // path and the proactive loop stay consistent.
+    if (cached.status === 'error'
+        ? (Date.now() >= (cached.retryAt || 0))
+        : (cached.status === 'ready' && (Date.now() - cached.lastUpdated > 60 * 60 * 1000))) {
         streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] refresh failed:', sanitizeForLog(e.message)));
     }
 
@@ -494,9 +630,11 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
         checks.openrouter = { status: 'not_configured' };
     }
 
-    // Cache status
+    // Cache status — a key may be a UUID, a base64 config key, or missing; guard
+    // it so a malformed entry can't 500 the health endpoint.
     for (const [key, cached] of userCaches.entries()) {
-        checks.caches[key.substring(0, 12)] = {
+        if (!key || !cached) continue;
+        checks.caches[String(key).substring(0, 12)] = {
             status: cached.status,
             channels: cached.channelMap?.size || 0,
             groups: cached.uniqueGroups?.size || 0,
@@ -517,10 +655,64 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
 // Apply stricter rate limiting to auth endpoints
 app.use('/api/auth/', authLimiter);
 
+// Cloudflare Turnstile: canonical server-side siteverify. Gated on the
+// presence of a TURNSTILE_SECRET — when unset, the check is skipped, so local
+// dev without the env var never breaks auth. Tokens are single-use.
+async function verifyTurnstileToken(token, expectedAction, req) {
+    const secret = process.env.TURNSTILE_SECRET;
+    if (!secret) return { success: true, disabled: true };
+
+    if (typeof token !== 'string' || !token || token.length > 2048) {
+        return { success: false, disabled: false, reason: 'missing-token' };
+    }
+
+    // Canonical hostname allowlist from env (deployment-specific). Unset =
+    // accept any host (the widget's registered domains still constrain it).
+    const expectedHostnames = new Set(
+        (process.env.TURNSTILE_HOSTNAMES || '')
+            .split(',')
+            .map(s => s.trim().toLowerCase())
+            .filter(Boolean)
+    );
+
+    const forwarded = req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : null;
+    const clientIp = forwarded || req.ip || '';
+
+    try {
+        const r = await axios.post('https://challenges.cloudflare.com/turnstile/v0/siteverify', new URLSearchParams({
+            secret,
+            response: token,
+            remoteip: clientIp
+        }), { timeout: 10000 });
+        if (r.status !== 200) return { success: false, disabled: false, reason: 'siteverify-http' };
+        const data = r.data;
+        if (data.success !== true) return { success: false, disabled: false, reason: 'siteverify-false' };
+        if (data.action !== expectedAction)
+            return { success: false, disabled: false, reason: 'action-mismatch' };
+        if (allowedHostnames(data.hostname, expectedHostnames))
+            return { success: true, disabled: false };
+        return { success: false, disabled: false, reason: 'hostname-mismatch', hostname: data.hostname };
+    } catch (e) {
+        console.error('[Turnstile] siteverify call failed:', sanitizeForLog(e.message));
+        return { success: false, disabled: false, reason: 'siteverify-error' };
+    }
+}
+
+function allowedHostnames(h, set) {
+    if (!set || set.size === 0) return true; // not configured: don't reject
+    if (!h) return false;
+    const lower = h.toLowerCase();
+    // Allow exact + subdomains of an allowed host (cloudflare claims subdomain matches).
+    return [...set].some(a => lower === a || lower.endsWith(`.${a}`));
+}
+
 // Register new user
 app.post('/api/auth/register', async (req, res) => {
     try {
         const { username, password, config } = req.body;
+        // Turnstile: token in cf-turnstile-response; verify unless disabled.
+        const tt = await verifyTurnstileToken(req.body['cf-turnstile-response'], 'register', req);
+        if (!tt.success) return res.status(403).json({ error: 'Bot verification failed. Please try again.' });
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required' });
         }
@@ -544,7 +736,7 @@ app.post('/api/auth/register', async (req, res) => {
         }
 
         const token = generateSessionToken();
-        sessions.set(token, {
+        await sessionSet(token, {
             userId: user.user_id,
             username,
             config: config || {},
@@ -563,6 +755,9 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
+        // Turnstile: token in cf-turnstile-response; verify unless disabled.
+        const tt = await verifyTurnstileToken(req.body['cf-turnstile-response'], 'login', req);
+        if (!tt.success) return res.status(403).json({ error: 'Bot verification failed. Please try again.' });
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required' });
         }
@@ -584,7 +779,7 @@ app.post('/api/auth/login', async (req, res) => {
         }
 
         const token = generateSessionToken();
-        sessions.set(token, {
+        await sessionSet(token, {
             userId: user.user_id,
             username: user.username,
             config,
@@ -623,15 +818,15 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Validate session
-app.get('/api/auth/validate', (req, res) => {
+app.get('/api/auth/validate', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ valid: false });
     }
     const token = authHeader.slice(7);
-    const session = sessions.get(token);
+    const session = await sessionGet(token);
     if (!session || session.expiresAt < Date.now()) {
-        if (session) sessions.delete(token);
+        if (session) await sessionDelete(token);
         return res.status(401).json({ valid: false });
     }
     const safeConfig = { ...session.config };
@@ -660,10 +855,10 @@ app.get('/api/auth/validate', (req, res) => {
 });
 
 // Logout
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
-        sessions.delete(authHeader.slice(7));
+        await sessionDelete(authHeader.slice(7));
     }
     res.json({ success: true });
 });
@@ -678,6 +873,21 @@ app.get('/api/logo-proxy-url', (req, res) => {
     }
 });
 
+// Edge-cache purge: bumps the addon-cache Worker's KV generation so the CDN
+// drops stale catalog/meta/manifest pages after a re-parse. Guarded by a secret
+// only the server knows, so it can't be triggered by the public. No-op when the
+// worker isn't configured.
+const ADDON_CACHE_URL = process.env.ADDON_CACHE_URL || '';
+app.post('/api/_edge-purge', (req, res) => {
+    const secret = req.headers['x-purge-secret'];
+    if (!process.env.EDGE_PURGE_SECRET || secret !== process.env.EDGE_PURGE_SECRET) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!ADDON_CACHE_URL) return res.json({ ok: true, note: 'no addon-cache worker configured' });
+    axios.post(`${ADDON_CACHE_URL}/_purge`, { secret }).then(() => res.json({ ok: true }))
+        .catch(e => res.status(502).json({ error: sanitizeForLog(e.message) }));
+});
+
 // Update user config (encrypted)
 app.put('/api/auth/config', async (req, res) => {
     try {
@@ -686,9 +896,9 @@ app.put('/api/auth/config', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         const token = authHeader.slice(7);
-        const session = sessions.get(token);
+        const session = await sessionGet(token);
         if (!session || session.expiresAt < Date.now()) {
-            if (session) sessions.delete(token);
+            if (session) await sessionDelete(token);
             return res.status(401).json({ error: 'Session expired' });
         }
 
@@ -698,16 +908,49 @@ app.put('/api/auth/config', async (req, res) => {
         }
 
         const { updateUserConfig } = require('./db');
-        const success = await updateUserConfig(session.userId, config, process.env.ENCRYPTION_KEY);
-        if (!success) {
+        // updateUserConfig reads the stored config under a row lock and preserves
+        // sensitive fields the client omitted (blank or '[REDACTED]') instead of
+        // overwriting them with empty strings - the server never returns real
+        // credentials, so a fresh form cannot know them. Returns the merged config.
+        const savedConfig = await updateUserConfig(session.userId, config, process.env.ENCRYPTION_KEY);
+        if (!savedConfig) {
             return res.status(500).json({ error: 'Failed to update config' });
         }
 
-        // Update session config
-        session.config = config;
-        sessions.set(token, session);
+        // A config change (groups, iptv-org toggle, provider) must re-parse. Drop
+        // the in-memory snapshot and its Redis copy so the next request rebuilds
+        // from the saved config instead of serving the stale one until it ages out.
+        const userId = session.userId;
+        // Bump the per-config generation FIRST: an in-flight parse that started
+        // under the old config carries a loading placeholder stamped with that
+        // generation. bumping makes publishParseResult discard it on completion.
+        bumpConfigGeneration(userId);
+        // Evict the stale snapshot — but never a 'loading' placeholder: it is the
+        // only record of an in-flight parse's generation, and deleting it would
+        // let publishParseResult mistake the bumped counter for the parse's own.
+        const existing = userCaches.get(userId);
+        if (!existing || existing.status !== 'loading') {
+            userCaches.delete(userId);
+        }
+        // Targeted catalog-page invalidation: only this user's entries
+        // ("configKey|skip|genre|search|lastUpdated") are stale. key starts with
+        // the raw userId, but catalogPageCache also caches legacy base64 keys —
+        // delete by prefix so both are dropped.
+        const delPrefix = userId + '|';
+        for (const key of catalogPageCache.keys()) {
+            if (key.startsWith(delPrefix)) catalogPageCache.delete(key);
+        }
+        const deleted = await deleteCacheFromRedis(userId);
+        if (!deleted) {
+            console.warn(`[Auth] Redis cache delete failed for ${sanitizeForLog(userId)}; old snapshot may rehydrate until it ages out (6h).`);
+        }
 
-        console.log(`[Auth] Config updated for user: ${sanitizeForLog(session.userId)}`);
+        // Update session config (persisted to Redis so the running worker holds the
+        // preserved secrets, not blanks).
+        session.config = savedConfig;
+        await sessionSet(token, session);
+
+        console.log(`[Auth] Config updated for user: ${sanitizeForLog(userId)}`);
 console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
 console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
@@ -725,9 +968,9 @@ app.put('/api/auth/password', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         const token = authHeader.slice(7);
-        const session = sessions.get(token);
+        const session = await sessionGet(token);
         if (!session || session.expiresAt < Date.now()) {
-            if (session) sessions.delete(token);
+            if (session) await sessionDelete(token);
             return res.status(401).json({ error: 'Session expired' });
         }
 
@@ -774,9 +1017,9 @@ app.delete('/api/auth/account', async (req, res) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
         const token = authHeader.slice(7);
-        const session = sessions.get(token);
+        const session = await sessionGet(token);
         if (!session || session.expiresAt < Date.now()) {
-            if (session) sessions.delete(token);
+            if (session) await sessionDelete(token);
             return res.status(401).json({ error: 'Session expired' });
         }
 
@@ -800,7 +1043,7 @@ app.delete('/api/auth/account', async (req, res) => {
         if (pool) {
             await pool.query('DELETE FROM users WHERE user_id = $1', [session.userId]);
         }
-        sessions.delete(token);
+        await sessionDelete(token);
 
         console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
@@ -819,6 +1062,10 @@ const builder = new addonBuilder({
     description: 'AI Curation Stack & Intelligent Catalog Filter Layer for Live IPTV',
     resources: ['catalog', 'meta', 'stream'],
     types: ['tv'],
+    // Logo/background are served from each request's own origin so the addon
+    // icon works on any self-hosted base (not just the canonical domain).
+    logo: '/dashboard/logo.svg',
+    background: '/dashboard/logo.svg',
     behaviorHints: { configurable: true, configurationRequired: false },
     posterShape: 'square', // posters are 1:1 (channel logo on a backdrop) — square placeholders keep the client's skeleton consistent with the served poster
     catalogs: [{
@@ -833,28 +1080,72 @@ const builder = new addonBuilder({
     idPrefixes: ['global_', 'us_', 'uk_', 'gb_', 'de_', 'fr_', 'es_', 'it_', 'ca_', 'au_', 'nl_', 'be_', 'pt_', 'gr_', 'pl_', 'cz_', 'hu_', 'ro_', 'rs_', 'hr_', 'si_', 'sk_', 'lt_', 'lv_', 'ee_', 'fi_', 'se_', 'no_', 'dk_', 'at_', 'ch_', 'ie_', 'bg_', 'cy_', 'mt_', 'lu_', 'is_', 'li_', 'mc_', 'sm_', 'va_', 'ad_', 'me_', 'mk_', 'al_', 'ba_', 'xk_', 'md_', 'ge_', 'am_', 'az_', 'by_', 'ua_', 'ru_', 'kz_', 'uz_', 'kg_', 'tj_', 'tm_', 'mn_', 'cn_', 'jp_', 'kr_', 'kp_', 'tw_', 'hk_', 'mo_', 'sg_', 'my_', 'th_', 'vn_', 'ph_', 'id_', 'bn_', 'kh_', 'la_', 'mm_', 'np_', 'bd_', 'lk_', 'mv_', 'bt_', 'af_', 'pk_', 'ir_', 'iq_', 'il_', 'jo_', 'lb_', 'sy_', 'ps_', 'sa_', 'ye_', 'om_', 'ae_', 'qa_', 'bh_', 'kw_', 'tr_', 'eg_', 'ly_', 'tn_', 'dz_', 'ma_', 'mr_', 'ml_', 'ne_', 'td_', 'cf_', 'cm_', 'ga_', 'gq_', 'st_', 'ao_', 'zw_', 'zm_', 'mw_', 'mz_', 'na_', 'bw_', 'ls_', 'sz_', 'za_', 'ng_', 'gh_', 'ci_', 'sn_', 'sl_', 'lr_', 'gn_', 'gw_', 'cv_', 'sc_', 'mu_', 'mg_', 'km_', 'dj_', 'er_', 'et_', 'so_', 'ke_', 'ug_', 'rw_', 'bi_', 'tz_', 'cd_', 'cg_', 'rn_', 're_', 'yt_', 'tf_', 'hm_', 'bv_', 'sj_', 'aq_']
 });
 
+// The Stremio SDK can surface catalog extras (`genre`, `search`, `skip`) as a
+// string or as an array (trailing-segment extras arrive as multi-value arrays).
+// Our catalog routes pass `req.params.extra` (a raw query string like
+// "search=espn&skip=0") straight through, so parse it into an object first, then
+// normalize values to a single string so the filters below never crash.
+function extraValue(extra, key) {
+    // Catalog routes pass `req.params.extra` as a raw query string (e.g.
+    // "search=espn&skip=0"); parse it so the filters below can read it.
+    if (typeof extra === 'string') {
+        extra = querystring.parse(extra) || {};
+    }
+    const v = extra && typeof extra === 'object' ? extra[key] : undefined;
+    if (Array.isArray(v)) return (v[0] ?? '');
+    return typeof v === 'string' ? v : '';
+}
+
 // Catalog handler (tv catalogs)
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
-    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extra?.genre)}, search=${sanitizeForLog(extra?.search)}`);
+    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extraValue(extra, 'genre'))}, search=${sanitizeForLog(extraValue(extra, 'search'))}`);
     if (!configObj) return { metas: [] };
 
     const ud = await ensureCache(configKey, configObj);
     if (!ud || !ud.channelMap) return { metas: [] };
 
-    const selectedGenre = extra?.genre?.replace(/-/g, ' ') || null;
-    const selectedSearch = extra?.search?.toLowerCase() || null;
+    const selectedGenre = extraValue(extra, 'genre')?.replace(/-/g, ' ') || null;
+    const selectedSearch = extraValue(extra, 'search')?.toLowerCase() || null;
 
-    const metas = [];
+    // Stremio catalogs must page via `skip` (default 100). Without this, a
+    // 40k+ channel catalog returns one unbounded JSON response and stalls the client.
+    const skip = Math.max(0, parseInt(extraValue(extra, 'skip'), 10) || 0);
+    const limit = 100;
+
+    // Cache hit: same config + page + genre/search + same cache generation →
+    // serve the previously-rendered metas without re-walking the channelMap.
+    const cacheKey = `${configKey}|${skip}|${selectedGenre || ''}|${selectedSearch || ''}|${ud.lastUpdated || 0}`;
+    const cachedPage = catalogPageCache.get(cacheKey);
+    if (cachedPage && Date.now() - cachedPage.at < CATALOG_PAGE_CACHE_TTL) {
+        const r0 = { metas: cachedPage.metas };
+        return r0;
+    }
+
+    // Two-pass: collect this page's channels first, then batch-resolve EPG with
+    // ONE Redis MGET (per-channel getEffectiveEpg calls were the concurrency cost —
+    // a 100-metadata page did up to 100 Redis round-trips).
+    const pageChannels = []; // [{chKey, channel}]
+    let idx = 0;
     for (const [chKey, channel] of ud.channelMap.entries()) {
         if (selectedGenre && channel.meta.group !== selectedGenre) continue;
         if (selectedSearch && !channel.meta.name.toLowerCase().includes(selectedSearch)) continue;
+        if (idx < skip) { idx++; continue; }
+        if (idx >= skip + limit) break;
+        idx++;
+        pageChannels.push({ chKey, channel });
+    }
+    const epgByCh = await getEffectiveEpgMany(pageChannels.map((p) => p.chKey), ud);
 
-        const engineImage = `${rootUrl}/${configKey}/poster/${chKey}.png?t=${ud.lastUpdated}`;
+    const metas = [];
+    for (const { chKey, channel } of pageChannels) {
+        const engineImage = `${rootUrl}/${configKey}/poster/${chKey || 'x'}.png?t=${ud.lastUpdated || ''}`;
         const passedThroughLogo = channel.meta.logo || engineImage;
-        const epgDescription = getEpgText(chKey, ud.epgData, configObj.timezoneOffset || 0);
+        const centralEpg = epgByCh.get(chKey) || null;
+        const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [chKey]: centralEpg } : {}) };
+        const epgDescription = getEpgText(chKey, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj.timezoneOffset || 0);
         const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
             ...(s.groupTags ? s.groupTags.split(" • ") : []),
             ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -871,11 +1162,24 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
             background: engineImage,
             logo: passedThroughLogo,
             description: fullDescription,
-            genres: [channel.meta.group]
+            // Prefer the parsed meta genres (iptv-org taxonomy for generic
+            // groups, else the playlist group); fall back to the group label.
+            genres: (channel.meta.genres && channel.meta.genres.length ? channel.meta.genres : [channel.meta.group || '']),
+            // 1:1 — a per-meta posterShape, not just the manifest-level one, so
+            // Nuvio/Stremio draw a square placeholder while the 640x640 loads
+            // instead of defaulting to a 2:3 portrait skeleton.
+            posterShape: 'square'
         });
     }
-    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas`);
-    return { metas };
+    const result = { metas };
+    // Only cache the common paginated pages (skip=0, no search) to bound memory;
+    // search/genre pages are cheap enough to rebuild and would bloat the cache.
+    if (skip === 0 && !selectedSearch) {
+        if (catalogPageCache.size > 2000) catalogPageCache.clear();
+        catalogPageCache.set(cacheKey, { metas, at: Date.now() });
+    }
+    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas (skip=${skip})${catalogPageCache.has(cacheKey) ? ' [cached]' : ''}`);
+    return result;
 });
 
 // Meta handler
@@ -886,12 +1190,14 @@ builder.defineMetaHandler(async ({ type, id, extra, config }) => {
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
-    if (!ud || !ud.channelMap.has(id)) return { meta: {} };
-    const channel = ud.channelMap.get(id);
+    if (!ud || !ud.channelMap?.has(_id)) return { meta: {} };
+    const channel = ud.channelMap.get(_id);
 
-    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated}`;
+    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(_id)}.png?t=${ud.lastUpdated || ''}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
-    const epgDescription = getEpgText(id, ud.epgData, configObj ? configObj.timezoneOffset : 0);
+    const centralEpg = await getEffectiveEpg(_id, ud);
+    const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [_id]: centralEpg } : {}) };
+    const epgDescription = getEpgText(_id, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj ? configObj.timezoneOffset : 0);
     const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
         ...(s.groupTags ? s.groupTags.split(" • ") : []),
         ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -908,7 +1214,8 @@ builder.defineMetaHandler(async ({ type, id, extra, config }) => {
             poster: engineImage,
             background: engineImage,
             logo: passedThroughLogo,
-            description: fullDescription
+            description: fullDescription,
+            posterShape: 'square'
         }
     };
 });
@@ -920,8 +1227,8 @@ builder.defineStreamHandler(async ({ type, id, extra, config }) => {
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
-    if (!ud || !ud.channelMap.has(id)) return { streams: [] };
-    const channel = ud.channelMap.get(id);
+    if (!ud || !ud.channelMap?.has(_id)) return { streams: [] };
+    const channel = ud.channelMap.get(_id);
 
     const streamsToReturn = channel.streams
         .sort((a, b) => b.score - a.score)
@@ -939,7 +1246,7 @@ builder.defineStreamHandler(async ({ type, id, extra, config }) => {
     let catchupEntries = [];
     if (channel.meta.hasCatchup && channel.streams.length > 0) {
         try {
-            catchupEntries = await getCatchupStreams(id, channel.streams[0].url, 48);
+            catchupEntries = await getCatchupStreams(_id, channel.streams[0].url, 48);
         } catch (e) {
             console.error('[Catchup] Failed to build catchup streams:', sanitizeForLog(e.message));
         }
@@ -951,11 +1258,34 @@ builder.defineStreamHandler(async ({ type, id, extra, config }) => {
 // Get the addon interface and serve it via express
 const addonInterface = builder.getInterface();
 
+// Manifest is a shared static object; logo/background are absolute URLs keyed
+/**
+ * Resolves relative manifest asset URLs against the requesting host.
+ * @param {import('express').Request} req - The incoming HTTP request.
+ * @return {object} A manifest with absolute logo and background URLs.
+ */
+function manifestFor(req) {
+    const root = `${req.protocol}://${req.get('host')}`;
+    const m = { ...addonInterface.manifest };
+    if (m.logo && m.logo.startsWith('/')) m.logo = `${root}${m.logo}`;
+    if (m.background && m.background.startsWith('/')) m.background = `${root}${m.background}`;
+    return m;
+}
+
 // Helper to extract configKey and configObj from request
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolves a request's user configuration and its corresponding cache key.
+ * @param {import('express').Request} req - The request containing a UUID-based or legacy configuration route parameter.
+ * @return {Promise<{configKey: string, configObj: object}>} The configuration key and extracted configuration object.
+ */
 async function getConfigFromReq(req) {
-    // Check for user UUID first (new system)
+    // Check for user UUID first (new system). A legacy base64 config can land in
+    // the same path segment; verify it is really a UUID so we never hand a base64
+    // blob (or worse, route it) to getUserById and spam DB UUID errors.
     const userId = req.params.userId;
-    if (userId) {
+    if (userId && UUID_RE.test(userId)) {
         const configObj = extractConfig(req);
         return { configKey: userId, configObj };
     }
@@ -968,13 +1298,13 @@ async function getConfigFromReq(req) {
 
 // Mount the addon routes on express - NEW USER SYSTEM ROUTES
 app.get('/:userId/manifest.json', (req, res) => {
-    res.json(addonInterface.manifest);
+    res.json(manifestFor(req));
 });
 
 app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -990,7 +1320,7 @@ app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
 app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1006,7 +1336,7 @@ app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
 app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
@@ -1022,7 +1352,7 @@ app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
 app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
@@ -1050,7 +1380,7 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
     let logoUrl = null;
     let channelName = "Live TV";
 
-    if (ud && ud.channelMap.has(id)) {
+    if (ud && ud.channelMap?.has(id)) {
         const channel = ud.channelMap.get(id);
         logoUrl = channel.meta.logo;
         channelName = channel.meta.name;
@@ -1073,14 +1403,14 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
 
 // Legacy routes for backward compatibility (base64 config)
 app.get('/:config/manifest.json', (req, res) => {
-    res.json(addonInterface.manifest);
+    res.json(manifestFor(req));
 });
 
 app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1097,7 +1427,7 @@ app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
@@ -1114,7 +1444,7 @@ app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
@@ -1131,7 +1461,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
     try {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
-        const rootUrl = `${req.protocol}://${req.get('host')}`;
+        const rootUrl = assetRoot(req);
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
@@ -1160,7 +1490,7 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
     let logoUrl = null;
     let channelName = "Live TV";
 
-    if (ud && ud.channelMap.has(id)) {
+    if (ud && ud.channelMap?.has(id)) {
         const channel = ud.channelMap.get(id);
         logoUrl = channel.meta.logo;
         channelName = channel.meta.name;
@@ -1183,9 +1513,37 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
 
 const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
 const { backgroundLogoRefresh } = require('./iptvParser');
+const { prewarm } = require('./prewarm');
 const PORT = process.env.PORT || 3000;
 
-// Initialize database schema (creates tables if missing)
+// ---- Cluster mode (horizontal scaling on one box) ---------------------------
+// Node's built-in cluster forks N subprocesses, each able to handle requests in
+// parallel across CPU cores. WITHOUT it the server is single-threaded (~65 req/s
+// ceiling on a 6-core host). Sessions are Redis-backed (see redisCache.js), so
+// any worker validates any token — required for multi-worker correctness.
+// The worker count is deliberately CONSERVATIVE so the host still has CPU for
+// other services: default = floor(nproc/2) but capped, overridable via
+// CLUSTER_WORKERS. Zero/1 = single-process (cluster disabled).
+const os = require('os');
+const CLUSTER_WORKERS = process.env.CLUSTER_WORKERS ? parseInt(process.env.CLUSTER_WORKERS, 10) : 0;
+const workercount = CLUSTER_WORKERS > 1
+    ? CLUSTER_WORKERS
+    : (process.env.CLUSTER_WORKERS === 'auto' ? Math.max(1, Math.floor(os.cpus().length / 2)) : 1);
+let clusterObj = null;
+try { clusterObj = require('node:cluster'); } catch { /* cluster unavailable */ }
+// Multi-worker cluster: the PRIMARY forks N workers (each runs the app below)
+// and then exits this module (supervisor only). Workers / single-process run the
+// app. Worker count is deliberately conservative so the host retains CPUs for
+// other services (the user's box isn't running only this addon).
+if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
+    clusterObj.setupPrimary({ workers: workercount, schedulingPolicy: clusterObj.SCHED_RR });
+    for (let i = 0; i < workercount; i++) clusterObj.fork();
+    console.log(`[Cluster] Forked ${workercount} workers (reserving cores for other services).`);
+    require('process').on('SIGTERM', () => process.exit(0));
+    return; // primary: don't run the app directly
+}
+
+// Initialize database (creates tables if missing)
 (async () => {
     try {
         await initSchema();
@@ -1204,13 +1562,68 @@ const PORT = process.env.PORT || 3000;
         backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', sanitizeForLog(e.message)));
     }, 5 * 60 * 1000); // 5 min after startup
 
+    // Full iptv-org poster/logo prewarm: renders every channel's poster to disk
+    // and persists the logo URL map so the DB is always ready. Runs daily with a
+    // startup-delayed first run so boot isn't blocked. Idempotent and
+    // concurrency-capped, so re-runs only fill new/updated channels.
+    // Prewarm renders every channel's posters into shared DB/PV state, so in
+    // cluster mode it must run once cluster-wide, not once per worker. The
+    // daily lock (30 min TTL, well above the longest actual run) deduplicates.
+    setInterval(() => {
+        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => console.error('[Prewarm] Cycle failed:', sanitizeForLog(e.message)));
+    }, 24 * 60 * 60 * 1000); // daily
+    setTimeout(() => {
+        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => console.error('[Prewarm] Initial run failed:', sanitizeForLog(e.message)));
+    }, 15 * 60 * 1000); // 15 min after startup, after logo refresh's first pass
+
     // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
     setInterval(() => {
         snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', sanitizeForLog(e.message)));
     }, 30 * 60 * 1000);
+
+    // Decoupled EPG-only refresh (task #42): re-fetch EPG schedules for entries
+    // whose coverage-informed epgNextRefreshAt has passed, WITHOUT re-parsing the
+    // whole provider playlist. Uses the retained epgMap + per-entry epg URL (and
+    // the iptv-org guide map when enabled). Coalesced so a refresh never stomps
+    // a full parse.
+    setInterval(() => {
+        for (const [configKey, entry] of userCaches.entries()) {
+            if (!entry || !entry._configObj) continue;
+            if (Date.now() < (entry.epgNextRefreshAt || 0)) continue;
+            const cfg = entry._configObj;
+            refreshEpgForEntry(entry, cfg).then(next => {
+                if (!next) return;
+                const cur = userCaches.get(configKey);
+                if (!cur) return;
+                cur.epgData = next.epgData;
+                cur.epgNextRefreshAt = next.epgNextRefreshAt;
+                cur.epgCoverageMs = next.epgCoverageMs;
+                cur.epgLastUpdated = Date.now();
+            }).catch(e => console.error('[EPG][Refresh] failed:', sanitizeForLog(e.message)));
+        }
+    }, 15 * 60 * 1000);
+
+    // Daily retention prune: epg_history grows without bound otherwise (only a
+    // 48h read window is used; keep 7 days).
+    setInterval(() => {
+        withOnceLock('epgHistoryPrune', 30 * 60, pruneEpgHistory).catch(e => console.error('[EPG][Prune] cycle failed:', sanitizeForLog(e.message)));
+    }, 24 * 60 * 60 * 1000);
     setTimeout(() => {
         snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', sanitizeForLog(e.message)));
     }, 2 * 60 * 1000);
+
+    // Central multi-source EPG (epgHub): seed the source registry, then fetch +
+    // merge + warm the generation-stamped cache on a periodic cadence. A broken
+    // source is isolated and only increments its own error_count.
+    seedEpgHub().catch(e => console.error('[epgHub] seed failed:', sanitizeForLog(e.message)));
+    // runEpgHub re-fetches + merges the central DB, so it must run once
+    // cluster-wide. 45-min lock exceeds the longest realistic fetch/merge.
+    setInterval(() => {
+        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] cycle failed:', sanitizeForLog(e.message)));
+    }, 30 * 60 * 1000);
+    setTimeout(() => {
+        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] initial run failed:', sanitizeForLog(e.message)));
+    }, 10 * 60 * 1000); // 10 min after startup, after DB/iptv-org are up
 
     // Proactively refresh any cached config older than MAX_CACHE_AGE, independent of
     // incoming requests - so the cache stays fresh even during idle periods.
@@ -1223,7 +1636,7 @@ const PORT = process.env.PORT || 3000;
                     const configObj = extractConfig({ params: { config: configKey }, query: {} });
                     if (configObj) {
                         console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${sanitizeForLog(configObj.ai)}`);
-                        console.log(`[ProactiveRefresh] refreshing stale config=${sanitizeForLog(configKey.substring(0,12))}...`);
+                        console.log(`[ProactiveRefresh] refreshing stale config=${configKeyFingerprint(configKey)}...`);
                         streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', sanitizeForLog(e.message)));
                     }
                 } catch (e) {

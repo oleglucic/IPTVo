@@ -1,9 +1,73 @@
+## 🤝 Contributors
+
+- Oleg Lučić (@183150217+oleglucic)
+
+## 🤝 Contributors
+
+- Oleg lučić (@183150217+oleglucic)
+- Oleg Lučić (@183150217+oleglucic)
+
+## 🤝 Contributors
+
+- Oleg Lučić (@183150217+oleglucic)
+
+## 🤝 Contributors
+
+- Oleg Lučić (@183150217+oleglucic)
+
+# [0.10.0](https://github.com/oleglucic/IPTVo/compare/v0.9.2...v0.10.0) (2026-08-21)
+
+
+### Features
+
+* **auth:** add Cloudflare Turnstile to login/register ([bc2c205](https://github.com/oleglucic/IPTVo/commit/bc2c205a17a4ecf009096b91808ef6fa19e5ae62))
+
+## [0.9.2](https://github.com/oleglucic/IPTVo/compare/v0.9.1...v0.9.2) (2026-08-21)
+
+
+### Bug Fixes
+
+* **health:** guard cache-status keys so /health/detailed can't 500 ([4a7e989](https://github.com/oleglucic/IPTVo/commit/4a7e98991c02f9e25f720b368825fecf95f929a8))
+
+
+### Performance Improvements
+
+* **cache:** serve last-good snapshot while a refresh is loading ([3c69c51](https://github.com/oleglucic/IPTVo/commit/3c69c515d5f4ad9d494af211443efde3009209dc))
+
+## [0.9.1](https://github.com/oleglucic/IPTVo/compare/v0.9.0...v0.9.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **catalog:** coerce Stremio extra arrays so search/genre don't crash ([c5021bf](https://github.com/oleglucic/IPTVo/commit/c5021bf3001c45c23e5816e527de6bc1d5c0b306))
+
+# [0.9.0](https://github.com/oleglucic/IPTVo/compare/v0.8.1...v0.9.0) (2026-08-21)
+
+
+### Features
+
+* **dashboard:** auto-load channel groups + persist group selection ([#30](https://github.com/oleglucic/IPTVo/issues/30)) ([56c5538](https://github.com/oleglucic/IPTVo/commit/56c5538dad5ec8e7e9546ebf2e77f2a51a7e5c69))
+
+## [0.8.1](https://github.com/oleglucic/IPTVo/compare/v0.8.0...v0.8.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **auth:** preserve stored credentials when config save omits them ([f7d9b5f](https://github.com/oleglucic/IPTVo/commit/f7d9b5f25946807ae445b435d32dcb059fbf1dfb))
+
+# [0.8.0](https://github.com/oleglucic/IPTVo/compare/v0.7.0...v0.8.0) (2026-08-21)
+
+
+### Features
+
+* **cache+epg+match+assets:** production-hardening for launch ([#27](https://github.com/oleglucic/IPTVo/issues/27)) ([36c3af9](https://github.com/oleglucic/IPTVo/commit/36c3af9243dab400f7f3e850ca526b07091e560a))
+
 # [0.7.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.6.0...v0.7.0) (2026-08-20)
 
 
 ### Features
 
-* **dashboard:** match browser top bar to page theme ([90292db](https://github.com/oleglucic/nuvio-iptv/commit/90292dbff3c1cde51a6141b00d7293541d198633)), closes [#17130f](https://github.com/oleglucic/nuvio-iptv/issues/17130f) [#faf7f1](https://github.com/oleglucic/nuvio-iptv/issues/faf7f1)
+* **dashboard:** match browser top bar to page theme ([90292db](https://github.com/oleglucic/nuvio-iptv/commit/90292dbff3c1cde51a6141b00d7293541d198633))
 
 # [0.6.0](https://github.com/oleglucic/nuvio-iptv/compare/v0.5.0...v0.6.0) (2026-08-20)
 

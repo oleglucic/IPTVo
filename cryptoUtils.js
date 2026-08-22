@@ -67,12 +67,12 @@ async function encryptConfig(config, masterKeyB64) {
 }
 
 /**
- * Decrypt a config object using AES-256-GCM
- * @param {string} encryptedConfigB64 - Base64 encrypted config (ciphertext + authTag)
- * @param {string} ivB64 - Base64 IV
- * @param {string} saltB64 - Base64 salt
- * @param {string} [masterKeyB64] - Optional master key override (base64), otherwise uses ENCRYPTION_KEY env
- * @returns {Promise<object|null>} Decrypted config object or null on failure
+ * Decrypts an encrypted configuration object.
+ * @param {string} encryptedConfigB64 - Base64-encoded ciphertext and authentication tag.
+ * @param {string} ivB64 - Base64-encoded initialization vector.
+ * @param {string} saltB64 - Base64-encoded key derivation salt.
+ * @param {string} [masterKeyB64] - Optional Base64-encoded master key; otherwise uses the environment-derived key.
+ * @returns {object|null} The decrypted configuration object, or `null` if decryption fails.
  */
 async function decryptConfig(encryptedConfigB64, ivB64, saltB64, masterKeyB64) {
     try {
@@ -101,6 +101,16 @@ async function decryptConfig(encryptedConfigB64, ivB64, saltB64, masterKeyB64) {
         console.error('[Crypto] Decrypt failed:', e.message);
         return null;
     }
+}
+
+/**
+ * Creates a truncated SHA-256 fingerprint for a configuration key.
+ * @param {string|undefined|null} configKey - The configuration key to fingerprint.
+ * @return {string} The first 12 hexadecimal characters of the key's SHA-256 hash, or `'null'` when no key is provided.
+ */
+function configKeyFingerprint(configKey) {
+    if (!configKey) return 'null';
+    return crypto.createHash('sha256').update(String(configKey)).digest('hex').substring(0, 12);
 }
 
 /**
@@ -164,5 +174,6 @@ module.exports = {
     hashPassword,
     verifyPassword,
     generateSessionToken,
-    getMasterKey
+    getMasterKey,
+    configKeyFingerprint
 };

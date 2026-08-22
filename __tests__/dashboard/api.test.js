@@ -116,14 +116,15 @@ describe('dashboard/js/api.js - APIClient', () => {
             const [url, config] = fetchMock.mock.calls[0];
             expect(url).toBe('/api/auth/register');
             expect(config.method).toBe('POST');
-            expect(JSON.parse(config.body)).toEqual({ username: 'bob', password: 'pw', config: { type: 'm3u' } });
+            expect(JSON.parse(config.body)).toEqual({ username: 'bob', password: 'pw', config: { type: 'm3u' }, 'cf-turnstile-response': '' });
         });
 
         test('login() posts credentials to /api/auth/login', async () => {
             await api.login('bob', 'pw');
             const [url, config] = fetchMock.mock.calls[0];
             expect(url).toBe('/api/auth/login');
-            expect(JSON.parse(config.body)).toEqual({ username: 'bob', password: 'pw' });
+            expect(config.method).toBe('POST');
+            expect(JSON.parse(config.body)).toEqual({ username: 'bob', password: 'pw', 'cf-turnstile-response': '' });
         });
 
         test('validate() issues a GET to /api/auth/validate', async () => {

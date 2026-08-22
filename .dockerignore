@@ -1,0 +1,36 @@
+# Git metadata
+.git/
+.gitignore
+.gitattributes
+
+# Node build / cache
+node_modules/
+cache/
+cache-*/
+dist/
+build/
+
+# Logs
+*.log
+server.log
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Test / dev artifacts
+__tests__/
+test-helpers/
+test-output/
+coverage/
+.playwright-mcp/
+
+# Backups and scratch
+*.bak
+*.tmp
+*.temp
+
+# Docs that add nothing at runtime (keep README/industry for context)
+# license/docs intentionally kept

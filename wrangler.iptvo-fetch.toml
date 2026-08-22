@@ -1,0 +1,26 @@
+# Cloudflare Worker: IPTVo logo fetcher (resolve via Cloudflare edge to avoid
+# logo-host rate limits). Serves the coherent path assets.oleglucic.com/iptvo/fetcher/*
+# (logo-proxy.worker.js strips the /iptvo/fetcher prefix). Legacy /logo also works.
+#
+# The `name` MUST match the worker it's deployed to so Workers Builds deploy to
+# it by name. Connect this to GitHub in the Workers & Pages dashboard -> iptvo-fetch.
+name = "iptvo-fetch"
+main = "logo-proxy.worker.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace for dead URL tracking (24h TTL)
+[[kv_namespaces]]
+binding = "LOGO_KV"
+id = "cf2936e0989a4e02b5fa34186abe619e"
+preview_id = "cf2936e0989a4e02b5fa34186abe619e"
+
+# Environment variables
+[vars]
+LOG_LEVEL = "info"
+
+# Limits
+limits = { cpu_ms = 50 }
+
+# Caching is handled via Cache-Control in the worker's responses (30d logo,
+# 1d placeholder SVG) + ancestor-cache through Cloudflare edge. No toggle needed.

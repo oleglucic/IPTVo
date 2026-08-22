@@ -1,108 +1,90 @@
 # Cloudflare Worker Setup Guide
 
+IPTVo uses three Cloudflare Workers, all served under the coherent domain root
+`assets.oleglucic.com/iptvo/*`. Each is auto-deployed from the repository via
+**Workers Builds** (Connect-to-GitHub in the Cloudflare dashboard).
+
+| Worker | Code | Config | Route | Purpose |
+| ------ | ---- | ------ | ----- | ------- |
+| `iptvo-root` | `logo-proxy.worker.js` | `wrangler.toml` | owns `assets.oleglucic.com` | domain anchor; `/logo` at root |
+| `iptvo-fetch` | `logo-proxy.worker.js` | `wrangler.iptvo-fetch.toml` | `/iptvo/fetcher/*` | logo fetch via Cloudflare edge (rate-limit protection) |
+| `iptvo-assets` | `iptvo-assets.worker.js` | `wrangler.iptvo-assets.toml` | `/iptvo/assets/*` | edge cache for posters + catalog/meta JSON |
+
 ## Prerequisites
 
 1. **Cloudflare account** — Sign up at <https://cloudflare.com> (free tier is sufficient)
-2. **Node.js 18+** installed locally
-3. **Wrangler CLI** — Cloudflare's deployment tool
+2. **Node.js 20+** installed locally
+3. **Wrangler CLI** for manual deploys: `npm install -g wrangler && wrangler login`
 
-## Step 1: Install Wrangler & Login
+## Set up: Connect to GitHub (recommended)
+
+For each worker, open **Workers & Pages → [worker] → Settings → Builds & deployments → Connect to GitHub**:
+
+1. Pick the `IPTVo` repository (the Cloudflare GitHub App must be installed).
+2. Set the **Wrangler configuration file** per worker:
+   - `iptvo-root` → `wrangler.toml`
+   - `iptvo-fetch` → `wrangler.iptvo-fetch.toml`
+   - `iptvo-assets` → `wrangler.iptvo-assets.toml`
+3. Set the **Production branch** to `main`.
+4. Enable **Caching** on `iptvo-fetch` and `iptvo-assets` (on by default).
+5. Push a commit to `main` → each worker auto-deploys its own code.
+
+The KV bindings (`LOGO_KV` for the logo workers, `ASSETS_KV` for `iptvo-assets`)
+are declared in each wrangler config; create the namespaces once if deploying
+manually.
+
+## Manual deploy (alternative to Workers Builds)
 
 ```bash
 npm install -g wrangler
 wrangler login
-```
 
-This opens a browser to authorize Wrangler with your Cloudflare account.
-
-## Step 2: Create KV Namespace (for dead URL tracking)
-
-```bash
-# Create production KV namespace
+# Create the KV namespace once, then paste its ID into the toml(s) that bind LOGO_KV
 wrangler kv:namespace create "LOGO_KV"
 
-# Create preview KV namespace (for wrangler dev)
-wrangler kv:namespace create "LOGO_KV" --preview
+# Deploy each worker
+wrangler deploy                                    # iptvo-root (wrangler.toml)
+wrangler deploy -c wrangler.iptvo-fetch.toml       # iptvo-fetch (logo fetcher)
+wrangler deploy -c wrangler.iptvo-assets.toml      # iptvo-assets (edge cache)
 ```
 
-**Output example:**
+## Configure the Backend
 
-```text
-🌀 Creating namespace with title "iptvo-logo-proxy-LOGO_KV"
-✅ Success!
-Add the following to your configuration file:
-[[kv_namespaces]]
-binding = "LOGO_KV"
-id = "abc123def456..."
-preview_id = "xyz789..."
-```
-
-## Step 3: Update `wrangler.toml` with KV IDs
-
-Edit `wrangler.toml` and replace the placeholder IDs:
-
-```toml
-[[kv_namespaces]]
-binding = "LOGO_KV"
-id = "abc123def456..."           # <- your production KV ID
-preview_id = "xyz789..."         # <- your preview KV ID
-```
-
-## Step 4: Deploy the Worker
+The **logo fetcher** URL (fetches logos through Cloudflare's edge to avoid
+logo-host rate limits) goes into `LOGO_PROXY_URL`:
 
 ```bash
-wrangler deploy
+LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 ```
 
-**Expected output:**
+Full endpoint:
 
 ```text
-✅ Successfully deployed to https://iptvo-logo-proxy.<your-account>.workers.dev
+https://assets.oleglucic.com/iptvo/fetcher/logo?url=<base64url>&fallback=<base64url>&name=ChannelName
 ```
 
-**Note your Worker URL** — it will be something like:
-
-```text
-https://iptvo-logo-proxy.oleglucic.workers.dev
-```
-
-## Step 5: Configure the Backend
-
-Set the `LOGO_PROXY_URL` environment variable in your backend deployment:
+The **edge asset cache** (posters/catalog/meta) URL:
 
 ```bash
-# For Docker
-docker run -e LOGO_PROXY_URL=https://iptvo-logo-proxy.oleglucic.workers.dev/logo ...
-
-# For Railway/Render/Fly.io
-# Add LOGO_PROXY_URL=https://iptvo-logo-proxy.oleglucic.workers.dev/logo in env vars
-
-# For local development (.env)
-LOGO_PROXY_URL=https://iptvo-logo-proxy.oleglucic.workers.dev/logo
+ASSET_BASE_URL=https://assets.oleglucic.com/iptvo/assets
 ```
 
-The URL **must end with `/logo`** — the full endpoint is:
-
-```text
-https://your-worker.workers.dev/logo?url=<base64url>&fallback=<base64url>&name=ChannelName
-```
-
-## Step 6: Verify Deployment
-
-Test the worker directly:
+The **edge purge** target (only if you enable the `/api/_edge-purge` endpoint):
 
 ```bash
-# Test with a known logo URL
-curl "https://iptvo-logo-proxy.oleglucic.workers.dev/logo?url=$(node -e "console.log(Buffer.from('https://i.imgur.com/P9Tqkg1.png').toString('base64').replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,''))")"
+ADDON_CACHE_URL=https://assets.oleglucic.com/iptvo/assets
+EDGE_PURGE_SECRET=<your-secret>   # must match the worker's PURGE_TOKEN secret
 ```
 
-Should return an image (or SVG placeholder if the logo fails).
-
-Check health endpoint:
+## Verify
 
 ```bash
-curl https://iptvo-logo-proxy.oleglucic.workers.dev/health
-# {"status":"ok","timestamp":1234567890}
+# Health
+curl https://assets.oleglucic.com/iptvo/fetcher/health   # {"status":"ok",...}
+curl https://assets.oleglucic.com/health                  # iptvo-root
+
+# Logo fetch
+curl "https://assets.oleglucic.com/iptvo/fetcher/logo?url=$(node -e "console.log(Buffer.from('https://i.imgur.com/P9Tqkg1.png').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''))")"
 ```
 
 ## Free Tier Limits
@@ -115,39 +97,28 @@ curl https://iptvo-logo-proxy.oleglucic.workers.dev/health
 | KV writes/day | 1,000 |
 | Cache storage | Unlimited (edge) |
 
-**Estimated usage:** ~2,000-5,000 requests/day for typical IPTV catalog — well within limits.
+Estimated usage: ~2-5k requests/day for a typical IPTV catalog — well within limits.
 
 ## Development Mode
 
 ```bash
-# Local development with live reload
-wrangler dev
-
-# Test locally at http://localhost:8787
+wrangler dev         # from wrangler.toml (iptvo-root)
+wrangler dev -c wrangler.iptvo-fetch.toml
+wrangler dev -c wrangler.iptvo-assets.toml
 ```
 
 ## Troubleshooting
 
 | Issue | Solution |
-| ------- | ---------- |
-| `KV namespace not found` | Run `wrangler kv:namespace create` again, update `wrangler.toml` |
-| `Worker not found` | Check `wrangler.toml` name matches deployed name |
+| ------- | ------- |
+| `KV namespace not found` | Create it, update the toml ID |
+| `Worker not found` | Check the toml `name` matches the deployed worker |
 | CORS errors | Worker returns `Access-Control-Allow-Origin: *` — should work |
-| Images not loading | Check `X-Logo-Source` header in response (placeholder/primary/fallback) |
+| Images not loading | Check `X-Logo-Source` header (primary/fallback/placeholder) |
 
 ## Worker Logs
 
 ```bash
-# View live logs
-wrangler tail
-
-# Filter by source
+wrangler tail                       # live logs for the current config's worker
 wrangler tail --format json | jq 'select(.request.url | contains("imgur"))'
-```
-
-## Custom Domain (Optional)
-
-```bash
-# Add custom domain
-wrangler custom-domain add logo-proxy.iptv.cam
 ```

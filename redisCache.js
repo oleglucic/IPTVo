@@ -41,13 +41,22 @@ function serializeCache(cacheData) {
         catalogItems: cacheData.catalogItems || [],
         uniqueGroups: Array.from(cacheData.uniqueGroups || new Set()),
         epgData: cacheData.epgData || {},
-        lastUpdated: cacheData.lastUpdated || Date.now()
+        epgMap: Object.fromEntries(cacheData.epgMap || new Map()), // retained for decoupled EPG refresh
+        epgLastUpdated: cacheData.epgLastUpdated || 0,
+        epgNextRefreshAt: cacheData.epgNextRefreshAt || 0,
+        epgCoverageMs: cacheData.epgCoverageMs || 0,
+        lastUpdated: cacheData.lastUpdated || Date.now(),
+        // Config-generation stamp: a rehydrating worker checks this against its
+        // own counter, so a snapshot taken from a prior config cannot be served
+        // as current after a config change (see ensureCache stale check).
+        generation: cacheData._generation
     });
 }
 
 /**
- * Reverse of serializeCache - rebuild Map/Set fields from the JSON-safe plain object.
- * @param {string} raw - the JSON string read back from Redis
+ * Reconstructs a cache object from its JSON representation.
+ * @param {string} raw - The JSON-encoded cache data.
+ * @return {Object} The cache data with map and set fields restored.
  */
 function deserializeCache(raw) {
     const obj = JSON.parse(raw);
@@ -58,7 +67,12 @@ function deserializeCache(raw) {
         catalogItems: obj.catalogItems || [],
         uniqueGroups: new Set(obj.uniqueGroups || []),
         epgData: obj.epgData || {},
-        lastUpdated: obj.lastUpdated || 0
+        epgMap: new Map(Object.entries(obj.epgMap || {})), // retained for decoupled EPG refresh
+        epgLastUpdated: obj.epgLastUpdated || 0,
+        epgNextRefreshAt: obj.epgNextRefreshAt || 0,
+        epgCoverageMs: obj.epgCoverageMs || 0,
+        lastUpdated: obj.lastUpdated || 0,
+        _generation: obj.generation
     };
 }
 
@@ -78,7 +92,29 @@ async function saveCacheToRedis(configKey, cacheData) {
 }
 
 /**
- * Load a channel cache entry from Redis, if present.
+ * Delete a channel cache entry from Redis. Drops the persisted snapshot so a
+ * config change (groups, iptv-org toggle, provider) re-parses on next request
+ * instead of serving the stale snapshot until it ages out.
+ * @param {string} configKey
+ * @return {Promise<boolean>} true when the entry is gone; false if the delete
+ *   failed (caller should surface that a stale snapshot may survive).
+ */
+async function deleteCacheFromRedis(configKey) {
+    if (!redis) return true;
+    try {
+        await redis.del(KEY_PREFIX + configKey);
+        return true;
+    } catch (e) {
+        // Do not throw: a Redis outage must not fail a config save that already
+        // committed. Report the failure so the caller can warn that the old
+        // snapshot may be rehydrated until it ages out.
+        console.error('[Redis Error] deleteCacheFromRedis:', e.message);
+        return false;
+    }
+}
+
+/**
+ * Load a channel cache snapshot from Redis, if present.
  * @param {string} configKey
  * @returns {Promise<object | null>}
  */
@@ -173,9 +209,8 @@ async function loadLogoUrl(channelId) {
 }
 
 /**
- * List every config key currently persisted in Redis - used to pre-warm
- * the in-memory cache for all known configs on boot.
- * @returns {Promise<string[]>}
+ * Lists configuration keys stored in the Redis channel cache.
+ * @return {Promise<string[]>} The stored configuration-key suffixes, or an empty array when Redis is unavailable or the lookup fails.
  */
 async function listCachedConfigKeys() {
     if (!redis) return [];
@@ -188,13 +223,262 @@ async function listCachedConfigKeys() {
     }
 }
 
+// --- Central EPG cache (generation-stamped, not arbitrary TTL) --------------
+// The central EPG DB (epg_programs) is the source of truth. User requests read
+// this Redis cache, which is valid for as long as the central DB's data hasn't
+// been renewed — tracked by a hub `generation` rather than a fixed TTL. When
+// the hub (epgHub) re-fetches and bumps the generation, stale cache entries are
+// rebuilt from the DB. So the cache lives exactly as long as the DB has data.
+const EPG_CACHE_PREFIX = 'nuvio:epg:';
+const EPG_STATE_KEY = 'nuvio:epg:hub_state';
+// Generation is a dedicated integer so bumpGeneration can INCR atomically (a
+// read-modify-write on the JSON state key would lose increments under the
+// multi-process cluster). TTL keeps unused EPG keys from growing unbounded.
+const EPG_GEN_KEY = 'nuvio:epg:hub_generation';
+const EPG_CACHE_TTL_SECONDS = 14 * 24 * 60 * 60;
+
+/**
+ * Saves merged EPG programs for a channel with the hub generation used to build them.
+ * @param {string} channelKey - The channel's canonical identifier.
+ * @param {Array} programs - The channel's merged EPG programs.
+ * @param {number} generation - The hub generation associated with the programs.
+ */
+async function saveEpgCache(channelKey, programs, generation) {
+    if (!redis) return;
+    try {
+        await redis.set(EPG_CACHE_PREFIX + channelKey, JSON.stringify({ generation, programs, savedAt: Date.now() }), 'EX', EPG_CACHE_TTL_SECONDS);
+    } catch (e) {
+        console.error('[Redis Error] saveEpgCache:', e.message);
+    }
+}
+
+/**
+ * Loads cached EPG programs and their generation metadata for a channel.
+ * @param {string} channelKey - The key identifying the channel.
+ * @return {{programs: Array, generation: number, savedAt: number}|null} The cached EPG data, or `null` when unavailable, missing, or invalid.
+ */
+async function loadEpgCache(channelKey) {
+    if (!redis) return null;
+    try {
+        const raw = await redis.get(EPG_CACHE_PREFIX + channelKey);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        return { programs: obj.programs || [], generation: obj.generation || 0, savedAt: obj.savedAt || 0 };
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * Loads cached EPG data for multiple channels.
+ * @param {string[]} channelKeys - The channel keys to retrieve.
+ * @return {Map<string, {programs: Array, generation: number, savedAt: number}|null>} A map of channel keys to cached EPG data, or `null` for missing or invalid entries.
+ */
+async function mgetEpgCaches(channelKeys) {
+    const out = new Map();
+    if (!redis || !channelKeys || channelKeys.length === 0) return out;
+    try {
+        const raws = await redis.mget(channelKeys.map((k) => EPG_CACHE_PREFIX + k));
+        for (let i = 0; i < channelKeys.length; i++) {
+            const raw = raws[i];
+            if (!raw) { out.set(channelKeys[i], null); continue; }
+            try {
+                const obj = JSON.parse(raw);
+                out.set(channelKeys[i], { programs: obj.programs || [], generation: obj.generation || 0, savedAt: obj.savedAt || 0 });
+            } catch { out.set(channelKeys[i], null); }
+        }
+    } catch (e) {
+        console.error('[Redis Error] mgetEpgCaches:', e.message);
+    }
+    return out;
+}
+
+/**
+ * Retrieves the current EPG hub generation.
+ * @return {number} The current generation, or `0` when unavailable or invalid.
+ */
+async function getHubGeneration() {
+    if (!redis) return 0;
+    try {
+        const n = parseInt(await redis.get(EPG_GEN_KEY) || '0', 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch (_) {
+        return 0;
+    }
+}
+
+/**
+ * Advances the central EPG hub generation and records cycle coverage.
+ * INCR is atomic across the multi-process cluster, so concurrent bumps never
+ * lose an increment (the old read-modify-write could), and the returned value
+ * is the generation this cycle is now authoritative at — callers must stamp
+ * their cache writes with it rather than deriving generation + 1 locally.
+ * Coverage and last_update are stored on the state key, which no longer
+ * carries the generation.
+ * @param {number} coverage - The coverage value to store with the updated generation.
+ * @return {number} The new generation, or `0` when Redis is unavailable.
+ */
+async function bumpGeneration(coverage) {
+    if (!redis) return 0;
+    try {
+        const gen = await redis.incr(EPG_GEN_KEY);
+        await redis.set(EPG_STATE_KEY, JSON.stringify({ last_update: Date.now(), coverage: coverage || 0 }));
+        return gen;
+    } catch (e) {
+        console.error('[Redis Error] bumpGeneration:', e.message);
+        return 0;
+    }
+}
+
+/**
+ * Records cycle coverage without advancing the hub generation, and returns the
+ * current generation. Used to publish final coverage after cache entries have
+ * already been stamped with the cycle's reserved generation.
+ * @param {number} coverage - The coverage value to store.
+ * @return {Promise<number>} The current generation, or `0` when Redis is unavailable.
+ */
+async function setHubState(coverage) {
+    if (!redis) return 0;
+    try {
+        const gen = parseInt(await redis.get(EPG_GEN_KEY) || '0', 10) || 0;
+        await redis.set(EPG_STATE_KEY, JSON.stringify({ last_update: Date.now(), coverage: coverage || 0 }));
+        return gen;
+    } catch (e) {
+        console.error('[Redis Error] setHubState:', e.message);
+        return 0;
+    }
+}
+
+/**
+ * Runs a DB-global background job exactly once per cadence across the whole
+ * cluster. Every worker registers the same periodic timers, but only the worker
+ * that wins the NX-lock actually executes the job body; the others skip this
+ * cycle. The lock is released (compare-and-delete of our own token) when the job
+ * finishes, and auto-expires via TTL if the holder crashes mid-run, so the next
+ * cadence can always re-acquire. When Redis is unavailable it runs directly,
+ * preserving the single-process behavior (one scheduler, nothing to dedupe).
+ *
+ * Intended for durable, DB-driven jobs (EPG hub merge, prewarm, history prune).
+ * Jobs that read a worker's in-memory userCaches must NOT be gated here — each
+ * worker legitimately processes its own caches.
+ * @param {string} lockName - Stable name identifying the job (lock key suffix).
+ * @param {number} ttlSeconds - Lock TTL; a safety net for crashes, so make it
+ *   comfortably exceed the longest expected job runtime.
+ * @param {Function} fn - The job to run; may return a promise.
+ * @return {Promise<boolean>} `true` if this worker ran the job, `false` if it
+ *   skipped because another worker holds the lock this cycle.
+ */
+async function withOnceLock(lockName, ttlSeconds, fn) {
+    if (!redis) return fn();
+    const key = 'nuvio:lock:' + lockName;
+    const token = crypto.randomUUID();
+    try {
+        const acquired = (await redis.set(key, token, 'EX', ttlSeconds, 'NX')) === 'OK';
+        if (!acquired) return false;
+    } catch (e) {
+        // Lock infra unavailable: don't drop the job, run it unguarded.
+        console.error(`[Lock] ${lockName} acquire failed, running unguarded:`, e.message);
+        return fn();
+    }
+    try {
+        return await fn();
+    } finally {
+        const lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+        try { await redis.eval(lua, 1, key, token); } catch (e) { console.error(`[Lock] ${lockName} release failed:`, e.message); }
+    }
+}
+
+// --- Shared auth sessions (multi-worker safe) ------------------------------
+// Sessions were an in-memory Map (single-process only). For horizontal scaling
+// to more workers, a token must validate on ANY worker — stored in Redis with a
+// 30-day TTL (matches the previous in-memory expiry). Node cluster / replicas
+// only work once this is Redis-backed.
+const SESSION_PREFIX = 'nuvio:session:';
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; /**
+ * Retrieves a shared session by its token.
+ * @param {string} token - The session token.
+ * @return {Object|null} The parsed session data, or `null` if the token is missing, the session is unavailable, or the stored data is invalid.
+ */
+
+async function sessionGet(token) {
+    if (!redis || !token) return null;
+    try {
+        const raw = await redis.get(SESSION_PREFIX + token);
+        if (!raw) return null;
+        const s = JSON.parse(raw);
+        return s || null;
+    } catch { return null; }
+}
+
+/**
+ * Stores a shared session with a 30-day expiration.
+ * @param {string} token - The token associated with the session.
+ * @param {Object} session - The session data to store.
+ */
+async function sessionSet(token, session) {
+    if (!redis || !token) return;
+    try {
+        await redis.set(SESSION_PREFIX + token, JSON.stringify(session), 'EX', SESSION_TTL_SECONDS);
+    } catch (e) { console.error('[Redis Error] sessionSet:', e.message); }
+}
+
+/**
+ * Deletes a shared session.
+ * @param {string} token - The session token identifying the session.
+ */
+async function sessionDelete(token) {
+    if (!redis || !token) return;
+    try { await redis.del(SESSION_PREFIX + token); } catch {}
+}
+
+/**
+ * Remove expired or invalid shared session records.
+ * @return {number} The number of session records removed.
+ */
+async function sessionPruneExpired() {
+    if (!redis) return 0;
+    let cleared = 0;
+    try {
+        let cursor = '0';
+        do {
+            const [next, keys] = await redis.scan(cursor, 'MATCH', SESSION_PREFIX + '*', 'COUNT', 200);
+            cursor = next;
+            if (keys && keys.length) {
+                const raws = await redis.mget(keys);
+                const now = Date.now();
+                const toDel = [];
+                for (let i = 0; i < keys.length; i++) {
+                    try {
+                        const s = raws[i] ? JSON.parse(raws[i]) : null;
+                        if (!s || (s.expiresAt && s.expiresAt < now)) toDel.push(keys[i]);
+                    } catch { toDel.push(keys[i]); }
+                }
+                if (toDel.length) { await redis.del(toDel); cleared += toDel.length; }
+            }
+        } while (cursor !== '0');
+    } catch (e) { console.error('[Redis Error] sessionPrune:', e.message); }
+    return cleared;
+}
+
 module.exports = {
     saveCacheToRedis,
     loadCacheFromRedis,
+    deleteCacheFromRedis,
     listCachedConfigKeys,
     saveLogoBuffer,
     loadLogoBuffer,
     saveLogoUrl,
     loadLogoUrl,
+    saveEpgCache,
+    loadEpgCache,
+    mgetEpgCaches,
+    getHubGeneration,
+    bumpGeneration,
+    setHubState,
+    withOnceLock,
+    sessionGet,
+    sessionSet,
+    sessionDelete,
+    sessionPruneExpired,
     hasRedis: !!redis
 };

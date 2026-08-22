@@ -34,12 +34,25 @@ services:
     #   context: .
     #   dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD:-changeme}@postgres:5432/iptvo
       - REDIS_URL=redis://redis:6379
       - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
+# Optional feature flags (unset = defaults)
+      - PORT=${PORT:-3000}
+      - CLUSTER_WORKERS=${CLUSTER_WORKERS:-0}          # 0=single, 'auto'=cores/2, N=workers
+      - ASSET_BASE_URL=${ASSET_BASE_URL:-}
+      - ADDON_CACHE_URL=${ADDON_CACHE_URL:-}
+      - EDGE_PURGE_SECRET=${EDGE_PURGE_SECRET:-}
+      - EPG_HUB_CONCURRENCY=${EPG_HUB_CONCURRENCY:-3}
+      - MAX_CONCURRENT_PARSES=${MAX_CONCURRENT_PARSES:-4}
+      - PREWARM_CONCURRENCY=${PREWARM_CONCURRENCY:-8}
+      # Hostnames allowed to verify Turnstile tokens (comma-separated, e.g. iptvo.oleglucic.com)
+      - TURNSTILE_HOSTNAMES=${TURNSTILE_HOSTNAMES:-}
+      # Turnstile secret for auth bot protection (optional; unset disables the check)
+      - TURNSTILE_SECRET=${TURNSTILE_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy

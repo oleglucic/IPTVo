@@ -93,7 +93,7 @@ app.get('/api/protected', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({error: 'Unauthorized'});
     const token = authHeader.slice(7);
-    const session = sessions.get(token);
+    const session = await sessionGet(token);   // Redis-backed (any worker validates)
     if (!session || session.expiresAt < Date.now()) return res.status(401).json({error: 'Expired'});
     // Use session.userId, session.config
 });
@@ -135,10 +135,10 @@ npm start
 # Docker
 docker-compose up -d
 
-# Cloudflare Worker
-# Deploy logo-proxy.worker.js via Cloudflare Dashboard or wrangler
-# Set KV namespace binding: LOGO_KV
-# Set env var: LOGO_PROXY_URL=https://your-worker.workers.dev/logo
+# Cloudflare Workers (auto-deployed via Workers Builds from this repo)
+# Workers: iptvo-root (domain anchor), iptvo-fetch (logo fetcher), iptvo-assets (edge cache)
+# Configs: wrangler.toml, wrangler.iptvo-fetch.toml, wrangler.iptvo-assets.toml
+# Set env var: LOGO_PROXY_URL=https://assets.oleglucic.com/iptvo/fetcher/logo
 ```
 
 ## Environment Variables
@@ -148,8 +148,13 @@ docker-compose up -d
 | `ENCRYPTION_KEY` | Yes | 32+ char secret for AES-GCM config encryption |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `REDIS_URL` | Yes | Redis connection string |
-| `LOGO_PROXY_URL` | Yes | Cloudflare Worker /logo endpoint |
+| `LOGO_PROXY_URL` | Yes | Cloudflare logo fetcher URL (e.g. `https://assets.oleglucic.com/iptvo/fetcher/logo`) |
 | `PORT` | No | Server port (default 3000) |
+| `ASSET_BASE_URL` | No | Edge asset base for posters/catalog links (`https://assets.oleglucic.com/iptvo/assets`) |
+| `ADDON_CACHE_URL` | No | Edge-cache purge target (same assets host) |
+| `EDGE_PURGE_SECRET` | No | Guards `POST /api/_edge-purge` |
+| `CLUSTER_WORKERS` | No | `0` single / `auto` half-cores / N |
+| `TURNSTILE_SECRET` / `TURNSTILE_HOSTNAMES` | No | Cloudflare Turnstile bot protection for auth |
 | `OPENROUTER_API_KEY` | No | Deprecated - use per-user config |
 
 ## Testing

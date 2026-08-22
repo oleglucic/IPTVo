@@ -106,6 +106,39 @@ function showAuthTab(tab) {
  * Authenticates the user and initializes the application with the returned account data.
  * @param {SubmitEvent} e - The login form submission event.
  */
+/**
+ * Collects the current Turnstile token for the given action. The widget stores
+ * its response in a hidden input named `cf-turnstile-response` inside its
+ * container; read it from the active form (login or register panel).
+ * Returns '' if the widget isn't present (e.g. local dev without the widget).
+ */
+function getTurnstileToken() {
+    try {
+        const input = document.querySelector('.tab-panel:not([hidden]) .cf-turnstile input[name="cf-turnstile-response"]') ||
+                      document.querySelector('.cf-turnstile input[name="cf-turnstile-response"]');
+        return typeof window.turnstile === 'object' && input ? (input.value || '') : '';
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * Resets the Turnstile widget in a panel so a retry produces a fresh token
+ * (tokens are single-use — after a failed submit the widget must reset).
+ * No-ops when the widget/script isn't present.
+ */
+function resetTurnstile(action) {
+    try {
+        if (typeof window.turnstile !== 'object') return;
+        const container = document.getElementById(`${action}Panel`);
+        (container ? container.querySelectorAll('.cf-turnstile') : []).forEach(el => {
+            window.turnstile.reset(el);
+        });
+    } catch {
+        // best-effort reset — ignore
+    }
+}
+
 async function handleLogin(e) {
     e.preventDefault();
     const formData = new FormData(elements.loginForm);
@@ -116,12 +149,15 @@ async function handleLogin(e) {
     elements.loginError.textContent = '';
 
     try {
-        const { userId, username: userDisplay, token, config } = await api.login(username, password);
+        // Turnstile token (empty on local dev where the secret is unset is fine)
+        const ttToken = getTurnstileToken();
+        const { userId, username: userDisplay, token, config } = await api.login(username, password, ttToken);
         mutations.setAuth({ userId, username: userDisplay, config }, token);
         closeAuthModal();
         await initializeApp();
         toast.success('Welcome back!', `Signed in as ${username}`);
     } catch (error) {
+        resetTurnstile('login');
         elements.loginError.textContent = error.message;
         elements.loginError.hidden = false;
     }
@@ -148,12 +184,14 @@ async function handleRegister(e) {
     }
 
     try {
-        const { userId, username: userDisplay, token } = await api.register(username, password);
+        const ttToken = getTurnstileToken();
+        const { userId, username: userDisplay, token } = await api.register(username, password, {}, ttToken);
         mutations.setAuth({ userId, username: userDisplay, config: {} }, token);
         closeAuthModal();
         await initializeApp();
         toast.success('Account created!', `Welcome, ${username}`);
     } catch (error) {
+        resetTurnstile('register');
         elements.registerError.textContent = error.message;
         elements.registerError.hidden = false;
     }
@@ -291,12 +329,62 @@ function navigateToStep(step) {
     });
 
     // Re-evaluate action buttons so controls reflect the current config
-    // (e.g. "Load Groups" enables once a provider URL is entered).
+    // (e.g. "Refresh" enables once a provider URL is entered).
     updateProviderFields();
+
+    // Groups load themselves when the user reaches the channels step with a
+    // configured provider — no explicit "Load Groups" press required. A manual
+    // "Refresh" button remains for re-fetching.
+    if (step === 2) maybeAutoLoadGroups().catch(() => {});
 }
 
 /**
- * Syncs provider-specific fields and every action button (Load Groups,
+ * Loads the provider's channel groups automatically when appropriate.
+ *
+ * Fires when the user is on the Groups step, has a configured provider, and groups
+ * have not been loaded yet (or were invalidated by a provider change). Safe to call
+ * repeatedly: it no-ops while groups are already loaded or a load is in flight.
+ */
+async function maybeAutoLoadGroups() {
+    if (state.currentStep !== 2) return;
+    if (!getters.isProviderConfigured()) return;
+    if (state.groupsLoaded || state.isLoadingGroups) return;
+    await handleLoadGroups();
+}
+
+/**
+ * The subset of config fields that identify the IPTV provider. Changing any of
+ * them invalidates previously loaded groups, so an in-flight groups response
+ * for an old identity must be discarded rather than applied.
+ * @returns {object} A snapshot of the current provider identity.
+ */
+function currentProviderIdentity() {
+    return {
+        type: state.config.type,
+        m3uUrl: state.config.m3uUrl,
+        xtreamUrl: state.config.xtreamUrl,
+        username: state.config.username,
+        password: state.config.password
+    };
+}
+
+/**
+ * Compares two provider identities after an asynchronous load.
+ * @param {object|null} a - The identity captured when the load started.
+ * @param {object} b - The current identity.
+ * @returns {boolean} True if the provider is unchanged.
+ */
+function sameProviderIdentity(a, b) {
+    if (!a || !b) return false;
+    return a.type === b.type &&
+        a.m3uUrl === b.m3uUrl &&
+        a.xtreamUrl === b.xtreamUrl &&
+        a.username === b.username &&
+        a.password === b.password;
+}
+
+/**
+ * Syncs provider-specific fields and every action button (Refresh,
  * Export, Save, Select/Deselect All) with the current configuration.
  * Called on navigation, form input, and after async operations so the
  * wizard never leaves an actionable control stuck disabled.
@@ -309,13 +397,7 @@ function updateProviderFields() {
 
     // Detect if the provider identity has changed (URL, type, username, or password)
     // and invalidate groups if it has
-    const currentIdentity = {
-        type: state.config.type,
-        m3uUrl: state.config.m3uUrl,
-        xtreamUrl: state.config.xtreamUrl,
-        username: state.config.username,
-        password: state.config.password
-    };
+    const currentIdentity = currentProviderIdentity();
 
     if (!state.lastProviderIdentity) {
         state.lastProviderIdentity = currentIdentity;
@@ -405,6 +487,11 @@ async function handleTestConnection() {
 async function handleLoadGroups() {
     if (!getters.isProviderConfigured() || state.isLoadingGroups) return;
 
+    // Capture the provider before the async load. If it changes while the
+    // request is in flight, updateProviderFields invalidates the groups; the
+    // stale response below must be discarded, not applied under the new provider.
+    const requestedIdentity = currentProviderIdentity();
+
     mutations.setLoadingGroups(true);
     elements.loadGroupsBtn.disabled = true;
     elements.loadGroupsBtn.innerHTML = `<svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"></path></svg> Loading...`;
@@ -412,6 +499,14 @@ async function handleLoadGroups() {
     try {
         const config = getters.getConfigForAPI();
         const { categories } = await api.getGroups(config);
+
+        // Provider changed mid-flight: drop this response. updateProviderFields
+        // already cleared the groups, and the user can navigate back to trigger
+        // a fresh auto-load for the new provider.
+        if (!sameProviderIdentity(requestedIdentity, currentProviderIdentity())) {
+            console.log('[Groups] Discarded stale groups load (provider changed while fetching)');
+            return;
+        }
 
         const groups = categories.map(name => ({ name, count: 0 }));
         mutations.setAvailableGroups(groups);
@@ -444,7 +539,7 @@ async function handleLoadGroups() {
     } finally {
         mutations.setLoadingGroups(false);
         updateProviderFields();
-        elements.loadGroupsBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg><span>Load Groups</span>`;
+        elements.loadGroupsBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg><span>Refresh</span>`;
     }
 }
 
@@ -632,7 +727,11 @@ async function handleSaveConfig() {
     elements.saveStatus.hidden = true;
 
     try {
-        await api.updateConfig(state.config);
+        // Send the canonical field names the backend/parser read (`include`,
+        // `iptvOrg`), not the UI-internal ones (`selectedGroups`,
+        // `iptvOrgEnabled`) — sending the raw state.config silently turned off
+        // group filtering and iptv-org matching.
+        await api.updateConfig(getters.getConfigForAPI());
 
         // Build addon URL
         const protocol = window.location.protocol;

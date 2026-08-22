@@ -57,6 +57,15 @@ export const getters = {
         } else {
             delete cfg.m3uUrl;
         }
+        // The parser filters the selected groups via `include`/`exclude`. The
+        // dashboard tracks the same choice as `selectedGroups` (UI-only name),
+        // so map it to the field the backend actually reads, then drop the alias.
+        cfg.include = (cfg.selectedGroups || []).filter(Boolean);
+        delete cfg.selectedGroups;
+        // The parser gates iptv-org matching on `config.iptvOrg` (legacy key),
+        // but the dashboard exposes it as `iptvOrgEnabled`. Alias before send.
+        cfg.iptvOrg = cfg.iptvOrgEnabled;
+        delete cfg.iptvOrgEnabled;
         return cfg;
     },
 
@@ -98,7 +107,23 @@ export const mutations = {
     },
 
     setConfig(config) {
-        state.config = { ...state.config, ...config };
+        const next = { ...config };
+        // The server persists the group selection under `include` (the field the
+        // parser filters on); the dashboard tracks it as `selectedGroups` (UI-only
+        // name). Coerce on load so the checkboxes reflect what is actually saved,
+        // and a later save does not wipe it with an empty selection.
+        if (Array.isArray(next.include)) {
+            next.selectedGroups = [...next.include];
+            delete next.include;
+        }
+        // The parser exposes the iptv-org toggle as `iptvOrg`; the dashboard
+        // tracks it as `iptvOrgEnabled`. Coerce on load so the checkbox reflects
+        // what is actually saved and a later save does not wipe it.
+        if (typeof next.iptvOrg !== 'undefined') {
+            next.iptvOrgEnabled = next.iptvOrg;
+            delete next.iptvOrg;
+        }
+        state.config = { ...state.config, ...next };
     },
 
     setConfigField(field, value) {
