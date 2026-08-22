@@ -1097,7 +1097,7 @@ function extraValue(extra, key) {
 }
 
 // Catalog handler (tv catalogs)
-builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
+builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
@@ -1183,21 +1183,24 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
 });
 
 // Meta handler
-builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
+builder.defineMetaHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
-    if (!ud || !ud.channelMap?.has(_id)) return { meta: {} };
-    const channel = ud.channelMap.get(_id);
+    if (!ud || !ud.channelMap?.has(id)) {
+        console.error(`[Meta] Missing channel id=${id} configKey=${configKeyFingerprint(configKey)}`);
+        return { meta: {} };
+    }
+    const channel = ud.channelMap.get(id);
 
-    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(_id)}.png?t=${ud.lastUpdated || ''}`;
+    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated || ''}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
-    const centralEpg = await getEffectiveEpg(_id, ud);
-    const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [_id]: centralEpg } : {}) };
-    const epgDescription = getEpgText(_id, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj ? configObj.timezoneOffset : 0);
+    const centralEpg = await getEffectiveEpg(id, ud);
+    const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [id]: centralEpg } : {}) };
+    const epgDescription = getEpgText(id, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj ? configObj.timezoneOffset : 0);
     const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
         ...(s.groupTags ? s.groupTags.split(" • ") : []),
         ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -1221,14 +1224,17 @@ builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
 });
 
 // Stream handler
-builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
+builder.defineStreamHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
-    if (!ud || !ud.channelMap?.has(_id)) return { streams: [] };
-    const channel = ud.channelMap.get(_id);
+    if (!ud || !ud.channelMap?.has(id)) {
+        console.error(`[Stream] Missing channel id=${id} configKey=${configKeyFingerprint(configKey)}`);
+        return { streams: [] };
+    }
+    const channel = ud.channelMap.get(id);
 
     const streamsToReturn = channel.streams
         .sort((a, b) => b.score - a.score)
@@ -1246,7 +1252,7 @@ builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
     let catchupEntries = [];
     if (channel.meta.hasCatchup && channel.streams.length > 0) {
         try {
-            catchupEntries = await getCatchupStreams(_id, channel.streams[0].url, 48);
+            catchupEntries = await getCatchupStreams(id, channel.streams[0].url, 48);
         } catch (e) {
             console.error('[Catchup] Failed to build catchup streams:', sanitizeForLog(e.message));
         }
