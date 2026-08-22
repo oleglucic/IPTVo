@@ -4,6 +4,10 @@
 
 ## 🤝 Contributors
 
+- Oleg Lučić (@183150217+oleglucic)
+
+## 🤝 Contributors
+
 - Oleg lučić (@183150217+oleglucic)
 - Oleg Lučić (@183150217+oleglucic)
 
