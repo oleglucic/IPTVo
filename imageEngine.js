@@ -38,7 +38,14 @@ const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 // back to the server's own cache/direct fetch, so posters still render.
 const WORKER_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
 let workerCooldownUntil = 0;
+/**
+ * Determines whether the proxy worker is currently within its cooldown period.
+ * @return {boolean} `true` if the cooldown period is active, `false` otherwise.
+ */
 function isWorkerInCooldown() { return Date.now() < workerCooldownUntil; }
+/**
+ * Starts the cooldown period for the Worker proxy.
+ */
 function armWorkerCooldown() { workerCooldownUntil = Date.now() + WORKER_COOLDOWN_MS; }
 
 // Cloudflare Worker proxy URL - set via environment variable. Defaults to the
@@ -175,13 +182,13 @@ async function fetchLogoDirect(logoUrl) {
 }
 
 /**
- * Generates a promotional poster using a cached or fetched channel logo, falling back to a generated poster when necessary.
+ * Generates a channel poster from a cached or fetched logo, using a fallback poster when no usable logo is available.
  * @param {string} cId - The channel identifier used for diagnostic logging.
  * @param {string} logoUrl - The primary logo URL.
  * @param {string} fallbackUrl - An optional fallback logo URL.
- * @param {string} fallbackName - The channel name displayed on the fallback poster.
- * @param {string} cachePath - The path where the generated poster is saved.
- * @return {Promise<string>} The path to the generated poster.
+ * @param {string} fallbackName - The channel name displayed on a generated fallback poster.
+ * @param {string} cachePath - The path where the poster is stored.
+ * @return {Promise<string>} The path to the available or generated poster.
  */
 async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) {
     const sourceLog = [];
@@ -420,6 +427,17 @@ function posterPath(cId, primaryUrl) {
     return path.join(cacheDir, `${cId}_${urlHash}_${sizeTag}.png`);
 }
 
+/**
+ * Retrieves or generates a cached poster for a channel.
+ *
+ * Supports an extended call with a fallback logo URL and channel name as additional arguments.
+ *
+ * @param {string} cId - The channel identifier.
+ * @param {string} logoUrl - The primary logo URL.
+ * @param {string} fallbackName - The channel name used for fallback poster generation.
+ * @returns {string} The path to the cached poster.
+ * @throws {Error} If the channel identifier is invalid or the cache path is unsafe.
+ */
 async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // Support fallback URL as optional 4th parameter (for parser to pass playlist logo)
     // For backward compatibility with server.js call, we check if logoUrl is an object
