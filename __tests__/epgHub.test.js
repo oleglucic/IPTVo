@@ -18,7 +18,8 @@ jest.mock('../redisCache', () => ({
 jest.mock('../iptvOrgRef', () => ({
   lookupChannelSmart: jest.fn(() => null),
   lookupChannel: jest.fn(() => null),
-  isValidCountryCode: jest.fn((cc) => /^[a-z]{2}$/.test(cc))
+  isValidCountryCode: jest.fn((cc) => /^[a-z]{2}$/.test(cc)),
+  get lastRefreshed() { return 1; } // reference "ready" for canonical matching
 }));
 
 const { normalizeSourceId, mergeForChannel, resolveCanonicalSourceId } = require('../epgHub');
@@ -91,22 +92,27 @@ describe('epgHub resolveCanonicalSourceId', () => {
     expect(result).toBeNull();
   });
 
-  test('returns official + cc-stripped base for a match', async () => {
+  test('passes the normalized name + country scope to the matcher', async () => {
     ref.lookupChannelSmart.mockReturnValue({ officialId: 'SkySportsNews.uk', countryScopeKey: 'gb' });
     const result = await resolveCanonicalSourceId('sky.sports.news.hd.uk');
-    expect(result).toEqual({
-      official: 'skysportsnews.uk',
-      base: 'skysportsnews'
-    });
+    expect(ref.lookupChannelSmart).toHaveBeenCalledWith('sky sports news', 'uk');
+    expect(result).toEqual({ official: 'skysportsnews.uk', base: 'skysportsnews' });
+  });
+
+  test('handles a supported non-UK country suffix', async () => {
+    ref.lookupChannelSmart.mockReturnValue({ officialId: 'Eurosport1.de', countryScopeKey: 'de' });
+    const result = await resolveCanonicalSourceId('eurosport.1.hd.de');
+    expect(ref.lookupChannelSmart).toHaveBeenCalledWith('eurosport 1', 'de');
+    expect(result).toEqual({ official: 'eurosport1.de', base: 'eurosport1' });
   });
 
   test('caches results so repeated calls do not re-match', async () => {
     ref.lookupChannelSmart.mockReturnValue({ officialId: 'CNN.us' });
     ref.lookupChannel.mockReturnValue(null);
-    const first = await resolveCanonicalSourceId('cnn.usa');
     const before = ref.lookupChannelSmart.mock.calls.length;
+    const first = await resolveCanonicalSourceId('cnn.usa');
     const second = await resolveCanonicalSourceId('cnn.usa');
     expect(second).toEqual(first);
-    expect(ref.lookupChannelSmart.mock.calls.length).toBe(before);
+    expect(ref.lookupChannelSmart.mock.calls.length).toBe(before + 1);
   });
 });

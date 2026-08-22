@@ -236,18 +236,21 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
             sourceLog.push(`worker:${source}`);
 
             if (source === 'placeholder') {
-                // Worker returned placeholder - generate locally for consistency
-                return await generateFallback(cachePath, fallbackName, sourceLog);
-            }
+                // Worker had no real image (dead URL / exhausted fallbacks). Keep
+                // the server's existing poster if one exists; only fall through to
+                // a direct fetch when we have nothing cached yet.
+                sourceLog.push('worker:placeholder');
+                if (fs.existsSync(cachePath)) return cachePath;
+            } else {
+                // Valid image - cache it
+                setLogoCache(logoUrl, buffer);
+                if (hasRedis) {
+                    await saveLogoBuffer(logoUrl, buffer);
+                }
+                markDeadUrl(logoUrl, true); // success
 
-            // Valid image - cache it
-            setLogoCache(logoUrl, buffer);
-            if (hasRedis) {
-                await saveLogoBuffer(logoUrl, buffer);
+                return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
             }
-            markDeadUrl(logoUrl, true); // success
-
-            return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
 
         } catch (err) {
             console.error(`[imageEngine] Worker proxy fetch failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
@@ -284,6 +287,10 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
     //    poster for this channel yet — never overwrite an existing server-side
     //    poster (a real render from before the outage) with a placeholder.
     if (fs.existsSync(cachePath)) {
+        // Direct fetch also failed; mark the URL dead so the next request
+        // short-circuits into the dead-URL retry window instead of re-waiting
+        // the full FETCH_TIMEOUT for a URL that just failed.
+        markDeadUrl(logoUrl, false);
         sourceLog.push('server-cached');
         return cachePath;
     }
