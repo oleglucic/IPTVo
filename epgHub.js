@@ -36,6 +36,12 @@ function getCanonicalCache() {
     if (!canonicalIdCache) canonicalIdCache = new Map();
     return canonicalIdCache;
 }
+// iptvOrgRef.lastRefreshed is a live getter; read it on each use so a snapshot
+// taken while the indexes were still loading can't pin the retry loops.
+const iptvOrgRef = require('./iptvOrgRef');
+function getIptvOrgReady() {
+    return iptvOrgRef.lastRefreshed > 0;
+}
 
 /**
  * Resolves a normalized source channel id to its iptv-org official id (lower)
@@ -75,7 +81,11 @@ async function resolveCanonicalSourceId(sourceId) {
         }
     } catch (_) { /* no match -> null */ }
     const result = official ? { official, base } : null;
-    cache.set(key, result);
+    // Never pin a negative result while the iptv-org reference indexes are still
+    // loading — a cold matcher maps everything to null, and caching that would
+    // permanently block this source id from ever gaining a canonical alias. Only
+    // cache once the reference is confirmed ready (or for real positive matches).
+    if (result || getIptvOrgReady()) cache.set(key, result);
     return result;
 }
 
@@ -326,25 +336,29 @@ async function run() {
 async function backfillCanonicalAliases() {
     const { pool } = require('./db');
     if (!pool) return { status: 'no-pool' };
-    // Wait for the iptv-org reference timestamps to be populated before matching
-    // (retry until lastRefreshed > 0, ~15s apart, up to ~5 min).
-    const { lastRefreshed } = require('./iptvOrgRef');
-    for (let attempt = 0; attempt < 20 && !lastRefreshed; attempt++) {
+    // Wait for the iptv-org reference timestamps to be ready before matching
+    // (retry until lastRefreshed > 0, ~15s apart, up to ~5 min). Read the live
+    // getter each attempt — a snapshot taken while it was 0 would never update.
+    for (let attempt = 0; attempt < 20 && !getIptvOrgReady(); attempt++) {
         await new Promise(r => setTimeout(r, 15000));
     }
     let changed = 0;
-    let offset = 0;
+    let cursor = '';
     const pageSize = 500;
     try {
+        // Keyset pagination, not OFFSET: this loop inserts canonical keys into
+        // the same global_% set it pages, and a new key sorting before the next
+        // offset would otherwise be skipped by subsequent pages.
         while (true) {
             const { rows } = await pool.query(
                 `SELECT DISTINCT channel_key FROM epg_programs
                  WHERE channel_key LIKE 'global\_%' ESCAPE '\'
-                 ORDER BY channel_key LIMIT $1 OFFSET $2`,
-                [pageSize, offset]
+                   AND channel_key > $1
+                 ORDER BY channel_key LIMIT $2`,
+                [cursor, pageSize]
             );
             if (!rows || rows.length === 0) break;
-            offset += rows.length;
+            cursor = rows[rows.length - 1].channel_key;
             for (const r of rows) {
                 const rawKey = r.channel_key;
                 const sourceId = rawKey.replace(/^global_/, '');
@@ -364,9 +378,7 @@ async function backfillCanonicalAliases() {
                     changed++;
                 }
             }
-            if (offset % 2000 < pageSize) {
-                console.log(`[epgHub] backfill aliases scanned=${offset} written=${changed}...`);
-            }
+            console.log(`[epgHub] backfill aliases cursor=${cursor} written=${changed}...`);
         }
     } catch (e) {
         console.error(`[epgHub] backfill failed: ${e.message}`);

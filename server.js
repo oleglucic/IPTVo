@@ -422,11 +422,14 @@ async function getEffectiveEpgMany(chKeys, entry) {
     if (!chKeys.length) return out;
     const gen = hasRedis ? await getHubGeneration() : 0;
     // Each channel may be stored under its own id or its canonical global form;
-    // build every candidate lookup key and remember which channel each maps back to.
-    const lookupToCh = new Map(); // lookupKey -> chKey
+    // multiple channels can share an alias (e.g. uk_Foo.uk and ie_Foo.ie both
+    // map the global_foo bridge key), so each lookup key maps to a Set of the
+    // requesting channels that must receive any programmes found for it.
+    const lookupToCh = new Map(); // lookupKey -> Set<chKey>
     for (const k of chKeys) {
         for (const lk of epgLookupKeys(k)) {
-            if (!lookupToCh.has(lk)) lookupToCh.set(lk, k);
+            if (!lookupToCh.has(lk)) lookupToCh.set(lk, new Set());
+            lookupToCh.get(lk).add(k);
         }
     }
     const allLookups = [...lookupToCh.keys()];
@@ -435,13 +438,15 @@ async function getEffectiveEpgMany(chKeys, entry) {
     for (const lk of allLookups) {
         const c = cached.get(lk);
         if (c && c.generation === gen && c.programs.length) {
-            if (!out.has(lookupToCh.get(lk))) out.set(lookupToCh.get(lk), c.programs);
+            for (const orig of lookupToCh.get(lk)) {
+                if (!out.has(orig)) out.set(orig, c.programs);
+            }
             continue;
         }
         needDb.push(lk);
         // Fall back to per-entry EPG (user-provided feed) — cheap, no store.
-        // Only the primary key (not the canonical alias) carries user feed data.
-        if (lk === lookupToCh.get(lk)) {
+        // Only a channel's own key carries its user feed data, not an alias.
+        if (lookupToCh.get(lk).size === 1 && lookupToCh.get(lk).has(lk)) {
             const sched = entry.epgData && entry.epgData[lk];
             if (sched && sched.length && !out.has(lk)) out.set(lk, sched);
         }
@@ -453,9 +458,10 @@ async function getEffectiveEpgMany(chKeys, entry) {
             // on a page). Warm each result into the Redis cache.
             const byKey = await require('./db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
             for (const [lk, progs] of byKey) {
-                const orig = lookupToCh.get(lk);
                 if (hasRedis) await saveEpgCache(lk, progs, gen);
-                if (orig && !out.has(orig)) out.set(orig, progs);
+                for (const orig of lookupToCh.get(lk) || []) {
+                    if (!out.has(orig)) out.set(orig, progs);
+                }
             }
         } catch (e) {
             console.error('[EPG][Central] batched resolution failed:', sanitizeForLog(e.message));
