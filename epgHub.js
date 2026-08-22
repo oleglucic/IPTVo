@@ -17,12 +17,67 @@ const zlib = require('zlib');
 const sax = require('sax');
 const { Readable } = require('stream');
 const { isSafeUrl, revalidateResponseUrl } = require('./iptvParser');
+const { lookupChannelSmart, lookupChannel, isValidCountryCode } = require('./iptvOrgRef');
 const {
     saveEpgPrograms, listEpgSources, setEpgSourceStatus, upsertEpgSource, pruneEpgPrograms
 } = require('./db');
 const {
     saveEpgCache, getHubGeneration, bumpGeneration, setHubState
 } = require('./redisCache');
+
+// The XMLTV sources key programmes by their own channel ids (e.g.
+// "sky.sports.news.uk"), but users look up programmes by their provider
+// channel's canonical iptv-org id (e.g. "uk_SkySportsNews.uk"). On the write
+// side we therefore canonicalize each source id to its iptv-org official id
+// and store the same programmes under BOTH keys: the raw `global_<sourceId>`
+// and the canonical `global_<officialId>`, so scoped user lookups find them.
+let canonicalIdCache = null; // Map<sourceIdLower, {official, base}|null>
+function getCanonicalCache() {
+    if (!canonicalIdCache) canonicalIdCache = new Map();
+    return canonicalIdCache;
+}
+
+/**
+ * Resolves a normalized source channel id to its iptv-org official id (lower)
+ * via the same fuzzy matcher used for provider channels, or null when no
+ * confident match exists. Results are cached per source id across cycles.
+ * Also returns the country-suffix-stripped name so cross-country variants of
+ * the same brand (e.g. SkySportsNews.ie vs .uk) share one bridge key.
+ * @param {string} sourceId - Normalized dotted source id (e.g. "sky.sports.news.uk").
+ * @return {Promise<{official: string, base: string|null}|null>} The official id
+ *   (lowercase) plus its cc-stripped base, or null.
+ */
+async function resolveCanonicalSourceId(sourceId) {
+    const key = String(sourceId).toLowerCase().trim();
+    if (!key) return null;
+    const cache = getCanonicalCache();
+    if (cache.has(key)) return cache.get(key);
+    let official = null;
+    let base = null;
+    try {
+        // dotted id: human name, match against iptv-org reference
+        const clean = key
+            .replace(/\.(us|uk|gb|de|fr|it|ca|au|mx|br|tr|in|gr|pt|nl|be|se|no|dk|fi|pl|cz|ro|bg|rs|hr|si|il|za|jp|kr|net)$/i, '')
+            .replace(/\b(hd|fhd|uhd|4k|sd|hdr|plus|dummy|emu)\b/gi, '')
+            .replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
+        const scope = key.split('.').pop();
+        if (clean) {
+            // lookups don't throw before the reference indexes finish loading
+            const bySmart = lookupChannelSmart(clean, scope);
+            const m = (bySmart && bySmart.officialId) ? bySmart : lookupChannel(clean, scope);
+            if (m && m.officialId) official = String(m.officialId).toLowerCase();
+        }
+        if (official) {
+            const cc = /\.([a-z]{2})$/i.exec(official);
+            if (cc && isValidCountryCode(cc[1].toLowerCase())) {
+                base = official.slice(0, -cc[0].length);
+            }
+        }
+    } catch (_) { /* no match -> null */ }
+    const result = official ? { official, base } : null;
+    cache.set(key, result);
+    return result;
+}
 
 const CONCURRENCY = Math.min(Math.max(parseInt(process.env.EPG_HUB_CONCURRENCY || '3', 10) || 3, 1), 16);
 
@@ -226,14 +281,29 @@ async function run() {
         for (const [officialId, candidates] of channelBuckets) {
             const merged = mergeForChannel(candidates);
             if (!merged.length) continue;
+            // Raw source-id key (e.g. global_sky.sports.news.uk) always written;
+            // when the source id resolves to an iptv-org official id also write
+            // the canonical global_<official> key so scoped user lookups (e.g.
+            // uk_SkySportsNews.uk -> global_skysportsnews.uk) can find the data.
             const channelKey = `global_${officialId}`;
+            const canonical = await resolveCanonicalSourceId(officialId);
             // Attribute to the source contributing the most programmes (more
             // stable than candidates[0], whose order reflects insertion, not fit).
             const dominant = candidates.reduce((best, c) => (c.programs && c.programs.length > (best.programs ? best.programs.length : 0)) ? c : best, candidates[0]);
-            await saveEpgPrograms(channelKey, dominant.source, merged);
+            // Store under the raw source-id key, the matched official key, and
+            // the cc-stripped base key (so a .uk user channel finds .ie data for
+            // the same brand). Dedupe keys whose forms coincide.
+            const storeKeys = new Set([channelKey]);
+            if (canonical) {
+                storeKeys.add(`global_${canonical.official}`);
+                if (canonical.base) storeKeys.add(`global_${canonical.base}`);
+            }
+            for (const storeKey of storeKeys) {
+                await saveEpgPrograms(storeKey, dominant.source, merged);
+                await saveEpgCache(storeKey, merged, generation);
+            }
             mergedChannels++;
             mergedPrograms += merged.length;
-            await saveEpgCache(channelKey, merged, generation);
         }
         setHubState(mergedPrograms).catch(() => {}); // publish final coverage (no re-advance)
         await pruneEpgPrograms();
@@ -244,4 +314,66 @@ async function run() {
     }
 }
 
-module.exports = { run, seedSources, fetchSourceRaw, normalizeSourceId, mergeForChannel };
+/**
+ * One-time backfill: copy existing rows that are keyed by a raw source id
+ * (global_<sourceId>) into their canonical iptv-org key (global_<officialId>)
+ * so user lookups find them immediately, without waiting for the next fetch
+ * cycle. Idempotent (ON CONFLICT DO NOTHING); safe to run repeatedly.
+ * Waits up to ~5 minutes for the iptv-org reference indexes to load, since a
+ * cold matcher maps everything to null and the backfill would silently no-op.
+ * @return {Promise<{status: string, changed?: number}>}
+ */
+async function backfillCanonicalAliases() {
+    const { pool } = require('./db');
+    if (!pool) return { status: 'no-pool' };
+    // Wait for the iptv-org reference timestamps to be populated before matching
+    // (retry until lastRefreshed > 0, ~15s apart, up to ~5 min).
+    const { lastRefreshed } = require('./iptvOrgRef');
+    for (let attempt = 0; attempt < 20 && !lastRefreshed; attempt++) {
+        await new Promise(r => setTimeout(r, 15000));
+    }
+    let changed = 0;
+    let offset = 0;
+    const pageSize = 500;
+    try {
+        while (true) {
+            const { rows } = await pool.query(
+                `SELECT DISTINCT channel_key FROM epg_programs
+                 WHERE channel_key LIKE 'global\_%' ESCAPE '\'
+                 ORDER BY channel_key LIMIT $1 OFFSET $2`,
+                [pageSize, offset]
+            );
+            if (!rows || rows.length === 0) break;
+            offset += rows.length;
+            for (const r of rows) {
+                const rawKey = r.channel_key;
+                const sourceId = rawKey.replace(/^global_/, '');
+                const canonical = await resolveCanonicalSourceId(sourceId);
+                if (!canonical) continue;
+                const targetKeys = new Set([`global_${canonical.official}`]);
+                if (canonical.base) targetKeys.add(`global_${canonical.base}`);
+                for (const targetKey of targetKeys) {
+                    if (targetKey === rawKey) continue;
+                    await pool.query(
+                        `INSERT INTO epg_programs (channel_key, source, title, description, start_time, stop_time)
+                         SELECT $1, source, title, description, start_time, stop_time
+                         FROM epg_programs WHERE channel_key = $2
+                         ON CONFLICT (channel_key, source, start_time) DO NOTHING`,
+                        [targetKey, rawKey]
+                    );
+                    changed++;
+                }
+            }
+            if (offset % 2000 < pageSize) {
+                console.log(`[epgHub] backfill aliases scanned=${offset} written=${changed}...`);
+            }
+        }
+    } catch (e) {
+        console.error(`[epgHub] backfill failed: ${e.message}`);
+        return { status: 'error', error: e.message };
+    }
+    console.log(`[epgHub] backfill complete: canonical aliases written=${changed}`);
+    return { status: 'done', changed };
+}
+
+module.exports = { run, seedSources, fetchSourceRaw, normalizeSourceId, mergeForChannel, resolveCanonicalSourceId, backfillCanonicalAliases };
