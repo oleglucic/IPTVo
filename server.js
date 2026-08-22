@@ -1097,7 +1097,7 @@ function extraValue(extra, key) {
 }
 
 // Catalog handler (tv catalogs)
-builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
+builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
@@ -1183,7 +1183,7 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
 });
 
 // Meta handler
-builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
+builder.defineMetaHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
@@ -1221,7 +1221,7 @@ builder.defineMetaHandler(async ({ _type, _id, _extra, config }) => {
 });
 
 // Stream handler
-builder.defineStreamHandler(async ({ _type, _id, _extra, config }) => {
+builder.defineStreamHandler(async ({ type, id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
 
