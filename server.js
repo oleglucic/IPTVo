@@ -388,9 +388,9 @@ function extractConfig(req) {
 // official id under a country scope (e.g. uk_SkySportsNews.uk), so a lookup
 // must also try the scoped-stripped canonical global key.
 /**
- * Expands a channel key into the candidate keys to query the central EPG store.
- * @param {string} chKey - The channel key (e.g. "uk_SkySportsNews.uk").
- * @return {string[]} The channel key itself plus its canonical global form.
+ * Generates candidate central EPG lookup keys for a channel.
+ * @param {string} chKey - The channel identifier, which may include a country prefix or suffix.
+ * @return {string[]} The original key, canonical global key, and applicable country-suffix-stripped global key.
  */
 function epgLookupKeys(chKey) {
     const s = String(chKey || '');
@@ -406,15 +406,21 @@ function epgLookupKeys(chKey) {
     return [...keys];
 }
 
+/**
+ * Resolves EPG data for a channel.
+ * @param {string} chKey - The channel lookup key.
+ * @param {Object} [entry] - Optional cache entry containing fallback EPG data.
+ * @return {Array|null} The channel's EPG data, or `null` when unavailable.
+ */
 async function getEffectiveEpg(chKey, entry) {
     const resolved = await getEffectiveEpgMany([chKey], entry);
     return resolved.get(chKey) || (entry && entry.epgData && entry.epgData[chKey] && entry.epgData[chKey].length ? entry.epgData[chKey] : null);
 }
 
 /**
- * Resolve EPG programmes for multiple channels using shared cache and database fallbacks.
+ * Resolves programme schedules for multiple channels using shared cache, provider data, and database fallbacks.
  * @param {string[]} chKeys - Channel keys to resolve.
- * @param {Object} entry - Provider entry containing optional per-channel EPG data.
+ * @param {Object} entry - Provider entry containing optional per-channel programme data.
  * @returns {Map<string, Array<Object>>} A map of channel keys to resolved programme arrays.
  */
 async function getEffectiveEpgMany(chKeys, entry) {
@@ -1288,13 +1294,9 @@ const addonInterface = builder.getInterface();
 
 // Manifest is a shared static object; logo/background are absolute URLs keyed
 /**
- * Resolves the distinct channel groups for a request's configured provider,
- * used to populate the catalog genre dropdown (Nuvio/Stremio read the genre
- * extra's `options` from the manifest). Reads the already-parsed cache — in
- * memory or the Redis snapshot — and never triggers a parse:
- * a cold config's manifest simply carries no options until its first load.
+ * Gets the available channel groups for the configured provider.
  * @param {import('express').Request} req - The incoming request.
- * @return {Promise<string[]>} Sorted group names, or an empty array when the provider cache has not been parsed yet.
+ * @return {Promise<string[]>} Sorted channel group names, or an empty array when no parsed cache is available.
  */
 async function genreOptionsFor(req) {
     const userId = req.params.userId;
