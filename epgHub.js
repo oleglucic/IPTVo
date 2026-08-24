@@ -52,9 +52,9 @@ function getIptvOrgReady() {
 }
 
 /**
- * Resolves a source channel ID to its canonical iptv-org ID and country-independent base ID.
- * @param {string} sourceId - Normalized dotted source ID, such as "sky.sports.news.uk".
- * @return {Promise<{official: string, base: string|null}|null>} The canonical lowercase ID and its country-suffix-stripped base ID, or `null` when no match is found.
+ * Maps a source channel identifier to its canonical iptv-org identifiers.
+ * @param {string} sourceId - The source channel identifier to resolve.
+ * @return {{official: string, base: string|null}|null} The canonical lowercase ID and its country-independent base ID, or `null` when no match is found.
  */
 async function resolveCanonicalSourceId(sourceId) {
     const key = String(sourceId).toLowerCase().trim();
@@ -339,9 +339,9 @@ async function run() {
 }
 
 /**
- * Backfills canonical channel aliases for existing EPG programme records.
+ * Populates canonical and base channel aliases for existing EPG programme records.
  *
- * @return {Promise<{status: string, changed?: number, error?: string}>} The backfill status, the number of alias writes when completed, and an error message when the operation fails.
+ * @return {Promise<{status: string, changed?: number, error?: string, reason?: string}>} The backfill result, including the number of records written when completed or failure details when it cannot proceed.
  */
 async function backfillCanonicalAliases() {
     const { pool } = require('./db');

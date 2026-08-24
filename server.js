@@ -421,10 +421,10 @@ async function getEffectiveEpg(chKey, entry) {
 }
 
 /**
- * Resolves programme schedules for multiple channels using shared cache, provider data, and database fallbacks.
- * @param {string[]} chKeys - Channel keys to resolve.
+ * Resolves programme schedules for multiple channels.
+ * @param {string[]} chKeys - Channel keys whose schedules should be resolved.
  * @param {Object} entry - Provider entry containing optional per-channel programme data.
- * @returns {Map<string, Array<Object>>} A map of channel keys to resolved programme arrays.
+ * @returns {Map<string, Array<Object>>} A map of channel keys to resolved programme schedules.
  */
 async function getEffectiveEpgMany(chKeys, entry) {
     const out = new Map();

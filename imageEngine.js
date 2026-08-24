@@ -182,13 +182,13 @@ async function fetchLogoDirect(logoUrl) {
 }
 
 /**
- * Generates a channel poster from a cached or fetched logo, using a fallback poster when no usable logo is available.
+ * Generates a channel poster from a cached or fetched logo, preserving an existing poster when logo retrieval fails.
  * @param {string} cId - The channel identifier used for diagnostic logging.
  * @param {string} logoUrl - The primary logo URL.
  * @param {string} fallbackUrl - An optional fallback logo URL.
  * @param {string} fallbackName - The channel name displayed on a generated fallback poster.
  * @param {string} cachePath - The path where the poster is stored.
- * @return {Promise<string>} The path to the available or generated poster.
+ * @returns {Promise<string>} The path to the available or generated poster.
  */
 async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) {
     const sourceLog = [];
