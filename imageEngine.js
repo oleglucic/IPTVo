@@ -241,6 +241,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
                 // a direct fetch when we have nothing cached yet.
                 sourceLog.push('worker:placeholder');
                 if (fs.existsSync(cachePath)) return cachePath;
+                // Fall through to direct fetch when no cached poster exists
             } else {
                 // Valid image - cache it
                 setLogoCache(logoUrl, buffer);
