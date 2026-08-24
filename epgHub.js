@@ -31,7 +31,8 @@ const {
 // side we therefore canonicalize each source id to its iptv-org official id
 // and store the same programmes under BOTH keys: the raw `global_<sourceId>`
 // and the canonical `global_<officialId>`, so scoped user lookups find them.
-let canonicalIdCache = null; /**
+let canonicalIdCache = null; // Map<sourceIdLower, {official, base}|null>
+/**
  * Provides the cached canonical channel ID mappings.
  * @returns {Map<string, {official: string, base: string}|null>} The canonical ID cache.
  */
@@ -51,9 +52,9 @@ function getIptvOrgReady() {
 }
 
 /**
- * Resolves a source channel ID to its canonical iptv-org ID and country-independent base ID.
- * @param {string} sourceId - Normalized dotted source ID, such as "sky.sports.news.uk".
- * @return {Promise<{official: string, base: string|null}|null>} The canonical lowercase ID and its country-suffix-stripped base ID, or `null` when no match is found.
+ * Maps a source channel identifier to its canonical iptv-org identifiers.
+ * @param {string} sourceId - The source channel identifier to resolve.
+ * @return {{official: string, base: string|null}|null} The canonical lowercase ID and its country-independent base ID, or `null` when no match is found.
  */
 async function resolveCanonicalSourceId(sourceId) {
     const key = String(sourceId).toLowerCase().trim();
@@ -64,8 +65,10 @@ async function resolveCanonicalSourceId(sourceId) {
     let base = null;
     try {
         // dotted id: human name, match against iptv-org reference
+        // Shared suffix list: matches normalizeSourceId accepted suffixes plus extras
+        const suffixes = 'us|uk|gb|de|fr|it|ca|au|nz|net|ae|ru|br|ar|mx|tr|in|gr|pt|nl|be|se|no|dk|fi|pl|cz|ro|bg|rs|hr|si|il|za|jp|kr|es|tw|th|ph|id|my|sg|hk|cn';
         const clean = key
-            .replace(/\.(us|uk|gb|de|fr|it|ca|au|mx|br|tr|in|gr|pt|nl|be|se|no|dk|fi|pl|cz|ro|bg|rs|hr|si|il|za|jp|kr|net)$/i, '')
+            .replace(new RegExp(`\\.(${suffixes})$`, 'i'), '')
             .replace(/\b(hd|fhd|uhd|4k|sd|hdr|plus|dummy|emu)\b/gi, '')
             .replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
         const scope = key.split('.').pop();
@@ -290,6 +293,8 @@ async function run() {
         // publish entries under a stale or guessed generation.
         let mergedChannels = 0, mergedPrograms = 0;
         const generation = await bumpGeneration(0); // advance + reserve the stamp value
+        // Track base keys already written to prevent overwriting with later variants
+        const baseKeysWritten = new Set();
         for (const [officialId, candidates] of channelBuckets) {
             const merged = mergeForChannel(candidates);
             if (!merged.length) continue;
@@ -308,7 +313,14 @@ async function run() {
             const storeKeys = new Set([channelKey]);
             if (canonical) {
                 storeKeys.add(`global_${canonical.official}`);
-                if (canonical.base) storeKeys.add(`global_${canonical.base}`);
+                if (canonical.base) {
+                    const baseKey = `global_${canonical.base}`;
+                    // Only write base key once (first variant wins)
+                    if (!baseKeysWritten.has(baseKey)) {
+                        storeKeys.add(baseKey);
+                        baseKeysWritten.add(baseKey);
+                    }
+                }
             }
             for (const storeKey of storeKeys) {
                 await saveEpgPrograms(storeKey, dominant.source, merged);
@@ -327,9 +339,9 @@ async function run() {
 }
 
 /**
- * Backfills canonical channel aliases for existing EPG programme records.
+ * Populates canonical and base channel aliases for existing EPG programme records.
  *
- * @return {Promise<{status: string, changed?: number, error?: string}>} The backfill status, the number of alias writes when completed, and an error message when the operation fails.
+ * @return {Promise<{status: string, changed?: number, error?: string, reason?: string}>} The backfill result, including the number of records written when completed or failure details when it cannot proceed.
  */
 async function backfillCanonicalAliases() {
     const { pool } = require('./db');
@@ -339,6 +351,11 @@ async function backfillCanonicalAliases() {
     // getter each attempt — a snapshot taken while it was 0 would never update.
     for (let attempt = 0; attempt < 20 && !getIptvOrgReady(); attempt++) {
         await new Promise(r => setTimeout(r, 15000));
+    }
+    // If reference still not ready after all attempts, return retryable status
+    if (!getIptvOrgReady()) {
+        console.warn('[epgHub] backfill aborted: reference not ready after 20 attempts');
+        return { status: 'retry', reason: 'reference-not-ready' };
     }
     let changed = 0;
     let cursor = '';
@@ -350,7 +367,7 @@ async function backfillCanonicalAliases() {
         while (true) {
             const { rows } = await pool.query(
                 `SELECT DISTINCT channel_key FROM epg_programs
-                 WHERE channel_key LIKE 'global\_%' ESCAPE '\'
+                 WHERE channel_key LIKE 'global\\_%' ESCAPE '\\'
                    AND channel_key > $1
                  ORDER BY channel_key LIMIT $2`,
                 [cursor, pageSize]
@@ -366,14 +383,14 @@ async function backfillCanonicalAliases() {
                 if (canonical.base) targetKeys.add(`global_${canonical.base}`);
                 for (const targetKey of targetKeys) {
                     if (targetKey === rawKey) continue;
-                    await pool.query(
+                    const result = await pool.query(
                         `INSERT INTO epg_programs (channel_key, source, title, description, start_time, stop_time)
                          SELECT $1, source, title, description, start_time, stop_time
                          FROM epg_programs WHERE channel_key = $2
                          ON CONFLICT (channel_key, source, start_time) DO NOTHING`,
                         [targetKey, rawKey]
                     );
-                    changed++;
+                    changed += result.rowCount || 0;
                 }
             }
             console.log(`[epgHub] backfill aliases cursor=${cursor} written=${changed}...`);

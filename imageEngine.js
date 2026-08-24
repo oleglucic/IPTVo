@@ -182,13 +182,13 @@ async function fetchLogoDirect(logoUrl) {
 }
 
 /**
- * Generates a channel poster from a cached or fetched logo, using a fallback poster when no usable logo is available.
+ * Generates a channel poster from a cached or fetched logo, preserving an existing poster when logo retrieval fails.
  * @param {string} cId - The channel identifier used for diagnostic logging.
  * @param {string} logoUrl - The primary logo URL.
  * @param {string} fallbackUrl - An optional fallback logo URL.
  * @param {string} fallbackName - The channel name displayed on a generated fallback poster.
  * @param {string} cachePath - The path where the poster is stored.
- * @return {Promise<string>} The path to the available or generated poster.
+ * @returns {Promise<string>} The path to the available or generated poster.
  */
 async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) {
     const sourceLog = [];
@@ -247,7 +247,11 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
                 // the server's existing poster if one exists; only fall through to
                 // a direct fetch when we have nothing cached yet.
                 sourceLog.push('worker:placeholder');
-                if (fs.existsSync(cachePath)) return cachePath;
+                if (fs.existsSync(cachePath)) {
+                    markDeadUrl(logoUrl, false);
+                    return cachePath;
+                }
+                // Fall through to direct fetch when no cached poster exists
             } else {
                 // Valid image - cache it
                 setLogoCache(logoUrl, buffer);
@@ -286,8 +290,25 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         markDeadUrl(logoUrl, true);
         return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
     } catch (directErr) {
-        console.warn(`[imageEngine] Direct fetch also failed for ${logoUrl}: ${directErr.message}`);
+        console.warn(`[imageEngine] Direct fetch failed for ${logoUrl}: ${directErr.message}`);
         sourceLog.push('direct:error');
+
+        // Try fallback URL before marking dead
+        if (fallbackUrl && fallbackUrl !== logoUrl && fallbackUrl.startsWith('http')) {
+            try {
+                const { buffer, contentType } = await fetchLogoDirect(fallbackUrl);
+                sourceLog.push('fallback-direct');
+                setLogoCache(logoUrl, buffer);
+                if (hasRedis) {
+                    await saveLogoBuffer(logoUrl, buffer);
+                }
+                markDeadUrl(logoUrl, true);
+                return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
+            } catch (fallbackErr) {
+                console.warn(`[imageEngine] Fallback direct fetch also failed for ${fallbackUrl}: ${fallbackErr.message}`);
+                sourceLog.push('fallback-direct:error');
+            }
+        }
     }
 
     // 6. Ultimate fallback: generated SVG. Only when the server has no cached
