@@ -15,12 +15,16 @@ jest.mock('../redisCache', () => ({
   setHubState: jest.fn(async () => 1),
   hasRedis: false
 }));
-jest.mock('../iptvOrgRef', () => ({
-  lookupChannelSmart: jest.fn(() => null),
-  lookupChannel: jest.fn(() => null),
-  isValidCountryCode: jest.fn((cc) => /^[a-z]{2}$/.test(cc)),
-  get lastRefreshed() { return 1; } // reference "ready" for canonical matching
-}));
+jest.mock('../iptvOrgRef', () => {
+  let _lastRefreshed = 1; // reference "ready" for canonical matching
+  return {
+    lookupChannelSmart: jest.fn(() => null),
+    lookupChannel: jest.fn(() => null),
+    isValidCountryCode: jest.fn((cc) => /^[a-z]{2}$/.test(cc)),
+    get lastRefreshed() { return _lastRefreshed; },
+    set lastRefreshed(value) { _lastRefreshed = value; }
+  };
+});
 
 const { normalizeSourceId, mergeForChannel, resolveCanonicalSourceId } = require('../epgHub');
 
@@ -99,11 +103,7 @@ describe('epgHub resolveCanonicalSourceId', () => {
 
   test('does not cache miss while reference is unready, retries when ready', async () => {
     // Simulate unready state (lastRefreshed = 0)
-    let refReady = false;
-    Object.defineProperty(ref, 'lastRefreshed', {
-      get: () => refReady ? 1 : 0,
-      configurable: true
-    });
+    ref.lastRefreshed = 0;
     ref.lookupChannelSmart.mockReturnValue(null);
     ref.lookupChannel.mockReturnValue(null);
 
@@ -113,7 +113,7 @@ describe('epgHub resolveCanonicalSourceId', () => {
     expect(ref.lookupChannelSmart).toHaveBeenCalledTimes(1);
 
     // Simulate reference becoming ready
-    refReady = true;
+    ref.lastRefreshed = 1;
     ref.lookupChannelSmart.mockReturnValue({ officialId: 'CNN.us' });
 
     // Second call after ready - should re-run matcher and return result
@@ -126,11 +126,8 @@ describe('epgHub resolveCanonicalSourceId', () => {
     expect(thirdResult).toEqual({ official: 'cnn.us', base: 'cnn' });
     expect(ref.lookupChannelSmart).toHaveBeenCalledTimes(2);
 
-    // Restore original mock
-    Object.defineProperty(ref, 'lastRefreshed', {
-      get: () => 1,
-      configurable: true
-    });
+    // Restore to ready state
+    ref.lastRefreshed = 1;
   });
 
   test('passes the normalized name + country scope to the matcher', async () => {
@@ -148,13 +145,13 @@ describe('epgHub resolveCanonicalSourceId', () => {
   });
 
   test('caches results so repeated calls do not re-match', async () => {
-    ref.lookupChannelSmart.mockReturnValue({ officialId: 'CNN.us' });
+    ref.lookupChannelSmart.mockReturnValue({ officialId: 'BBC.uk' });
     ref.lookupChannel.mockReturnValue(null);
     const before = ref.lookupChannelSmart.mock.calls.length;
-    const first = await resolveCanonicalSourceId('cnn.us');
-    const second = await resolveCanonicalSourceId('cnn.us');
+    const first = await resolveCanonicalSourceId('bbc.uk');
+    const second = await resolveCanonicalSourceId('bbc.uk');
     expect(second).toEqual(first);
     expect(ref.lookupChannelSmart.mock.calls.length).toBe(before + 1);
-    expect(ref.lookupChannelSmart).toHaveBeenCalledWith('cnn', 'us');
+    expect(ref.lookupChannelSmart).toHaveBeenCalledWith('bbc', 'uk');
   });
 });

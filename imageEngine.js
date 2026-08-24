@@ -3,6 +3,8 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const net = require('net');
 const { loadLogoBuffer, saveLogoBuffer, hasRedis } = require('./redisCache');
 
 const cacheDir = path.join(__dirname, 'cache');
@@ -159,11 +161,87 @@ async function fetchLogoViaProxy(primaryUrl, fallbackUrl, channelName) {
 }
 
 /**
+ * Validates that an IP address is publicly routable (not loopback, private, link-local, etc.).
+ * @param {string} ip - The IP address to validate.
+ * @return {boolean} `true` if the IP is public, `false` otherwise.
+ */
+function isPublicIP(ip) {
+    if (net.isIPv4(ip)) {
+        const parts = ip.split('.').map(Number);
+        // Loopback: 127.0.0.0/8
+        if (parts[0] === 127) return false;
+        // Private: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+        if (parts[0] === 10) return false;
+        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false;
+        if (parts[0] === 192 && parts[1] === 168) return false;
+        // Link-local: 169.254.0.0/16
+        if (parts[0] === 169 && parts[1] === 254) return false;
+        // Broadcast: 255.255.255.255
+        if (parts[0] === 255) return false;
+        // 0.0.0.0/8
+        if (parts[0] === 0) return false;
+        return true;
+    } else if (net.isIPv6(ip)) {
+        const lower = ip.toLowerCase();
+        // Loopback: ::1
+        if (lower === '::1') return false;
+        // Link-local: fe80::/10
+        if (lower.startsWith('fe80:')) return false;
+        // ULA: fc00::/7 (fd00::/8 and fc00::/8)
+        if (lower.startsWith('fc') || lower.startsWith('fd')) return false;
+        // Deprecated site-local: fec0::/10
+        if (lower.startsWith('fec0:')) return false;
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Validates a URL hostname and its resolved IP address to prevent SSRF.
+ * @param {string} url - The URL to validate.
+ * @throws {Error} If the URL or its resolved IP is not safe for fetching.
+ */
+async function validateSafeUrl(url) {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+
+    // Reject localhost variants
+    if (hostname === 'localhost' || hostname === '0.0.0.0') {
+        throw new Error('Localhost access denied');
+    }
+
+    // If hostname is already an IP, validate it directly
+    if (net.isIP(hostname)) {
+        if (!isPublicIP(hostname)) {
+            throw new Error('Private IP access denied');
+        }
+        return;
+    }
+
+    // Resolve hostname and validate all IPs
+    try {
+        const addresses = await dns.resolve(hostname);
+        for (const addr of addresses) {
+            if (!isPublicIP(addr)) {
+                throw new Error(`Hostname ${hostname} resolves to private IP ${addr}`);
+            }
+        }
+    } catch (err) {
+        if (err.message && err.message.includes('private IP')) throw err;
+        throw new Error(`DNS resolution failed for ${hostname}: ${err.message}`);
+    }
+}
+
+/**
  * Fetch logo directly (fallback if Worker proxy unavailable).
  * Used as last resort when env var not configured.
+ * Validates URLs and IPs to prevent SSRF attacks, including redirect targets.
  */
 async function fetchLogoDirect(logoUrl) {
     if (!logoUrl || !logoUrl.startsWith('http')) throw new Error("Invalid or missing logo URL");
+
+    // Validate initial URL
+    await validateSafeUrl(logoUrl);
 
     const response = await axios.get(logoUrl, {
         responseType: 'arraybuffer',
@@ -171,6 +249,14 @@ async function fetchLogoDirect(logoUrl) {
         maxContentLength: MAX_IMAGE_BYTES,
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IPTVo/1.0)' },
         validateStatus: s => s === 200,
+        maxRedirects: 5,
+        beforeRedirect: async (options) => {
+            // Validate redirect target before following
+            const redirectUrl = options.href || options.url;
+            if (redirectUrl) {
+                await validateSafeUrl(redirectUrl);
+            }
+        }
     });
 
     const contentType = response.headers['content-type'] || '';
@@ -293,21 +379,27 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         console.warn(`[imageEngine] Direct fetch failed for ${logoUrl}: ${directErr.message}`);
         sourceLog.push('direct:error');
 
-        // Try fallback URL before marking dead
+        // Try fallback URL with the same caching, persistence, and poster flow
         if (fallbackUrl && fallbackUrl !== logoUrl && fallbackUrl.startsWith('http')) {
             try {
                 const { buffer, contentType } = await fetchLogoDirect(fallbackUrl);
                 sourceLog.push('fallback-direct');
+                // Cache under the primary URL key so future requests succeed
                 setLogoCache(logoUrl, buffer);
                 if (hasRedis) {
                     await saveLogoBuffer(logoUrl, buffer);
                 }
-                markDeadUrl(logoUrl, true);
+                markDeadUrl(logoUrl, true); // primary URL succeeded via fallback
                 return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
             } catch (fallbackErr) {
                 console.warn(`[imageEngine] Fallback direct fetch also failed for ${fallbackUrl}: ${fallbackErr.message}`);
                 sourceLog.push('fallback-direct:error');
+                // Mark primary URL dead since both primary and fallback failed
+                markDeadUrl(logoUrl, false);
             }
+        } else {
+            // No fallback available, mark primary URL dead
+            markDeadUrl(logoUrl, false);
         }
     }
 
@@ -476,8 +568,8 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // Validate channel ID to prevent path traversal (CodeQL: path injection).
     // Channel ids embed iptv-org country suffixes (e.g. uk_SkySportsNews.uk),
     // so dots are legal; only reject anything that could traverse (slashes,
-    // backslashes, .. sequences).
-    if (!cId || !/^[a-zA-Z0-9_.-]+$/.test(cId) || cId.includes('..')) {
+    // backslashes, .. sequences) or starts with non-alphanumeric.
+    if (!cId || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(cId) || cId.includes('..')) {
         throw new Error("Invalid channel ID");
     }
 
