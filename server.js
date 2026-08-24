@@ -388,9 +388,9 @@ function extractConfig(req) {
 // official id under a country scope (e.g. uk_SkySportsNews.uk), so a lookup
 // must also try the scoped-stripped canonical global key.
 /**
- * Expands a channel key into the candidate keys to query the central EPG store.
- * @param {string} chKey - The channel key (e.g. "uk_SkySportsNews.uk").
- * @return {string[]} The channel key itself plus its canonical global form.
+ * Expands a channel key into candidate keys for central EPG lookups.
+ * @param {string} chKey - The channel key, optionally prefixed by a country or scope.
+ * @return {string[]} The original key, its canonical global key, and a country-suffix-stripped global key when applicable.
  */
 function epgLookupKeys(chKey) {
     const s = String(chKey || '');
@@ -406,6 +406,12 @@ function epgLookupKeys(chKey) {
     return [...keys];
 }
 
+/**
+ * Resolves EPG data for a channel, using the provided entry as a fallback.
+ * @param {string} chKey - The channel key to resolve.
+ * @param {Object} entry - Provider entry containing optional channel EPG data.
+ * @return {Array|null} The channel's EPG data, or `null` when no data is available.
+ */
 async function getEffectiveEpg(chKey, entry) {
     const resolved = await getEffectiveEpgMany([chKey], entry);
     return resolved.get(chKey) || (entry && entry.epgData && entry.epgData[chKey] && entry.epgData[chKey].length ? entry.epgData[chKey] : null);
@@ -1112,7 +1118,12 @@ const builder = new addonBuilder({
 // string or as an array (trailing-segment extras arrive as multi-value arrays).
 // Our catalog routes pass `req.params.extra` (a raw query string like
 // "search=espn&skip=0") straight through, so parse it into an object first, then
-// normalize values to a single string so the filters below never crash.
+/**
+ * Retrieves a normalized string value from catalog extras.
+ * @param {string|Object} extra - Raw query-string extras or parsed extra values.
+ * @param {string} key - Name of the value to retrieve.
+ * @return {string} The requested string value, or an empty string when unavailable.
+ */
 function extraValue(extra, key) {
     // Catalog routes pass `req.params.extra` as a raw query string (e.g.
     // "search=espn&skip=0"); parse it so the filters below can read it.
@@ -1311,10 +1322,9 @@ async function genreOptionsFor(req) {
 }
 
 /**
- * Resolves relative manifest asset URLs against the requesting host and
- * populates the catalog genre options from the user's parsed groups.
+ * Builds a per-request manifest with absolute asset URLs and available catalog genre options.
  * @param {import('express').Request} req - The incoming HTTP request.
- * @return {Promise<object>} A manifest with absolute logo/background URLs and genre options.
+ * @return {Promise<object>} The manifest containing resolved asset URLs and genre options when available.
  */
 async function manifestFor(req) {
     const root = `${req.protocol}://${req.get('host')}`;

@@ -31,7 +31,10 @@ const {
 // side we therefore canonicalize each source id to its iptv-org official id
 // and store the same programmes under BOTH keys: the raw `global_<sourceId>`
 // and the canonical `global_<officialId>`, so scoped user lookups find them.
-let canonicalIdCache = null; // Map<sourceIdLower, {official, base}|null>
+let canonicalIdCache = null; /**
+ * Provides the shared cache for canonical channel ID resolutions.
+ * @return {Map} A map from lowercase source IDs to canonical resolution results.
+ */
 function getCanonicalCache() {
     if (!canonicalIdCache) canonicalIdCache = new Map();
     return canonicalIdCache;
@@ -44,14 +47,9 @@ function getIptvOrgReady() {
 }
 
 /**
- * Resolves a normalized source channel id to its iptv-org official id (lower)
- * via the same fuzzy matcher used for provider channels, or null when no
- * confident match exists. Results are cached per source id across cycles.
- * Also returns the country-suffix-stripped name so cross-country variants of
- * the same brand (e.g. SkySportsNews.ie vs .uk) share one bridge key.
- * @param {string} sourceId - Normalized dotted source id (e.g. "sky.sports.news.uk").
- * @return {Promise<{official: string, base: string|null}|null>} The official id
- *   (lowercase) plus its cc-stripped base, or null.
+ * Resolves a source channel ID to its canonical iptv-org channel ID.
+ * @param {string} sourceId - Normalized dotted channel ID, such as `sky.sports.news.uk`.
+ * @returns {Promise<{official: string, base: string|null}|null>} The lowercase canonical ID and its country-stripped base ID, or `null` when no match is found.
  */
 async function resolveCanonicalSourceId(sourceId) {
     const key = String(sourceId).toLowerCase().trim();
@@ -325,13 +323,11 @@ async function run() {
 }
 
 /**
- * One-time backfill: copy existing rows that are keyed by a raw source id
- * (global_<sourceId>) into their canonical iptv-org key (global_<officialId>)
- * so user lookups find them immediately, without waiting for the next fetch
- * cycle. Idempotent (ON CONFLICT DO NOTHING); safe to run repeatedly.
- * Waits up to ~5 minutes for the iptv-org reference indexes to load, since a
- * cold matcher maps everything to null and the backfill would silently no-op.
- * @return {Promise<{status: string, changed?: number}>}
+ * Backfills existing raw channel rows into canonical and country-stripped alias keys.
+ *
+ * Waits for iptv-org reference indexes before resolving channel IDs and can be run repeatedly without duplicating rows.
+ *
+ * @return {Promise<{status: string, changed?: number, error?: string}>} The operation status, alias write count when completed, and error message when the operation fails.
  */
 async function backfillCanonicalAliases() {
     const { pool } = require('./db');
