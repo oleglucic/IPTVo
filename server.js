@@ -1142,7 +1142,24 @@ const builder = new addonBuilder({
             { name: 'search', isRequired: false }
         ]
     }],
-    idPrefixes: ['global_', 'us_', 'uk_', 'gb_', 'de_', 'fr_', 'es_', 'it_', 'ca_', 'au_', 'nl_', 'be_', 'pt_', 'gr_', 'pl_', 'cz_', 'hu_', 'ro_', 'rs_', 'hr_', 'si_', 'sk_', 'lt_', 'lv_', 'ee_', 'fi_', 'se_', 'no_', 'dk_', 'at_', 'ch_', 'ie_', 'bg_', 'cy_', 'mt_', 'lu_', 'is_', 'li_', 'mc_', 'sm_', 'va_', 'ad_', 'me_', 'mk_', 'al_', 'ba_', 'xk_', 'md_', 'ge_', 'am_', 'az_', 'by_', 'ua_', 'ru_', 'kz_', 'uz_', 'kg_', 'tj_', 'tm_', 'mn_', 'cn_', 'jp_', 'kr_', 'kp_', 'tw_', 'hk_', 'mo_', 'sg_', 'my_', 'th_', 'vn_', 'ph_', 'id_', 'bn_', 'kh_', 'la_', 'mm_', 'np_', 'bd_', 'lk_', 'mv_', 'bt_', 'af_', 'pk_', 'ir_', 'iq_', 'il_', 'jo_', 'lb_', 'sy_', 'ps_', 'sa_', 'ye_', 'om_', 'ae_', 'qa_', 'bh_', 'kw_', 'tr_', 'eg_', 'ly_', 'tn_', 'dz_', 'ma_', 'mr_', 'ml_', 'ne_', 'td_', 'cf_', 'cm_', 'ga_', 'gq_', 'st_', 'ao_', 'zw_', 'zm_', 'mw_', 'mz_', 'na_', 'bw_', 'ls_', 'sz_', 'za_', 'ng_', 'gh_', 'ci_', 'sn_', 'sl_', 'lr_', 'gn_', 'gw_', 'cv_', 'sc_', 'mu_', 'mg_', 'km_', 'dj_', 'er_', 'et_', 'so_', 'ke_', 'ug_', 'rw_', 'bi_', 'tz_', 'cd_', 'cg_', 'rn_', 're_', 'yt_', 'tf_', 'hm_', 'bv_', 'sj_', 'aq_']
+    idPrefixes: ['global_', 'us_', 'uk_', 'gb_', 'de_', 'fr_', 'es_', 'it_', 'ca_', 'au_', 'nl_', 'be_', 'pt_', 'gr_', 'pl_', 'cz_', 'hu_', 'ro_', 'rs_', 'hr_', 'si_', 'sk_', 'lt_', 'lv_', 'ee_', 'fi_', 'se_', 'no_', 'dk_', 'at_', 'ch_', 'ie_', 'bg_', 'cy_', 'mt_', 'lu_', 'is_', 'li_', 'mc_', 'sm_', 'va_', 'ad_', 'me_', 'mk_', 'al_', 'ba_', 'xk_', 'md_', 'ge_', 'am_', 'az_', 'by_', 'ua_', 'ru_', 'kz_', 'uz_', 'kg_', 'tj_', 'tm_', 'mn_', 'cn_', 'jp_', 'kr_', 'kp_', 'tw_', 'hk_', 'mo_', 'sg_', 'my_', 'th_', 'vn_', 'ph_', 'id_', 'bn_', 'kh_', 'la_', 'mm_', 'np_', 'bd_', 'lk_', 'mv_', 'bt_', 'af_', 'pk_', 'ir_', 'iq_', 'il_', 'jo_', 'lb_', 'sy_', 'ps_', 'sa_', 'ye_', 'om_', 'ae_', 'qa_', 'bh_', 'kw_', 'tr_', 'eg_', 'ly_', 'tn_', 'dz_', 'ma_', 'mr_', 'ml_', 'ne_', 'td_', 'cf_', 'cm_', 'ga_', 'gq_', 'st_', 'ao_', 'zw_', 'zm_', 'mw_', 'mz_', 'na_', 'bw_', 'ls_', 'sz_', 'za_', 'ng_', 'gh_', 'ci_', 'sn_', 'sl_', 'lr_', 'gn_', 'gw_', 'cv_', 'sc_', 'mu_', 'mg_', 'km_', 'dj_', 'er_', 'et_', 'so_', 'ke_', 'ug_', 'rw_', 'bi_', 'tz_', 'cd_', 'cg_', 'rn_', 're_', 'yt_', 'tf_', 'hm_', 'bv_', 'sj_', 'aq_',
+        // --- Added: Americas, Caribbean, South Asia, Oceania, and remaining
+        // ISO 3166-1 territories that were missing entirely. Without a
+        // declared prefix, Stremio/Nuvio refuses to route meta/stream
+        // requests for channels scoped to these countries, surfacing as
+        // "No addons provide meta for this content" even though the server
+        // can answer fine (channels ARE built with e.g. 'br_', 'mx_', 'in_'
+        // ids by iptvParser.js's validated country-code scoping).
+        'br_', 'mx_', 'ar_', 'co_', 'cl_', 'pe_', 've_', 'ec_', 'uy_', 'py_', 'bo_',
+        'in_', 'nz_',
+        'gt_', 'hn_', 'sv_', 'ni_', 'pa_', 'cr_', 'cu_', 'do_', 'pr_', 'jm_', 'tt_',
+        'bs_', 'bb_', 'bz_', 'dm_', 'gd_', 'kn_', 'lc_', 'vc_', 'ag_', 'ai_', 'aw_',
+        'bq_', 'bm_', 'cw_', 'ky_', 'gp_', 'mq_', 'ms_', 'sx_', 'tc_', 'vg_', 'vi_',
+        'as_', 'ax_', 'bf_', 'bj_', 'bl_', 'cc_', 'ck_', 'cx_', 'eh_', 'fj_', 'fk_',
+        'fm_', 'fo_', 'gf_', 'gg_', 'gi_', 'gl_', 'gm_', 'gs_', 'gu_', 'gy_', 'ht_',
+        'im_', 'io_', 'je_', 'ki_', 'mf_', 'mh_', 'mp_', 'nc_', 'nf_', 'nr_', 'nu_',
+        'pf_', 'pg_', 'pm_', 'pn_', 'pw_', 'sb_', 'sd_', 'sh_', 'sr_', 'ss_', 'tg_',
+        'tk_', 'tl_', 'to_', 'tv_', 'um_', 'vu_', 'wf_', 'ws_']
 });
 
 // The Stremio SDK can surface catalog extras (`genre`, `search`, `skip`) as a
