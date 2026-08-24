@@ -117,13 +117,19 @@ describe('imageEngine square posters', () => {
         const url = 'https://cdn.sticky.example.com/icon.png';
         // Render once successfully (disk poster exists)
         await getPremiumPoster(id, url, 'Sticky TV');
+
+        // Reset module-level logo cache so second request re-fetches
+        jest.resetModules();
+        const freshImageEngine = require('../imageEngine');
+        const { getPremiumPoster: freshGetPoster } = freshImageEngine;
+
         // Now every fetch fails (dead upstream) — the previous real poster must survive
         axios.get.mockImplementation(async () => {
             const err = new Error('fetch failed');
             err.response = { status: 503 };
             throw err;
         });
-        const posterPath = await getPremiumPoster(id, url, 'Sticky TV');
+        const posterPath = await freshGetPoster(id, url, 'Sticky TV');
         // Still the earlier real render is served (exists, non-empty PNG)
         expect(fs.existsSync(posterPath)).toBe(true);
         const meta = await sharp(posterPath).metadata();
@@ -155,9 +161,23 @@ describe('imageEngine square posters', () => {
             // Worker placeholder written a fallback poster on disk (no cache existed yet)
             expect(fs.existsSync(first)).toBe(true);
             const diskBefore = fs.readFileSync(first);
+
+            // Reset module-level logo cache so second request re-fetches
+            jest.resetModules();
+            process.env.LOGO_PROXY_URL = 'https://logo.proxy.example/logo';
+            const freshAxios2 = require('axios');
+            const quotaEngine2 = require('../imageEngine');
+            const { getPremiumPoster: threadPoster2 } = quotaEngine2;
+            freshAxios2.get
+                .mockReset()
+                .mockImplementation(async () => ({
+                    data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><text>placeholder</text></svg>'),
+                    headers: { 'content-type': 'image/svg+xml', 'x-logo-source': 'placeholder' },
+                }));
+
             // Second request: worker still placeholder — the existing disk poster
             // must survive and never be replaced by another placeholder SVG.
-            const second = await threadPoster(id, uniqueUrl, 'Thread TV');
+            const second = await threadPoster2(id, uniqueUrl, 'Thread TV');
             const diskAfter = fs.readFileSync(second);
             expect(diskAfter.equals(diskBefore)).toBe(true);
         } finally {

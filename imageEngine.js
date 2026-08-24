@@ -247,7 +247,10 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
                 // the server's existing poster if one exists; only fall through to
                 // a direct fetch when we have nothing cached yet.
                 sourceLog.push('worker:placeholder');
-                if (fs.existsSync(cachePath)) return cachePath;
+                if (fs.existsSync(cachePath)) {
+                    markDeadUrl(logoUrl, false);
+                    return cachePath;
+                }
                 // Fall through to direct fetch when no cached poster exists
             } else {
                 // Valid image - cache it
@@ -287,8 +290,25 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         markDeadUrl(logoUrl, true);
         return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
     } catch (directErr) {
-        console.warn(`[imageEngine] Direct fetch also failed for ${logoUrl}: ${directErr.message}`);
+        console.warn(`[imageEngine] Direct fetch failed for ${logoUrl}: ${directErr.message}`);
         sourceLog.push('direct:error');
+
+        // Try fallback URL before marking dead
+        if (fallbackUrl && fallbackUrl !== logoUrl && fallbackUrl.startsWith('http')) {
+            try {
+                const { buffer, contentType } = await fetchLogoDirect(fallbackUrl);
+                sourceLog.push('fallback-direct');
+                setLogoCache(logoUrl, buffer);
+                if (hasRedis) {
+                    await saveLogoBuffer(logoUrl, buffer);
+                }
+                markDeadUrl(logoUrl, true);
+                return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
+            } catch (fallbackErr) {
+                console.warn(`[imageEngine] Fallback direct fetch also failed for ${fallbackUrl}: ${fallbackErr.message}`);
+                sourceLog.push('fallback-direct:error');
+            }
+        }
     }
 
     // 6. Ultimate fallback: generated SVG. Only when the server has no cached
