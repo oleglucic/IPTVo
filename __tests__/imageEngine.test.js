@@ -7,6 +7,15 @@
 
 jest.mock('axios');
 
+// Mock dns.promises.resolve to return a public IP (93.184.216.34, example.com's actual IP)
+// for any hostname. This unblocks tests using fake example.com subdomains while keeping
+// the SSRF validation logic intact in production code.
+jest.mock('dns', () => ({
+    promises: {
+        resolve: jest.fn(() => Promise.resolve(['93.184.216.34']))
+    }
+}));
+
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');

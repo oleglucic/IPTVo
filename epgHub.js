@@ -65,13 +65,20 @@ async function resolveCanonicalSourceId(sourceId) {
     let base = null;
     try {
         // dotted id: human name, match against iptv-org reference
-        // Shared suffix list: matches normalizeSourceId accepted suffixes plus extras
-        const suffixes = 'us|uk|gb|de|fr|it|ca|au|nz|net|ae|ru|br|ar|mx|tr|in|gr|pt|nl|be|se|no|dk|fi|pl|cz|ro|bg|rs|hr|si|il|za|jp|kr|es|tw|th|ph|id|my|sg|hk|cn';
-        const clean = key
-            .replace(new RegExp(`\\.(${suffixes})$`, 'i'), '')
+        // Extract and strip valid country suffix, then clean the name
+        const lastDot = key.lastIndexOf('.');
+        let scope = '';
+        let nameToClean = key;
+        if (lastDot > 0) {
+            const suffix = key.slice(lastDot + 1);
+            if (isValidCountryCode(suffix)) {
+                scope = suffix;
+                nameToClean = key.slice(0, lastDot);
+            }
+        }
+        const clean = nameToClean
             .replace(/\b(hd|fhd|uhd|4k|sd|hdr|plus|dummy|emu)\b/gi, '')
             .replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
-        const scope = key.split('.').pop();
         if (clean) {
             // lookups don't throw before the reference indexes finish loading
             const bySmart = lookupChannelSmart(clean, scope);
@@ -352,10 +359,10 @@ async function backfillCanonicalAliases() {
     for (let attempt = 0; attempt < 20 && !getIptvOrgReady(); attempt++) {
         await new Promise(r => setTimeout(r, 15000));
     }
-    // If reference still not ready after all attempts, return retryable status
+    // If reference still not ready after all attempts, return distinct not-ready status
     if (!getIptvOrgReady()) {
-        console.warn('[epgHub] backfill aborted: reference not ready after 20 attempts');
-        return { status: 'retry', reason: 'reference-not-ready' };
+        console.warn('[epgHub] backfill skipped: reference not ready after 20 attempts');
+        return { status: 'skipped', reason: 'reference-not-ready' };
     }
     let changed = 0;
     let cursor = '';
@@ -390,7 +397,7 @@ async function backfillCanonicalAliases() {
                          ON CONFLICT (channel_key, source, start_time) DO NOTHING`,
                         [targetKey, rawKey]
                     );
-                    changed += result.rowCount || 0;
+                    changed += (result && result.rowCount) || 0;
                 }
             }
             console.log(`[epgHub] backfill aliases cursor=${cursor} written=${changed}...`);

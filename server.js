@@ -403,8 +403,11 @@ function epgLookupKeys(chKey) {
     // EPG sources published under a different country variant of the same brand
     // (e.g. SkySportsNews.ie), which the hub writes to global_<base>.
     const cc = /\.([a-z]{2})$/i.exec(official);
-    if (cc && isValidCountryCode(cc[1].toLowerCase())) {
-        keys.add(`global_${official.slice(0, -cc[0].length)}`);
+    if (cc) {
+        const suffix = cc[1].toLowerCase();
+        if (isValidCountryCode(suffix)) {
+            keys.add(`global_${official.slice(0, -cc[0].length)}`);
+        }
     }
     return [...keys];
 }
@@ -482,7 +485,11 @@ async function getEffectiveEpgMany(chKeys, entry) {
             // reads were capped at 50, silently dropping EPG for later channels
             // on a page). Warm each result into the Redis cache.
             const byKey = await require('./db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
-            for (const [lk, progs] of byKey) {
+            // Iterate needDb in lookup-priority order (preserves precedence)
+            for (const lk of needDb) {
+                const progs = byKey.get(lk);
+                if (!progs || !progs.length) continue;
+                // Warm cache for this lookup key
                 if (hasRedis) await saveEpgCache(lk, progs, gen);
                 const rank = lookupRank.get(lk) || 999;
                 for (const orig of lookupToCh.get(lk) || []) {
@@ -1350,10 +1357,31 @@ async function genreOptionsFor(req) {
         return groups;
     }
     try {
+        // Try lightweight Redis key for uniqueGroups only (avoid full cache deserialization)
+        const groupsKey = `${configKey}:groups`;
+        const redis = require('./redisCache');
+        if (redis.hasRedis) {
+            const groupsJson = await redis.redisClient?.get(groupsKey);
+            if (groupsJson) {
+                try {
+                    const groups = JSON.parse(groupsJson);
+                    if (Array.isArray(groups)) {
+                        const sorted = asList(groups);
+                        groupsCache.set(configKey, { groups: sorted, timestamp: Date.now() });
+                        return sorted;
+                    }
+                } catch (_) { /* fall through */ }
+            }
+        }
+        // Fallback to full cache load if lightweight key not present
         const fromRedis = await loadCacheFromRedis(configKey);
         if (fromRedis && fromRedis.status === 'ready') {
             const groups = asList(fromRedis.uniqueGroups);
             groupsCache.set(configKey, { groups, timestamp: Date.now() });
+            // Store lightweight groups key for future requests
+            if (redis.hasRedis && redis.redisClient) {
+                await redis.redisClient.set(groupsKey, JSON.stringify(groups), 'EX', 3600);
+            }
             return groups;
         }
     } catch (_) { /* silently fall through to empty options */ }
@@ -1780,8 +1808,10 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
             if (result && result.status === 'done') {
                 await sessionSet(markerKey, { timestamp: Date.now() });
                 console.log('[epgHub] backfill completed, marker set');
-            } else if (result && result.status === 'retry') {
-                console.log('[epgHub] backfill needs retry, marker not set');
+            } else if (result && result.status === 'skipped') {
+                console.log('[epgHub] backfill skipped (not ready), marker not set - will retry');
+            } else if (result && result.status === 'error') {
+                console.log('[epgHub] backfill encountered error, marker not set - will retry');
             }
         } catch (e) {
             console.error('[epgHub] backfill failed:', sanitizeForLog(e.message));
