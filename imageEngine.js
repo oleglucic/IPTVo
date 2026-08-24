@@ -415,7 +415,15 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         return cachePath;
     }
     markDeadUrl(logoUrl, false);
-    return await generateFallback(cachePath, fallbackName, sourceLog);
+    try {
+        return await generateFallback(cachePath, fallbackName, sourceLog);
+    } catch (fallbackErr) {
+        // Last resort truly failed (bad name text, disk issue, etc). Log it
+        // loudly instead of letting it bubble up as an uncaught 500 for the
+        // whole poster request — the route handler has no further fallback.
+        console.error(`[imageEngine] Fallback SVG generation failed for cId=${cId}: ${fallbackErr.message}`);
+        throw fallbackErr;
+    }
 }
 
 /**
@@ -472,9 +480,24 @@ async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, _conte
     return cachePath;
 }
 
+/**
+ * Escapes XML special characters so arbitrary channel names can be safely
+ * embedded in generated SVG markup without corrupting the document.
+ * @param {string} str - The raw text to escape.
+ * @return {string} XML-safe text.
+ */
+function escapeXml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
 async function generateFallback(cachePath, fallbackName, sourceLog = []) {
     sourceLog.push('fallback-svg');
-    const text = fallbackName || 'Live TV';
+    const text = escapeXml(fallbackName || 'Live TV');
     const svg = `
         <svg width="${POSTER_SIZE}" height="${POSTER_SIZE}" xmlns="http://www.w3.org/2000/svg">
             <defs>
