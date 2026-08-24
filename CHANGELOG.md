@@ -1,5 +1,9 @@
 ## 🤝 Contributors
 
+- Oleg lučić (@183150217+oleglucic)
+
+## 🤝 Contributors
+
 - coderabbitai[bot] (@136622811+coderabbitai)
 - Oleg Lučić (@183150217+oleglucic)
 
