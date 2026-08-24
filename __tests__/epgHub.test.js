@@ -85,11 +85,52 @@ describe('epgHub mergeForChannel', () => {
 describe('epgHub resolveCanonicalSourceId', () => {
   const ref = require('../iptvOrgRef');
 
+  beforeEach(() => {
+    ref.lookupChannelSmart.mockClear();
+    ref.lookupChannel.mockClear();
+  });
+
   test('returns null when no iptv-org match exists', async () => {
     ref.lookupChannelSmart.mockReturnValue(null);
     ref.lookupChannel.mockReturnValue(null);
     const result = await resolveCanonicalSourceId('no.such.channel.xx');
     expect(result).toBeNull();
+  });
+
+  test('does not cache miss while reference is unready, retries when ready', async () => {
+    // Simulate unready state (lastRefreshed = 0)
+    let refReady = false;
+    Object.defineProperty(ref, 'lastRefreshed', {
+      get: () => refReady ? 1 : 0,
+      configurable: true
+    });
+    ref.lookupChannelSmart.mockReturnValue(null);
+    ref.lookupChannel.mockReturnValue(null);
+
+    // First call while unready - should return null but not cache
+    const firstResult = await resolveCanonicalSourceId('cnn.us');
+    expect(firstResult).toBeNull();
+    expect(ref.lookupChannelSmart).toHaveBeenCalledTimes(1);
+
+    // Simulate reference becoming ready
+    refReady = true;
+    ref.lookupChannelSmart.mockReturnValue({ officialId: 'CNN.us' });
+
+    // Second call after ready - should re-run matcher and return result
+    const secondResult = await resolveCanonicalSourceId('cnn.us');
+    expect(secondResult).toEqual({ official: 'cnn.us', base: 'cnn' });
+    expect(ref.lookupChannelSmart).toHaveBeenCalledTimes(2);
+
+    // Third call - should use cache now
+    const thirdResult = await resolveCanonicalSourceId('cnn.us');
+    expect(thirdResult).toEqual({ official: 'cnn.us', base: 'cnn' });
+    expect(ref.lookupChannelSmart).toHaveBeenCalledTimes(2);
+
+    // Restore original mock
+    Object.defineProperty(ref, 'lastRefreshed', {
+      get: () => 1,
+      configurable: true
+    });
   });
 
   test('passes the normalized name + country scope to the matcher', async () => {
@@ -110,9 +151,10 @@ describe('epgHub resolveCanonicalSourceId', () => {
     ref.lookupChannelSmart.mockReturnValue({ officialId: 'CNN.us' });
     ref.lookupChannel.mockReturnValue(null);
     const before = ref.lookupChannelSmart.mock.calls.length;
-    const first = await resolveCanonicalSourceId('cnn.usa');
-    const second = await resolveCanonicalSourceId('cnn.usa');
+    const first = await resolveCanonicalSourceId('cnn.us');
+    const second = await resolveCanonicalSourceId('cnn.us');
     expect(second).toEqual(first);
     expect(ref.lookupChannelSmart.mock.calls.length).toBe(before + 1);
+    expect(ref.lookupChannelSmart).toHaveBeenCalledWith('cnn', 'us');
   });
 });

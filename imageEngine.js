@@ -39,12 +39,12 @@ const logoCache = new Map();    // url -> {buffer: Buffer, timestamp: number}
 const WORKER_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
 let workerCooldownUntil = 0;
 /**
- * Determines whether Cloudflare Worker requests are currently paused.
+ * Determines whether the proxy worker is currently within its cooldown period.
  * @return {boolean} `true` if the cooldown period is active, `false` otherwise.
  */
 function isWorkerInCooldown() { return Date.now() < workerCooldownUntil; }
 /**
- * Activates the Cloudflare Worker cooldown period.
+ * Starts the cooldown period for the Worker proxy.
  */
 function armWorkerCooldown() { workerCooldownUntil = Date.now() + WORKER_COOLDOWN_MS; }
 
@@ -182,13 +182,13 @@ async function fetchLogoDirect(logoUrl) {
 }
 
 /**
- * Generates and saves a promotional poster from a cached or fetched channel logo.
- * Uses a generated fallback when no usable logo is available and preserves an existing poster when fetching fails.
+ * Generates a channel poster from a cached or fetched logo, preserving an existing poster when logo retrieval fails.
+ * @param {string} cId - The channel identifier used for diagnostic logging.
  * @param {string} logoUrl - The primary logo URL.
  * @param {string} fallbackUrl - An optional fallback logo URL.
  * @param {string} fallbackName - The channel name displayed on a generated fallback poster.
- * @param {string} cachePath - The path where the poster is saved.
- * @return {Promise<string>} The path to the generated or existing poster.
+ * @param {string} cachePath - The path where the poster is stored.
+ * @returns {Promise<string>} The path to the available or generated poster.
  */
 async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) {
     const sourceLog = [];
@@ -247,7 +247,10 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
                 // the server's existing poster if one exists; only fall through to
                 // a direct fetch when we have nothing cached yet.
                 sourceLog.push('worker:placeholder');
-                if (fs.existsSync(cachePath)) return cachePath;
+                if (fs.existsSync(cachePath)) {
+                    markDeadUrl(logoUrl, false);
+                    return cachePath;
+                }
                 // Fall through to direct fetch when no cached poster exists
             } else {
                 // Valid image - cache it
@@ -287,8 +290,25 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         markDeadUrl(logoUrl, true);
         return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
     } catch (directErr) {
-        console.warn(`[imageEngine] Direct fetch also failed for ${logoUrl}: ${directErr.message}`);
+        console.warn(`[imageEngine] Direct fetch failed for ${logoUrl}: ${directErr.message}`);
         sourceLog.push('direct:error');
+
+        // Try fallback URL before marking dead
+        if (fallbackUrl && fallbackUrl !== logoUrl && fallbackUrl.startsWith('http')) {
+            try {
+                const { buffer, contentType } = await fetchLogoDirect(fallbackUrl);
+                sourceLog.push('fallback-direct');
+                setLogoCache(logoUrl, buffer);
+                if (hasRedis) {
+                    await saveLogoBuffer(logoUrl, buffer);
+                }
+                markDeadUrl(logoUrl, true);
+                return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
+            } catch (fallbackErr) {
+                console.warn(`[imageEngine] Fallback direct fetch also failed for ${fallbackUrl}: ${fallbackErr.message}`);
+                sourceLog.push('fallback-direct:error');
+            }
+        }
     }
 
     // 6. Ultimate fallback: generated SVG. Only when the server has no cached
@@ -430,11 +450,14 @@ function posterPath(cId, primaryUrl) {
 
 /**
  * Retrieves or generates a cached poster for a channel.
+ *
+ * Supports an extended call with a fallback logo URL and channel name as additional arguments.
+ *
  * @param {string} cId - The channel identifier.
- * @param {string|Object} logoUrl - The primary logo URL or legacy logo argument.
- * @param {string} fallbackName - The fallback channel name.
- * @returns {Promise<string>} The path to the cached poster.
- * @throws {Error} If the channel identifier is invalid or the cache path escapes the cache directory.
+ * @param {string} logoUrl - The primary logo URL.
+ * @param {string} fallbackName - The channel name used for fallback poster generation.
+ * @returns {string} The path to the cached poster.
+ * @throws {Error} If the channel identifier is invalid or the cache path is unsafe.
  */
 async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // Support fallback URL as optional 4th parameter (for parser to pass playlist logo)
@@ -453,8 +476,8 @@ async function getPremiumPoster(cId, logoUrl, fallbackName) {
     // Validate channel ID to prevent path traversal (CodeQL: path injection).
     // Channel ids embed iptv-org country suffixes (e.g. uk_SkySportsNews.uk),
     // so dots are legal; only reject anything that could traverse (slashes,
-    // backslashes, .. sequences).
-    if (!cId || !/^[a-zA-Z0-9_.-]+$/.test(cId) || cId.includes('..')) {
+    // backslashes, .. sequences) or starts with non-alphanumeric.
+    if (!cId || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(cId) || cId.includes('..')) {
         throw new Error("Invalid channel ID");
     }
 
