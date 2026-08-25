@@ -35,11 +35,42 @@ function assetRoot(req) {
 /**
  * Resolves the base URL for poster image requests — always the request host, never
  * the configured ASSET_BASE_URL, so poster URLs point to the Node poster route.
+ * Validates the request host against an optional allowlist (POSTER_HOST_ALLOWLIST)
+ * to prevent host header injection when behind a reverse proxy.
  * @param {object} req - The Express request used to determine the protocol and host.
- * @return {string} The current request origin.
+ * @return {string} The current request origin (validated if allowlist is configured).
  */
 function posterRoot(req) {
-    return `${req.protocol}://${req.get('host')}`;
+    // Canonical hostname allowlist from env (deployment-specific). Unset =
+    // accept any host (so local/dev deployments never break).
+    const allowedHosts = new Set(
+        (process.env.POSTER_HOST_ALLOWLIST || '')
+            .split(',')
+            .map(s => s.trim().toLowerCase())
+            .filter(Boolean)
+    );
+
+    let host = req.get('host');
+    let protocol = req.protocol;
+
+    // If allowlist is configured, validate the request host
+    if (allowedHosts.size > 0 && host) {
+        const hostLower = host.toLowerCase();
+        const isAllowed = [...allowedHosts].some(allowed =>
+            hostLower === allowed || hostLower.startsWith(`${allowed}:`)
+        );
+
+        // If host is not in allowlist, fall back to first allowlisted hostname
+        if (!isAllowed) {
+            host = [...allowedHosts][0];
+            // Use https unless protocol is explicitly http
+            if (protocol !== 'http' && protocol !== 'https') {
+                protocol = 'https';
+            }
+        }
+    }
+
+    return `${protocol}://${host}`;
 }
 
 const app = express();
