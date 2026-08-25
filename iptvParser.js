@@ -541,14 +541,24 @@ async function parseM3uData(configKey, configObj) {
             mStream = Readable.from([configObj.m3uContent]);
         } else {
             if (!m3uTargetUrl) throw new Error("No M3U Playlist link found inside payload parameters.");
+            let validatedM3uUrl;
+            try {
+                const parsedM3uUrl = new URL(m3uTargetUrl);
+                if (parsedM3uUrl.protocol !== 'http:' && parsedM3uUrl.protocol !== 'https:') {
+                    throw new Error("Invalid M3U URL: only http/https protocols are allowed");
+                }
+                validatedM3uUrl = parsedM3uUrl.toString();
+            } catch {
+                throw new Error("Invalid M3U URL: malformed URL");
+            }
             // Prevent SSRF: validate URL before fetching
-            if (!isSafeUrl(m3uTargetUrl)) {
+            if (!isSafeUrl(validatedM3uUrl)) {
                 throw new Error("Invalid M3U URL: private/internal addresses not allowed");
             }
-            const res = await axios({ method: 'get', url: m3uTargetUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000 }); // 10 min for large playlists
+            const res = await axios({ method: 'get', url: validatedM3uUrl, responseType: 'stream', headers: { 'Accept-Encoding': 'gzip,deflate', 'User-Agent': 'Mozilla/5.0' }, timeout: 600000, maxRedirects: 0 }); // 10 min for large playlists
             revalidateResponseUrl(res, res.data);
             mStream = res.data;
-            if (res.headers['content-encoding'] === 'gzip' || m3uTargetUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
+            if (res.headers['content-encoding'] === 'gzip' || validatedM3uUrl.toLowerCase().endsWith('.gz')) mStream = mStream.pipe(zlib.createGunzip());
         }
         const rl = readline.createInterface({ input: mStream, crlfDelay: Infinity });
         
