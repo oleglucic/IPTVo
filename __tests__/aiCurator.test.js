@@ -216,8 +216,8 @@ describe('aiCurator', () => {
 
             await startAiQueue(dirtyChannels, 'cfgKey', 'key123');
 
-            expect(setOverride).toHaveBeenCalledWith('Some Channel Backup', 'us_somechannel', 0.85);
-            expect(globalAiCache.get('Some Channel Backup')).toBe('us_somechannel');
+            expect(setOverride).toHaveBeenCalledWith('Some Channel Backup', 'iptvo_Somechannel.us', 0.85);
+            expect(globalAiCache.get('Some Channel Backup')).toBe('iptvo_Somechannel.us');
         });
 
         test('uses the authoritative iptv-org id when the AI-cleaned name matches after normalization', async () => {
@@ -238,7 +238,7 @@ describe('aiCurator', () => {
 
             await startAiQueue(dirtyChannels, 'cfgKey', 'key123');
 
-            expect(setOverride).toHaveBeenCalledWith('CNN Backup Feed', 'us_cnn', 0.85);
+            expect(setOverride).toHaveBeenCalledWith('CNN Backup Feed', 'iptvo_cnn', 0.85);
         });
 
         test('skips channels already matched by iptv-org (never sent to AI)', async () => {
