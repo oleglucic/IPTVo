@@ -610,7 +610,16 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 if (ncMatch && isValidCountryCode(ncMatch[1])) {
                     nameCountry = ncMatch[1].toLowerCase();
                 }
-                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\]*/gi, ' ');
+                // Only strip the leading word from cName when it was actually
+                // confirmed to be a real country code above. The old unconditional
+                // version stripped ANY leading 2-3 letter word, mangling brand
+                // names that happen to start with a short word ("Sky Sports F1"
+                // -> "Sports F1", "Fox News" -> "News", "BBC One" -> "One") and
+                // either losing the iptv-org/EPG match entirely or, worse, letting
+                // the leftover generic word wrongly match an unrelated channel.
+                if (ncMatch && nameCountry) {
+                    cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\]*/i, ' ');
+                }
                 cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
                 // The GROUP prefix (if any) is authoritative; otherwise infer from
@@ -878,11 +887,19 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             cName = cName.replace(/\b\d+[pi]\b/gi, ' ');
             cName = cName.replace(/\b\d+\s*fps\b/gi, ' ');
             // Fixed: removed nested quantifier \s* followed by character class with *
-            cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\]*/gi, ' ');
+            // Determine the leading-word country code BEFORE stripping it from cName
+            // (matches the M3U parsing block above) so the strip only fires when the
+            // leading word is a confirmed real country code. The old unconditional
+            // strip mangled brand names starting with a short word ("Sky Sports F1"
+            // -> "Sports F1", "Fox News" -> "News", "BBC One" -> "One"), losing the
+            // iptv-org/EPG match or wrongly matching an unrelated channel instead.
+            const ncMatch2 = cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\]*/i);
+            const nameCountry = (ncMatch2 && isValidCountryCode(ncMatch2[1])) ? ncMatch2[1] : null;
+            if (nameCountry) {
+                cName = cName.replace(/^[a-z]{2,3}\b\s*[-:|_\/\\]*/i, ' ');
+            }
             cName = cName.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
-            // Group prefix wins; else infer from a leading country word in the name.
-            const nameCountry = (cleanNameStr.match(/^([a-z]{2,3})\b\s*[-:|_\/\\]*/i) || [])[1];
             const countryScopeKey = (countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : null)
                 || (nameCountry && isValidCountryCode(nameCountry) ? nameCountry.toLowerCase() : null)
                 || 'global';
