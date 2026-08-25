@@ -27,6 +27,21 @@ function assetRoot(req) {
     return ASSET_BASE_URL || `${req.protocol}://${req.get('host')}`;
 }
 
+// Poster URLs must always resolve to the Node server (not the edge asset Worker)
+// because the poster route is /:userId-or-config/poster/:id.png — the assets Worker
+// only strips /iptvo/assets/ then checks startsWith("/poster/"), which never matches
+// a path like /<configKey>/poster/<cId>.png. Posters are cached server-side in Redis
+// + on disk, so bypassing the edge Worker is both correct and safe.
+/**
+ * Resolves the base URL for poster image requests — always the request host, never
+ * the configured ASSET_BASE_URL, so poster URLs point to the Node poster route.
+ * @param {object} req - The Express request used to determine the protocol and host.
+ * @return {string} The current request origin.
+ */
+function posterRoot(req) {
+    return `${req.protocol}://${req.get('host')}`;
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -1188,6 +1203,7 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
+    const posterRoot = config.posterRoot;
     console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extraValue(extra, 'genre'))}, search=${sanitizeForLog(extraValue(extra, 'search'))}`);
     if (!configObj) return { metas: [] };
 
@@ -1228,7 +1244,7 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
 
     const metas = [];
     for (const { chKey, channel } of pageChannels) {
-        const engineImage = `${rootUrl}/${configKey}/poster/${chKey || 'x'}.png?t=${ud.lastUpdated || ''}`;
+        const engineImage = `${posterRoot}/${configKey}/poster/${chKey || 'x'}.png?t=${ud.lastUpdated || ''}`;
         const passedThroughLogo = channel.meta.logo || engineImage;
         const centralEpg = epgByCh.get(chKey) || null;
         const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [chKey]: centralEpg } : {}) };
@@ -1274,13 +1290,14 @@ builder.defineMetaHandler(async ({ _type, id, _extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const rootUrl = config.rootUrl;
+    const posterRoot = config.posterRoot;
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
     if (!ud || !ud.channelMap?.has(id)) return { meta: {} };
     const channel = ud.channelMap.get(id);
 
-    const engineImage = `${rootUrl}/${configKey}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated || ''}`;
+    const engineImage = `${posterRoot}/${configKey}/poster/${encodeURIComponent(id)}.png?t=${ud.lastUpdated || ''}`;
     const passedThroughLogo = channel.meta.logo || engineImage;
     const centralEpg = await getEffectiveEpg(id, ud);
     const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [id]: centralEpg } : {}) };
@@ -1477,11 +1494,12 @@ app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
         const extra = req.params.extra || {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1493,11 +1511,12 @@ app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
         const extra = req.params.extra || {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1509,11 +1528,12 @@ app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
         const extra = {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1525,11 +1545,12 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
     try {
         const { configKey, configObj } = await getConfigFromReq(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
         const extra = {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1588,11 +1609,12 @@ app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
         const extra = req.params.extra || {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1605,11 +1627,12 @@ app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
         const extra = req.params.extra || {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1622,11 +1645,12 @@ app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
         const extra = {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1639,11 +1663,12 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
         const configKey = req.params.config;
         const configObj = extractConfig(req);
         const rootUrl = assetRoot(req);
+        const posterRootUrl = posterRoot(req);
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
         const extra = {};
-        const config = { configKey, configObj, rootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
