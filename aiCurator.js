@@ -234,12 +234,21 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
 
                 let finalId;
                 if (iptvOrgMatch) {
-                    // AI-cleaned name now matches iptv-org! Use authoritative ID
-                    finalId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}`;
+                    // AI-cleaned name now matches iptv-org! Use authoritative ID.
+                    // 'iptvo_' + officialId only — officialId already carries the
+                    // country as a ".cc" suffix (e.g. "SkySportsF1.uk"), so no
+                    // need to re-prefix with the country again.
+                    finalId = `iptvo_${iptvOrgMatch.officialId}`;
                     console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" -> "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
                 } else {
-                    // No iptv-org match yet, use AI-generated canonical ID
-                    finalId = `${scope}_${sanitizedBase}`;
+                    // No iptv-org match yet. Synthesize an id in the SAME
+                    // iptv-org "PascalCaseName.cc" shape (kept in sync with
+                    // iptvParser.js's synthesizeIptvOrgStyleId) so the whole
+                    // catalog uses one consistent id scheme either way.
+                    const pascalName = cleanBase.split(/\s+/).filter(Boolean)
+                        .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('') || 'Unknown';
+                    const suffix = (scope && scope !== 'global') ? `.${scope}` : '';
+                    finalId = `iptvo_${pascalName}${suffix}`;
                 }
 
                 globalAiCache.set(raw, finalId);

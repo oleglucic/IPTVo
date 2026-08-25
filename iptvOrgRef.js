@@ -216,6 +216,14 @@ async function refresh() {
         const newExactMap = new Map();
         const newFuseList = [];
         const newTokenIndex = new Map();   // sortedKey -> entry
+        // Tracks, per normalized name, which distinct countries have a channel
+        // with that name. Used below to refuse to populate the unscoped
+        // "name|" global fallback slot for names that collide across more
+        // than one country (e.g. "RTS 1" exists in RS, CH, and SN) — populating
+        // it would make an unscoped lookup silently pick whichever country's
+        // channel happened to load first, which is wrong far more often than
+        // it's right for popular acronym-style names.
+        const nameCountryCounts = new Map(); // normalizedName -> Set<country>
 
         for (const ch of channelsRes.data) {
             if (ch.closed) continue;
@@ -247,6 +255,11 @@ async function refresh() {
                     newExactMap.set(compositeKey, entry);
                 }
 
+                if (countryLower) {
+                    if (!nameCountryCounts.has(key)) nameCountryCounts.set(key, new Set());
+                    nameCountryCounts.get(key).add(countryLower);
+                }
+
                 // Also add global (no-country) fallback for the first name only
                 if (n === ch.name) {
                     const globalKey = `${key}|`;
@@ -260,6 +273,17 @@ async function refresh() {
             const primaryKey = normalize(ch.name);
             if (primaryKey && primaryKey.length >= 3) {
                 newFuseList.push({ key: primaryKey, officialId, name: ch.name, country: countryLower });
+            }
+        }
+
+        // Second pass: strip the global fallback for any name that turned out
+        // to be ambiguous (present in 2+ distinct countries). An unscoped
+        // query for one of these now correctly falls through to the
+        // token/subsequence/fuzzy tiers (which DO respect countryScopeKey and
+        // isRegionConflicting) instead of returning a confidently wrong country.
+        for (const [key, countries] of nameCountryCounts) {
+            if (countries.size > 1) {
+                newExactMap.delete(`${key}|`);
             }
         }
 
@@ -376,9 +400,20 @@ function lookupChannel(cleanName, countryScopeKey) {
         if (match) {
             return buildMatchResult(match);
         }
+        // A real, validated scope was provided and its scoped lookup missed —
+        // do NOT fall through to the unscoped/global slot below. That slot is
+        // "first channel with this name wins" across ALL countries (see
+        // refresh()), so for a name that exists in multiple countries (e.g.
+        // "RTS 1" exists as RTS1.rs in Serbia AND RTS1.ch in Switzerland) it
+        // silently returns whichever one happened to load first — which is
+        // very often the WRONG country. Once we know the real country, a miss
+        // there means "no match", never "guess a different country".
+        return null;
     }
 
-    // Fallback to global (no country)
+    // No scope known — the global slot is the only option, and refresh()
+    // already refuses to populate it for names that are ambiguous across
+    // more than one country, so this never returns a coin-flip wrong match.
     const globalMatch = exactMatchMap.get(`${cleanName}|`);
     if (globalMatch) {
         return buildMatchResult(globalMatch);

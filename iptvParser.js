@@ -235,6 +235,46 @@ const SYNONYM_MAP = { jr: 'junior' };
 function applySynonyms(str) {
     return str.split(/\s+/).map(w => SYNONYM_MAP[w.toLowerCase()] || w).join(' ');
 }
+
+// --- Unified ID scheme (iptv-org style) -----------------------------------
+// Every channel gets a single static "iptvo_" prefix instead of a duplicated
+// per-country prefix ("uk_SkySportsF1.uk"), because iptv-org's own official
+// id already carries the country as a ".cc" suffix — repeating it in the
+// prefix was pure redundancy and forced the addon manifest to enumerate
+// every ISO country code as a separate idPrefix just to route requests.
+// Channels that DON'T match iptv-org still get an id in the SAME shape
+// (PascalCaseName.cc) via synthesizeIptvOrgStyleId, so the whole catalog is
+// one consistent, self-describing scheme instead of two different ones.
+const IPTVO_ID_PREFIX = 'iptvo_';
+
+/**
+ * Converts a cleaned, lowercased channel name into iptv-org's own
+ * "PascalCaseWords" id-name convention (e.g. "sky sports f1" -> "SkySportsF1").
+ * @param {string} cleanName - Space-separated lowercase tokens.
+ * @return {string} A PascalCase identifier fragment.
+ */
+function toIptvOrgStyleName(cleanName) {
+    return (cleanName || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join('') || 'Unknown';
+}
+
+/**
+ * Builds an iptv-org-style id ("PascalCaseName.cc") for a channel that has
+ * no real iptv-org match, so unmatched and matched channels share one id
+ * shape. The country suffix is only appended when a real scope is known —
+ * an unscoped/global channel just doesn't get a ".cc" suffix, same as
+ * iptv-org itself has no "no country" convention to borrow.
+ * @param {string} cleanName - Space-separated lowercase cleaned name tokens.
+ * @param {string} countryScopeKey - Validated ISO country code, or 'global'.
+ * @return {string} A synthetic iptv-org-style id fragment (no prefix).
+ */
+function synthesizeIptvOrgStyleId(cleanName, countryScopeKey) {
+    const base = toIptvOrgStyleName(cleanName);
+    return (countryScopeKey && countryScopeKey !== 'global') ? `${base}.${countryScopeKey}` : base;
+}
 const { saveCacheToRedis, saveLogoUrl } = require('./redisCache');
 const { getLogoUrl, setLogoUrl } = require('./db');
 
@@ -597,6 +637,12 @@ async function parseM3uData(configKey, configObj) {
                 let cleanNameStr = normaliseFormat(rawName).toLowerCase();
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
+// Human-readable form of the same marker, re-appended to the display
+// name below when an iptv-org match resolves to the BASE channel's own
+// canonical name (e.g. "Teletoon+") — otherwise a "+1" timeshift feed
+// becomes visually indistinguishable from the base channel it was
+// matched against, even though its id correctly differs.
+const timeshiftDisplay = timeshiftMatch ? ` +${timeshiftMatch[1]}` : '';
 let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|vip|live|backup|alt|online)\b/gi, ' ');
                 // ReDoS-safe: use specific character classes without nested quantifiers
                 cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
@@ -627,8 +673,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 const countryScopeKey = (countryPrefix ? countryPrefix.replace(/[^A-Z]/g, '').toLowerCase() : null) || nameCountry || 'global';
                 const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
 
-                // No 'iptv:' prefix - colons in IDs can break client URL parsing
-                let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
+                // No 'iptv:' prefix - colons in IDs can break client URL parsing.
+                // Default id shape is now iptv-org style: a single static
+                // "iptvo_" prefix + "PascalCaseName.cc", so unmatched channels
+                // already look like the real thing below once a match is found.
+                let cId = `${IPTVO_ID_PREFIX}${synthesizeIptvOrgStyleId(cName, countryScopeKey)}${timeshiftSuffix}`;
 
                 // DEBUG: Log first few channels to trace iptv-org matching
                 // if (Math.random() < 0.01) {
@@ -650,8 +699,12 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                         || lookupChannel(baseCleanName, countryScopeKey);
                 }
                 if (iptvOrgMatch) {
-                    // Use iptv-org's official ID as the canonical identifier
-                    cId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
+                    // Use iptv-org's official ID as the canonical identifier. No
+                    // need to re-prefix with countryScopeKey — officialId already
+                    // carries the country as a ".cc" suffix (e.g. "SkySportsF1.uk"),
+                    // so the old "${country}_${officialId}" scheme was duplicating
+                    // the same country twice in one id.
+                    cId = `${IPTVO_ID_PREFIX}${iptvOrgMatch.officialId}${timeshiftSuffix}`;
                     // Queue is not needed for AI as we have an authoritative match
                 } else {
                     // 2. Check Supabase Override DB if no iptv-org match
@@ -688,15 +741,22 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 logoTrack.set(cId, { url: finalLogo, name: cName });
                 // Store iptv-org logo separately for fallback chain
                 const iptvOrgLogo = iptvOrgMatch ? iptvOrgMatch.logo : null;
-                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch };
+                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay };
 
             } else if (t.startsWith('http') && cItem) {
-                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch } = cItem;
+                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay } = cItem;
                 const catId = `iptv_${grp.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}`;
                 groups.add(grp);
 
                 if (!tMap.has(cId)) {
-                    const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                    // Append the timeshift marker back on when the match resolved
+                    // to iptv-org's base-channel canonical name, which otherwise
+                    // carries no "+1" of its own (see timeshiftDisplay above).
+                    const displayName = iptvOrgMatch
+                        ? (timeshiftDisplay && !iptvOrgMatch.canonicalName.includes(timeshiftDisplay.trim())
+                            ? `${iptvOrgMatch.canonicalName}${timeshiftDisplay}`
+                            : iptvOrgMatch.canonicalName)
+                        : cName.replace(/\b\w/g, c => c.toUpperCase());
                     const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : logo;
                     const genres = pickGenres(iptvOrgMatch, grp);
                     const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
@@ -881,6 +941,12 @@ async function parseXtreamData(configKey, configObj) {
             let cleanNameStr = normaliseFormat(rawName).toLowerCase();
 const timeshiftMatch = cleanNameStr.match(/\+\s*(\d+)\b/);
 const timeshiftSuffix = timeshiftMatch ? `_plus${timeshiftMatch[1]}` : '';
+// Human-readable form of the same marker, re-appended to the display
+// name below when an iptv-org match resolves to the BASE channel's own
+// canonical name (e.g. "Teletoon+") — otherwise a "+1" timeshift feed
+// becomes visually indistinguishable from the base channel it was
+// matched against, even though its id correctly differs.
+const timeshiftDisplay = timeshiftMatch ? ` +${timeshiftMatch[1]}` : '';
 let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|720p|h265|vod|dolby|audio|vision|atmos|dv|dovi|ac3|eac3|vip|live|backup|alt|online)\b/gi, ' ');
             // ReDoS-safe: use specific character classes without nested quantifiers
             cName = cName.replace(/\b24\s*[\/_\-]?\s*7\b/gi, ' ');
@@ -904,9 +970,10 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 || (nameCountry && isValidCountryCode(nameCountry) ? nameCountry.toLowerCase() : null)
                 || 'global';
             const baseCleanName = applySynonyms(cName).replace(/[^a-z0-9]/g, "") || "unknown";
-            
-            // No 'iptv:' prefix - colons in IDs can break client URL parsing
-            let cId = `${countryScopeKey}_${baseCleanName}${timeshiftSuffix}`;
+
+            // No 'iptv:' prefix - colons in IDs can break client URL parsing.
+            // Same unified iptv-org-style scheme as the M3U parsing path above.
+            let cId = `${IPTVO_ID_PREFIX}${synthesizeIptvOrgStyleId(cName, countryScopeKey)}${timeshiftSuffix}`;
 
             // 1. Check iptv-org reference data first (authoritative source) using cleaned name
             // Only run iptv-org matching if explicitly enabled in config
@@ -919,8 +986,9 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     || lookupChannel(baseCleanName, countryScopeKey);
             }
             if (iptvOrgMatch) {
-                // Use iptv-org's official ID as the canonical identifier
-                cId = `${iptvOrgMatch.countryScopeKey || 'global'}_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
+                // Use iptv-org's official ID as the canonical identifier. officialId
+                // already carries the country as a ".cc" suffix, so no re-prefixing.
+                cId = `${IPTVO_ID_PREFIX}${iptvOrgMatch.officialId}${timeshiftSuffix}`;
             } else {
                 // 2. Check Supabase Override DB if no iptv-org match
                 const dbMapping = overridesMap.get(rawName) || null;
@@ -954,7 +1022,15 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             groups.add(finalGrp);
 
             if (!tMap.has(cId)) {
-                const displayName = iptvOrgMatch ? iptvOrgMatch.canonicalName : cName.replace(/\b\w/g, c => c.toUpperCase());
+                // Append the timeshift marker back on when the match resolved to
+                // iptv-org's base-channel canonical name (see timeshiftDisplay
+                // above) — otherwise a "+1" feed becomes visually identical to
+                // the base channel it matched against.
+                const displayName = iptvOrgMatch
+                    ? (timeshiftDisplay && !iptvOrgMatch.canonicalName.includes(timeshiftDisplay.trim())
+                        ? `${iptvOrgMatch.canonicalName}${timeshiftDisplay}`
+                        : iptvOrgMatch.canonicalName)
+                    : cName.replace(/\b\w/g, c => c.toUpperCase());
                 const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : finalLogo;
                 const genres = pickGenres(iptvOrgMatch, finalGrp);
                 const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
