@@ -113,6 +113,16 @@ const DEFAULT_SOURCES = [
     { source: 'epgshare01-us', kind: 'country', url: 'https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz', region: 'us', notes: 'USA' },
     { source: 'imjhnz', kind: 'aggregate', url: 'https://i.mjh.nz/all/epg.xml', region: 'global', notes: 'i.mjh.nz broad aggregate' },
     { source: 'globetvapp', kind: 'country', url: 'https://raw.githubusercontent.com/globetvapp/epg/main/Usa/usa1.xml.gz', region: 'us', notes: 'globetvapp USA guide (GitHub raw)' },
+    // Open-EPG (open-epg.com), per-country XMLTV files. Their site notes an
+    // ongoing internal migration ("MERGE IS HAPPENING") as of this writing,
+    // so treat these as best-effort: a broken URL fails closed (isolated
+    // per-source, logged, error_count incremented) rather than affecting
+    // anything else — if one of these starts 404ing after their migration
+    // finishes, check open-epg.com/app/epgguide.php for the current filename
+    // and update the row via upsertEpgSource / the epg_sources table.
+    { source: 'openepg-uk', kind: 'country', url: 'https://www.open-epg.com/files/unitedkingdom.xml.gz', region: 'uk', notes: 'Open-EPG United Kingdom' },
+    { source: 'openepg-ie', kind: 'country', url: 'https://www.open-epg.com/files/ireland.xml.gz', region: 'ie', notes: 'Open-EPG Ireland' },
+    { source: 'openepg-in', kind: 'country', url: 'https://www.open-epg.com/files/india.xml.gz', region: 'in', notes: 'Open-EPG India' },
 ];
 
 /** Seed the epg_sources registry once (idempotent upsert); isolates per-source failures. */
@@ -224,8 +234,17 @@ function parseXmlDate(x) {
 function normalizeSourceId(rawId) {
     if (!rawId) return null;
     const r = rawId.toLowerCase().trim().replace(/^['"#]+/, '').replace(/\s+/g, ' ');
-    // name.cc form
-    if (/^[a-z0-9 .'-]+\.(us|uk|gb|es|de|fr|it|ca|au|nz|net|ae|ru|br|ar|mx|tr|in|gr|pt|nl|be|se|no|dk|fi|pl|cz|ro|bg|rs|hr|si|il|za|jp|kr|tw|th|ph|id|my|sg|hk|cn)$/i.test(r)) {
+    // name.cc form. Previously this only accepted a fixed ~46-country
+    // shortlist, which silently dropped every programme for a channel id
+    // ending in any of the ~200 other real country codes (e.g. "GloboSP.br",
+    // "Caracol.co", "SkySportsF1.ie", "ESPN.pe") before it ever reached
+    // storage — the same class of bug as the addon manifest's idPrefixes gap.
+    // Delegate to the same isValidCountryCode() the rest of the matching
+    // pipeline already trusts, so this list can never drift out of sync
+    // again. 'net' is kept as an explicit extra suffix (not a country code)
+    // for backward compatibility with sources that already used it.
+    const m = /^([a-z0-9 .'-]+)\.([a-z]{2,3})$/i.exec(r);
+    if (m && (m[2] === 'net' || isValidCountryCode(m[2]))) {
         return r;
     }
     return null;
