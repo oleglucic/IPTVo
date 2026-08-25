@@ -310,9 +310,19 @@ app.post('/api/test-config', requireAuth, testConfigLimiter, async (req, res) =>
             return res.json({ channels: streams.length, groups: groupSet.size });
         }
         if (!m3uUrl) return res.status(400).json({ error: 'Missing M3U Stream URL' });
-        if (!isSafeUrl(m3uUrl)) return res.status(400).json({ error: 'Invalid M3U URL: private/internal addresses not allowed' });
+        let normalizedM3uUrl;
+        try {
+            const parsedM3uUrl = new URL(m3uUrl);
+            if (!['http:', 'https:'].includes(parsedM3uUrl.protocol)) {
+                return res.status(400).json({ error: 'Invalid M3U URL: only http/https are allowed' });
+            }
+            normalizedM3uUrl = parsedM3uUrl.toString();
+        } catch (_) {
+            return res.status(400).json({ error: 'Invalid M3U Stream URL' });
+        }
+        if (!isSafeUrl(normalizedM3uUrl)) return res.status(400).json({ error: 'Invalid M3U URL: private/internal addresses not allowed' });
         console.log('[TestConfig] Fetching M3U playlist');
-        const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, responseType: 'arraybuffer', timeout: 20000, maxRedirects: 0 });
+        const m3uRes = await axios.get(normalizedM3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, responseType: 'arraybuffer', timeout: 20000, maxRedirects: 0 });
         const text = Buffer.from(m3uRes.data).toString('utf8');
         const lines = text.split('\n');
         let channels = 0;
