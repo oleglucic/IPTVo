@@ -8,7 +8,7 @@ const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEnt
 const { run: runEpgHub, seedSources: seedEpgHub, backfillCanonicalAliases } = require('./epgHub');
 const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
 const { isValidCountryCode } = require('./iptvOrgRef');
-const { getCatchupStreams, snapshotAllEpgToHistory } = require('./catchup');
+const { getCatchupStreams, isCatchupCapableUrl, snapshotAllEpgToHistory } = require('./catchup');
 const { getPremiumPoster } = require('./imageEngine');
 const { initSchema } = require('./dbInit');
 const { pruneEpgHistory } = require('./db');
@@ -1389,7 +1389,25 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
     let catchupEntries = [];
     if (channel.meta.hasCatchup && channel.streams.length > 0) {
         try {
-            catchupEntries = await getCatchupStreams(id, channel.streams[0].url, 48);
+            // Don't assume the top-scored stream (streams[0]) is catch-up
+            // capable — a channel can aggregate multiple sources and only
+            // some may follow the Xtream live-path convention buildCatchupUrl
+            // needs. Try each in score order and use the first that qualifies.
+            const catchupSource = channel.streams.find(s => isCatchupCapableUrl(s.url));
+            if (catchupSource) {
+                // Use the channel's own advertised catch-up depth (tv_archive_duration
+                // / catchup-days) instead of a hardcoded 48h — a provider offering 7
+                // days of catch-up only ever surfaced the most recent 2 days' worth
+                // of entries otherwise. Capped to the epg_history retention window
+                // (7 days — see pruneEpgHistory) since nothing older survives anyway,
+                // and floored at 48h as a sane minimum for channels with a missing
+                // or implausibly small catchupDays value.
+                const declaredDays = Number(channel.meta.catchupDays);
+                const hoursBack = Number.isFinite(declaredDays) && declaredDays > 0
+                    ? Math.min(Math.max(declaredDays * 24, 48), 7 * 24)
+                    : 48;
+                catchupEntries = await getCatchupStreams(id, catchupSource.url, hoursBack);
+            }
         } catch (e) {
             console.error('[Catchup] Failed to build catchup streams:', sanitizeForLog(e.message));
         }
