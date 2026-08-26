@@ -67,6 +67,7 @@ const ALIAS_PATTERNS = Array.from(ALIAS_BILATERAL.entries())
 let tokenIndex = new Map();        // sortedKey -> entry
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
 let fuseByFirst = new Map();       // leading token -> Fuse over entries sharing it
+let ambiguousNames = new Set();    // normalized names occurring in 2+ countries
 
 // Cap for the tier-3 subsequence bucket scan. Single-letter first tokens
 // ("m", "tv") gather thousands of iptv-org entries; without a bound a single
@@ -281,9 +282,11 @@ async function refresh() {
         // query for one of these now correctly falls through to the
         // token/subsequence/fuzzy tiers (which DO respect countryScopeKey and
         // isRegionConflicting) instead of returning a confidently wrong country.
+        const newAmbiguousNames = new Set();
         for (const [key, countries] of nameCountryCounts) {
             if (countries.size > 1) {
                 newExactMap.delete(`${key}|`);
+                newAmbiguousNames.add(key);
             }
         }
 
@@ -358,6 +361,7 @@ async function refresh() {
         fuseList = newFuseList;
         fuseByFirst = newFuseByFirst;
         tokenIndex = newTokenIndex;
+        ambiguousNames = newAmbiguousNames;
 
         // Bucket token entries by their leading token — from the source name,
         // not the alphabetical sortedKey — so the subsequence tier in
@@ -504,7 +508,10 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     // ---- Tier 2: token-set exact (order-insensitive) ----
     const tokEntry = tokenIndex.get(sortedKey);
     if (tokEntry) {
-        if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
+        // Reject ambiguous names when lookup is global (no country to disambiguate)
+        if ((!countryScopeKey || countryScopeKey === 'global') && tokEntry.country && ambiguousNames.has(normalize(tokEntry.name))) {
+            // This name exists in multiple countries; without a country scope, we can't pick the right one
+        } else if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
             return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
         }
     }
@@ -535,6 +542,8 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
             for (let i = 0; i < scanLimit; i++) {
                 const entry = bucket[i];
                 if (countryScopeKey && countryScopeKey !== 'global' && entry.country && entry.country !== countryScopeKey) continue;
+                // Reject ambiguous names when lookup is global
+                if ((!countryScopeKey || countryScopeKey === 'global') && entry.country && ambiguousNames.has(normalize(entry.name))) continue;
                 const candToks = tokenize(entry.name, false);
                 if (candToks.length < toks.length) continue;
                 if (orderSensitive ? isSubsequence(toks, candToks) : isTokenSubset(toks, candToks)) {
