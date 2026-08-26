@@ -44,13 +44,14 @@ function extractXtreamCatchupInfo(stream) {
  * @returns {string | null}
  */
 function buildCatchupUrl(liveUrl, startMs, durationMinutes) {
-    // Strip a trailing query string/fragment before matching — many providers
-    // append an auth token or extension override (e.g. "?token=abc",
-    // "?play_token=..."), which a hard `$` anchor after the extension would
-    // reject outright, silently producing zero catch-up entries for every
-    // channel from that provider even though tv_archive=1 was detected fine.
-    const stripped = liveUrl.replace(/[?#].*$/, '');
-    const match = stripped.match(/^(https?:\/\/[^\/]+)\/live\/([^\/]+)\/([^\/]+)\/(\d+)\.\w+\/?$/i);
+    // Parse URL to extract query string before matching path. Many providers
+    // append auth tokens or extension overrides (e.g. "?token=abc",
+    // "?play_token=...") that must be preserved when building the timeshift
+    // URL, while the path match must work independently of query/fragment.
+    const queryMatch = liveUrl.match(/([?#].*)$/);
+    const queryPart = queryMatch ? queryMatch[1] : '';
+    const pathOnly = liveUrl.replace(/[?#].*$/, '');
+    const match = pathOnly.match(/^(https?:\/\/[^\/]+)\/live\/([^\/]+)\/([^\/]+)\/(\d+)\.\w+\/?$/i);
     if (!match) return null;
     const [, domain, user, pass, streamId] = match;
 
@@ -58,7 +59,8 @@ function buildCatchupUrl(liveUrl, startMs, durationMinutes) {
     const pad = (n) => String(n).padStart(2, '0');
     const start = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}:${pad(d.getUTCHours())}-${pad(d.getUTCMinutes())}`;
 
-    return `${domain}/streaming/timeshift.php?username=${user}&password=${pass}&stream=${streamId}&start=${start}&duration=${Math.round(durationMinutes)}`;
+    // Preserve auth query params from original live URL when constructing timeshift URL
+    return `${domain}/streaming/timeshift.php?username=${user}&password=${pass}&stream=${streamId}&start=${start}&duration=${Math.round(durationMinutes)}${queryPart}`;
 }
 
 /**
