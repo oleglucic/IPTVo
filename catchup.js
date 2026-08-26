@@ -44,7 +44,13 @@ function extractXtreamCatchupInfo(stream) {
  * @returns {string | null}
  */
 function buildCatchupUrl(liveUrl, startMs, durationMinutes) {
-    const match = liveUrl.match(/^(https?:\/\/[^\/]+)\/live\/([^\/]+)\/([^\/]+)\/(\d+)\.\w+$/i);
+    // Strip a trailing query string/fragment before matching — many providers
+    // append an auth token or extension override (e.g. "?token=abc",
+    // "?play_token=..."), which a hard `$` anchor after the extension would
+    // reject outright, silently producing zero catch-up entries for every
+    // channel from that provider even though tv_archive=1 was detected fine.
+    const stripped = liveUrl.replace(/[?#].*$/, '');
+    const match = stripped.match(/^(https?:\/\/[^\/]+)\/live\/([^\/]+)\/([^\/]+)\/(\d+)\.\w+\/?$/i);
     if (!match) return null;
     const [, domain, user, pass, streamId] = match;
 
@@ -115,10 +121,26 @@ async function snapshotAllEpgToHistory(userCaches) {
     console.log(`[Catchup] EPG snapshot cycle complete - ${channelsProcessed} channels, ${totalSaved} program entries processed.`);
 }
 
+/**
+ * Checks whether a stream URL follows the Xtream-style live path
+ * (`/live/{user}/{pass}/{id}.ext`, optionally with query string/trailing
+ * slash) that buildCatchupUrl requires. Used to pick a catch-up-capable
+ * stream out of a channel's multiple sources instead of assuming the
+ * top-scored one always qualifies.
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isCatchupCapableUrl(url) {
+    if (!url) return false;
+    const stripped = url.replace(/[?#].*$/, '');
+    return /^(https?:\/\/[^\/]+)\/live\/([^\/]+)\/([^\/]+)\/(\d+)\.\w+\/?$/i.test(stripped);
+}
+
 module.exports = {
     extractM3uCatchupInfo,
     extractXtreamCatchupInfo,
     buildCatchupUrl,
+    isCatchupCapableUrl,
     getCatchupStreams,
     snapshotAllEpgToHistory
 };

@@ -67,7 +67,6 @@ const ALIAS_PATTERNS = Array.from(ALIAS_BILATERAL.entries())
 let tokenIndex = new Map();        // sortedKey -> entry
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
 let fuseByFirst = new Map();       // leading token -> Fuse over entries sharing it
-let ambiguousNames = new Set();    // normalized names occurring in 2+ countries
 
 // Cap for the tier-3 subsequence bucket scan. Single-letter first tokens
 // ("m", "tv") gather thousands of iptv-org entries; without a bound a single
@@ -282,11 +281,9 @@ async function refresh() {
         // query for one of these now correctly falls through to the
         // token/subsequence/fuzzy tiers (which DO respect countryScopeKey and
         // isRegionConflicting) instead of returning a confidently wrong country.
-        const newAmbiguousNames = new Set();
         for (const [key, countries] of nameCountryCounts) {
             if (countries.size > 1) {
                 newExactMap.delete(`${key}|`);
-                newAmbiguousNames.add(key);
             }
         }
 
@@ -361,7 +358,6 @@ async function refresh() {
         fuseList = newFuseList;
         fuseByFirst = newFuseByFirst;
         tokenIndex = newTokenIndex;
-        ambiguousNames = newAmbiguousNames;
 
         // Bucket token entries by their leading token — from the source name,
         // not the alphabetical sortedKey — so the subsequence tier in
@@ -508,10 +504,7 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     // ---- Tier 2: token-set exact (order-insensitive) ----
     const tokEntry = tokenIndex.get(sortedKey);
     if (tokEntry) {
-        // Reject ambiguous names when lookup is global (no country to disambiguate)
-        if ((!countryScopeKey || countryScopeKey === 'global') && tokEntry.country && ambiguousNames.has(normalize(tokEntry.name))) {
-            // This name exists in multiple countries; without a country scope, we can't pick the right one
-        } else if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
+        if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
             return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
         }
     }
@@ -542,8 +535,6 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
             for (let i = 0; i < scanLimit; i++) {
                 const entry = bucket[i];
                 if (countryScopeKey && countryScopeKey !== 'global' && entry.country && entry.country !== countryScopeKey) continue;
-                // Reject ambiguous names when lookup is global
-                if ((!countryScopeKey || countryScopeKey === 'global') && entry.country && ambiguousNames.has(normalize(entry.name))) continue;
                 const candToks = tokenize(entry.name, false);
                 if (candToks.length < toks.length) continue;
                 if (orderSensitive ? isSubsequence(toks, candToks) : isTokenSubset(toks, candToks)) {
@@ -651,18 +642,35 @@ function resolveGroupScope(rawGroup) {
     const out = { code: null, scope: 'global', prefix: '', rest: raw };
     if (!raw) return out;
 
+    // Providers separate a leading code/container from the rest with a pipe,
+    // dash, or colon MOST of the time, but some use a bare standalone "I"
+    // (e.g. "SR I SERBIA") — presumably a typo/stand-in for "|". Recognize it
+    // as an equivalent separator everywhere below, but only as its own
+    // whole word (\bI\b) so it never eats a real word ending or starting in
+    // "i" ("Israel", "India", "iSport"...).
+    const SEP = '(?:[|\\-:]|\\bI\\b)';
+
     // Leading ISO code, either bare ("UK") or as a two-tier prefix ("US | Sports",
-    // "ES - Laliga"). The bare form matters because providers scope a whole group
-    // to one country with a single code ("UK", "US", "GR") and iptv-org uses the
-    // spoken-language names ("UK" not "GB"). Check the spaced form first so its
-    // rest keeps the separator-normalized leftover.
-    const m = raw.match(/^([A-Za-z]{2,3})\s*[|\-:]\s*(.*)$/);
+    // "ES - Laliga", "SR I SERBIA"). The bare form matters because providers scope
+    // a whole group to one country with a single code ("UK", "US", "GR") and
+    // iptv-org uses the spoken-language names ("UK" not "GB").
+    const m = raw.match(new RegExp(`^([A-Za-z]{2,3})\\s*${SEP}\\s*(.*)$`));
     if (m) {
         const code = m[1].toLowerCase();
+        const rest = m[2].trim();
         if (isValidCountryCode(code)) {
-            out.code = code; out.scope = code;
-            out.prefix = code.toUpperCase() + ' | ';
-            out.rest = m[2].trim();
+            // A short leading code can collide with an unrelated country's
+            // real ISO code (classic case: "SR" is a provider's own shorthand
+            // for "Srbija"/Serbia, but "sr" is ALSO the real ISO code for
+            // Suriname). When the rest of the title spells out a full,
+            // unambiguous country name that resolves to a DIFFERENT code,
+            // that's a far stronger signal than the short leading token —
+            // prefer it.
+            const restCode = countryCodeFromName(rest);
+            const finalCode = (restCode && restCode !== code) ? restCode : code;
+            out.code = finalCode; out.scope = finalCode;
+            out.prefix = finalCode.toUpperCase() + ' | ';
+            out.rest = rest;
             return out;
         }
     }
@@ -682,7 +690,7 @@ function resolveGroupScope(rawGroup) {
     }
 
     // Region container: first token is a continent/region header, not a country.
-    const r = raw.match(/^([A-Za-z]{3,})\s*[\|\-\:]\s*(.*)$/);
+    const r = raw.match(new RegExp(`^([A-Za-z]{3,})\\s*${SEP}\\s*(.*)$`));
     if (r) {
         const container = r[1].toLowerCase();
         if (REGION_CONTAINERS.has(container)) {
@@ -695,6 +703,56 @@ function resolveGroupScope(rawGroup) {
             }
         }
     }
+
+    // Last resort: no recognized separator/structure at all, but the group
+    // title itself may just BE (or contain) a country name outright — e.g. a
+    // bare "Serbia" group, or "Eurosport Serbia HD" with no separator. Scan
+    // whole-string, then word-by-word (and adjacent word pairs, for
+    // multi-word names like "United Kingdom"), preferring the longest match
+    // so e.g. "North Macedonia" wins over "Macedonia" alone. Deliberately
+    // name-based only (never a bare 2-3 letter code) — an unstructured scan
+    // for short codes would be far too prone to false positives on ordinary
+    // group text.
+    const wholeHit = countryCodeFromName(raw);
+    if (wholeHit) {
+        out.code = wholeHit; out.scope = wholeHit;
+        out.prefix = wholeHit.toUpperCase() + ' | ';
+        out.rest = raw;
+        return out;
+    }
+    const words = raw.split(/[^A-Za-z]+/).filter(Boolean);
+    let bestHit = null, bestLen = 0;
+    for (let i = 0; i < words.length; i++) {
+        for (const span of [words.slice(i, i + 1), words.slice(i, i + 2), words.slice(i, i + 3)]) {
+            if (span.length === 0) continue;
+            const phrase = span.join(' ');
+            if (phrase.length < 4) continue; // exclude bare 2-3 letter tokens here
+            const hit = countryCodeFromName(phrase);
+            if (hit && phrase.length > bestLen) { bestHit = hit; bestLen = phrase.length; }
+        }
+    }
+    if (bestHit) {
+        out.code = bestHit; out.scope = bestHit;
+        out.prefix = bestHit.toUpperCase() + ' | ';
+        out.rest = raw;
+        return out;
+    }
+
+    // Still nothing: providers also commonly TRAIL the country code instead of
+    // leading with it ("Eurosport UK", "ESPN US", "Sport DE"). Only trust the
+    // very last word for this (not any interior word) to keep false-positive
+    // risk low — an interior short word being an accidental valid code is far
+    // more likely in ordinary group text than the last word being one.
+    if (words.length >= 2) {
+        const lastWord = words[words.length - 1].toLowerCase();
+        if (lastWord.length <= 3 && isValidCountryCode(lastWord)) {
+            out.code = lastWord; out.scope = lastWord;
+            out.prefix = lastWord.toUpperCase() + ' | ';
+            out.rest = raw;
+            return out;
+        }
+    }
+
     return out;
 }
 
