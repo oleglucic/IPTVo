@@ -194,11 +194,12 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
         if (wasAlreadyMapped) continue;
 
         if (isAlt || isShortOrUnknown || hasBaseNameConflict || isOverMerged || isLowConfidence || !existing) {
-            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || 'global', priority });
+            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || 'global', priority, cId: ch.cId });
         }
     }
 
     const scopeMap = new Map(channelsToProcess.map(c => [c.name, c.scope]));
+    const cIdMap = new Map(channelsToProcess.map(c => [c.name, c.cId]));
     const priorityMap = new Map();
     for (const item of channelsToProcess) {
         const existingPriority = priorityMap.get(item.name);
@@ -228,6 +229,11 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                 const scope = batchScopeMap.get(raw) || 'global';
                 const sanitizedBase = cleanBase.replace(/[^a-z0-9]/g, '');
 
+                // Extract timeshift suffix from the original cId if present
+                const originalCId = cIdMap.get(raw) || '';
+                const timeshiftMatch = originalCId.match(/(_plus\d+)$/);
+                const timeshiftSuffix = timeshiftMatch ? timeshiftMatch[1] : '';
+
                 // Try to match the AI-cleaned name against iptv-org again
                 // This helps channels that weren't matched initially but might match after AI normalization
                 const iptvOrgMatch = lookupChannel(sanitizedBase, scope) || lookupChannelFuzzy(sanitizedBase, scope);
@@ -238,7 +244,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     // 'iptvo_' + officialId only — officialId already carries the
                     // country as a ".cc" suffix (e.g. "SkySportsF1.uk"), so no
                     // need to re-prefix with the country again.
-                    finalId = `iptvo_${iptvOrgMatch.officialId}`;
+                    finalId = `iptvo_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
                     console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" -> "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
                 } else {
                     // No iptv-org match yet. Synthesize an id in the SAME
@@ -248,7 +254,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     const pascalName = cleanBase.split(/\s+/).filter(Boolean)
                         .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('') || 'Unknown';
                     const suffix = (scope && scope !== 'global') ? `.${scope}` : '';
-                    finalId = `iptvo_${pascalName}${suffix}`;
+                    finalId = `iptvo_${pascalName}${suffix}${timeshiftSuffix}`;
                 }
 
                 globalAiCache.set(raw, finalId);
