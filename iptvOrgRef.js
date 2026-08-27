@@ -513,8 +513,24 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     // ---- Tier 2: token-set exact (order-insensitive) ----
     const tokEntry = tokenIndex.get(sortedKey);
     if (tokEntry) {
-        if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
-            return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
+        if (countryScopeKey && countryScopeKey !== 'global') {
+            // Scoped lookup: accept the first candidate matching the scope
+            if (tokEntry.country === countryScopeKey || tokEntry.country === '') {
+                return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
+            }
+        } else {
+            // Unscoped (global): only accept if exactly one unique candidate exists
+            // Build list of all entries with this sortedKey to check uniqueness
+            const allCandidates = [];
+            for (const [key, entry] of tokenIndex.entries()) {
+                if (key === sortedKey) allCandidates.push(entry);
+            }
+            // Accept only when exactly one unique officialId remains
+            const uniqueIds = new Set(allCandidates.map(e => e.officialId));
+            if (uniqueIds.size === 1) {
+                return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
+            }
+            // Multiple candidates — leave unmatched for override/AI
         }
     }
 
