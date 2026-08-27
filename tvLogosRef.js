@@ -123,6 +123,11 @@ let regionIndex = new Map();  // region key -> Map<normalizedName, url>
 let lastRefreshed = 0;
 let refreshInFlight = null;
 
+/**
+ * Creates a normalized channel name for logo matching.
+ * @param {string} name - The channel name to normalize.
+ * @return {string} The lowercase channel name with non-alphanumeric characters removed.
+ */
 function normalize(name) {
     return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -140,6 +145,10 @@ function stripSuffix(filename, suffix) {
     return noExt.replace(re, '');
 }
 
+/**
+ * Refreshes the channel logo indexes from the tv-logos repository.
+ * Failed refreshes leave the existing indexes unchanged.
+ */
 async function refresh() {
     if (refreshInFlight) return refreshInFlight;
     refreshInFlight = (async () => {
@@ -245,6 +254,10 @@ function lookupTvLogo(name, countryCode) {
 // wait into safe-sized steps instead of a single long timer.
 const MAX_SAFE_TIMEOUT = 2 ** 31 - 1;
 
+/**
+ * Schedules a refresh after the specified delay and continues the recurring refresh cycle.
+ * @param {number} delayMs - The delay in milliseconds before the refresh.
+ */
 function scheduleRefresh(delayMs) {
     const chunk = Math.min(delayMs, MAX_SAFE_TIMEOUT);
     setTimeout(() => {
@@ -257,6 +270,9 @@ function scheduleRefresh(delayMs) {
     }, chunk);
 }
 
+/**
+ * Refreshes the TV logo indexes immediately and starts the recurring refresh schedule.
+ */
 function startAutoRefresh() {
     refresh();
     scheduleRefresh(REFRESH_INTERVAL);

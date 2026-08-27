@@ -67,15 +67,11 @@ const GROUP_CATEGORY_KEYWORDS = [
 ];
 
 /**
- * Builds a single, quality-variant-agnostic "smart group" label ("UK | Sports")
- * from a resolved country scope and a genre category, so channels split
- * across multiple raw playlist groups by an incidental quality/backup tag
- * ("UK Sports HD", "UK Sports SD", "UK Sports VIP") collapse into one genre
- * instead of each becoming its own dropdown entry.
- * @param {Object|null} iptvOrgMatch - The iptv-org match, if any (supplies categories).
- * @param {string} countryScopeKey - Validated ISO country code, or 'global'.
- * @param {string} group - The raw playlist group label (fallback source for category).
- * @returns {string[]} One or more genre labels.
+ * Assigns a channel to a country-scoped genre label.
+ * @param {Object|null} iptvOrgMatch - The iptv-org match, when available.
+ * @param {string} countryScopeKey - The validated country code, or `global`.
+ * @param {string} group - The raw playlist group used to infer a genre when needed.
+ * @returns {string[]} The applicable genre label, or `Uncategorized` when none can be determined.
  */
 function pickGenres(iptvOrgMatch, countryScopeKey, group) {
     const g = (group || '').trim();
@@ -907,7 +903,7 @@ const published = publishParseResult(configKey, {
 }
 
 /**
- * Loads, normalizes, and caches live channel data from an Xtream server, including stream metadata and EPG information.
+ * Loads live channel data from an Xtream server, normalizes channels and streams, and updates the cache with EPG and logo metadata.
  * @param {string} configKey - The key identifying the configuration and its cache entry.
  * @param {Object} configObj - Xtream connection, filtering, EPG, and enrichment configuration.
  */
