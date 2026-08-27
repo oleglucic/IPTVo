@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">88.11% </span>
+                <span class="strong">88.51% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>126/143</span>
+                <span class='fraction'>131/148</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">76.85% </span>
+                <span class="strong">76% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>93/121</span>
+                <span class='fraction'>95/125</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">73.33% </span>
+                <span class="strong">75% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>11/15</span>
+                <span class='fraction'>12/16</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">93.54% </span>
+                <span class="strong">93.75% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>116/124</span>
+                <span class='fraction'>120/128</span>
             </div>
         
             
@@ -329,7 +329,13 @@
 <a name='L264'></a><a href='#L264'>264</a>
 <a name='L265'></a><a href='#L265'>265</a>
 <a name='L266'></a><a href='#L266'>266</a>
-<a name='L267'></a><a href='#L267'>267</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">2x</span>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -532,6 +538,7 @@
 <span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-yes">7x</span>
 <span class="cline-any cline-yes">7x</span>
 <span class="cline-any cline-yes">7x</span>
@@ -555,6 +562,11 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
@@ -791,11 +803,12 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
         <span class="missing-if-branch" title="if path not taken" >I</span>if (wasAlreadyMapped) <span class="cstat-no" title="statement not covered" >continue;</span>
 &nbsp;
         <span class="missing-if-branch" title="else path not taken" >E</span>if (isAlt || isShortOrUnknown || hasBaseNameConflict || isOverMerged || isLowConfidence || !existing) {
-            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || <span class="branch-1 cbranch-no" title="branch not covered" >'global',</span> priority });
+            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || <span class="branch-1 cbranch-no" title="branch not covered" >'global',</span> priority, cId: ch.cId });
         }
     }
 &nbsp;
     const scopeMap = new Map(channelsToProcess.map(c =&gt; [c.name, c.scope]));
+    const cIdMap = new Map(channelsToProcess.map(c =&gt; [c.name, c.cId]));
     const priorityMap = new Map();
     for (const item of channelsToProcess) {
         const existingPriority = priorityMap.get(item.name);
@@ -825,6 +838,11 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                 const scope = batchScopeMap.get(raw) || <span class="branch-1 cbranch-no" title="branch not covered" >'global';</span>
                 const sanitizedBase = cleanBase.replace(/[^a-z0-9]/g, '');
 &nbsp;
+                // Extract timeshift suffix from the original cId if present
+                const originalCId = cIdMap.get(raw) || <span class="branch-1 cbranch-no" title="branch not covered" >'';</span>
+                const timeshiftMatch = originalCId.match(/(_plus\d+)$/);
+                const timeshiftSuffix = timeshiftMatch ? <span class="branch-0 cbranch-no" title="branch not covered" >timeshiftMatch[1] </span>: '';
+&nbsp;
                 // Try to match the AI-cleaned name against iptv-org again
                 // This helps channels that weren't matched initially but might match after AI normalization
                 const iptvOrgMatch = lookupChannel(sanitizedBase, scope) || lookupChannelFuzzy(sanitizedBase, scope);
@@ -835,7 +853,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     // 'iptvo_' + officialId only — officialId already carries the
                     // country as a ".cc" suffix (e.g. "SkySportsF1.uk"), so no
                     // need to re-prefix with the country again.
-                    finalId = `iptvo_${iptvOrgMatch.officialId}`;
+                    finalId = `iptvo_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
                     console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" -&gt; "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
                 } else {
                     // No iptv-org match yet. Synthesize an id in the SAME
@@ -845,7 +863,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     const pascalName = cleanBase.split(/\s+/).filter(Boolean)
                         .map(w =&gt; w.charAt(0).toUpperCase() + w.slice(1)).join('') || <span class="branch-1 cbranch-no" title="branch not covered" >'Unknown';</span>
                     const suffix = (scope &amp;&amp; scope !== 'global') ? `.${scope}` : <span class="branch-1 cbranch-no" title="branch not covered" >'';</span>
-                    finalId = `iptvo_${pascalName}${suffix}`;
+                    finalId = `iptvo_${pascalName}${suffix}${timeshiftSuffix}`;
                 }
 &nbsp;
                 globalAiCache.set(raw, finalId);
@@ -868,7 +886,7 @@ module.exports = { startAiQueue, globalAiCache };</pre></td></tr></table></pre>
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-08-25T23:50:33.602Z
+                at 2026-08-27T14:33:56.096Z
             </div>
         <script src="../prettify.js"></script>
         <script>

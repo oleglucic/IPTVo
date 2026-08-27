@@ -156,24 +156,30 @@ describe('epgScheduleNextRefresh (coverage-informed EPG cadence)', () => {
 });
 
 describe('pickGenres (smart auto-grouping)', () => {
-  test('prefers iptv-org categories for a generic Uncategorized group', () => {
+  test('prefers the iptv-org category (capitalized) for a generic Uncategorized group', () => {
     const match = { categories: ['sports', 'news'] };
-    expect(iptvParser.pickGenres(match, 'Uncategorized')).toEqual(['sports', 'news']);
+    expect(iptvParser.pickGenres(match, 'global', 'Uncategorized')).toEqual(['Sports']);
   });
 
-  test('prefers iptv-org categories for a blank group', () => {
+  test('prefers the iptv-org category for a blank group', () => {
     const match = { categories: ['movies'] };
-    expect(iptvParser.pickGenres(match, '   ')).toEqual(['movies']);
+    expect(iptvParser.pickGenres(match, 'global', '   ')).toEqual(['Movies']);
   });
 
-  test('keeps the playlist group when it carries a real label', () => {
+  test('keeps the iptv-org category when the playlist group also carries a real label', () => {
     const match = { categories: ['sports'] };
-    expect(iptvParser.pickGenres(match, 'Sports')).toEqual(['Sports']);
+    expect(iptvParser.pickGenres(match, 'global', 'Sports')).toEqual(['Sports']);
   });
 
-  test('returns the group even without categories', () => {
-    expect(iptvParser.pickGenres(null, 'News')).toEqual(['News']);
-    expect(iptvParser.pickGenres({ categories: [] }, '')).toEqual(['Uncategorized']);
+  test('prefixes the category with the country when scope is resolved', () => {
+    const match = { categories: ['sports'] };
+    expect(iptvParser.pickGenres(match, 'uk', 'Sports')).toEqual(['UK | Sports']);
+  });
+
+  test('falls back to keyword inference on the group, or the group/country itself, without categories', () => {
+    expect(iptvParser.pickGenres(null, 'global', 'News')).toEqual(['News']);
+    expect(iptvParser.pickGenres({ categories: [] }, 'global', '')).toEqual(['Uncategorized']);
+    expect(iptvParser.pickGenres(null, 'us', 'Random Group')).toEqual(['US | General']);
   });
 });
 
