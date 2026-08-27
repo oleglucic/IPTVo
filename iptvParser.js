@@ -96,12 +96,12 @@ function pickGenres(iptvOrgMatch, countryScopeKey, group) {
     if (country && category) return [`${country} | ${category}`];
     if (category) return [category];
 
-    // Nothing detected at all — fall back to the raw group as-is (previous
-    // behavior) rather than losing the channel's genre entirely.
-    const generic = !g || /^uncategorized$/i.test(g) || /^\s*$/.test(g);
-    if (generic && country) return [`${country} | General`];
-    if (generic) return ['Uncategorized'];
-    return [g];
+    // No category detected (no iptv-org match, no keyword hit). With a
+    // resolved country, prefer a country-scoped "General" label over a raw,
+    // uninformative group name. Without one, fall back to the raw group as-is
+    // (previous behavior) rather than losing the channel's genre entirely.
+    if (country) return [`${country} | General`];
+    return [g || 'Uncategorized'];
 }
 
 /**
