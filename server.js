@@ -1287,7 +1287,15 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
         const passedThroughLogo = channel.meta.logo || engineImage;
         const centralEpg = epgByCh.get(chKey) || null;
         const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [chKey]: centralEpg } : {}) };
-        const epgDescription = getEpgText(chKey, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj.timezoneOffset || 0);
+        // ensureCache() resolves the real per-user config from the DB for the
+        // userId-based flow, but only assigns it to its own local parameter —
+        // it never propagates back to this handler's `configObj`, which stays
+        // stuck as the bare `{ _userId }` placeholder extractConfig() returns.
+        // ensureCache DOES stash the resolved config on the cache entry
+        // (`ud._configObj`), so prefer that — it's the same object for the
+        // legacy base64-config flow (where configObj was already real).
+        const effectiveConfigObj = (ud && ud._configObj) || configObj;
+        const epgDescription = getEpgText(chKey, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), effectiveConfigObj.timezoneOffset || 0);
         const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
             ...(s.groupTags ? s.groupTags.split(" • ") : []),
             ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -1340,7 +1348,11 @@ builder.defineMetaHandler(async ({ _type, id, _extra, config }) => {
     const passedThroughLogo = channel.meta.logo || engineImage;
     const centralEpg = await getEffectiveEpg(id, ud);
     const epgSources = { ...(ud && ud.epgData ? ud.epgData : {}), ...(centralEpg ? { [id]: centralEpg } : {}) };
-    const epgDescription = getEpgText(id, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), configObj ? configObj.timezoneOffset : 0);
+    // Same resolved-config fix as the catalog handler above — configObj here
+    // is the unresolved `{ _userId }` placeholder for userId-flow requests;
+    // ud._configObj holds what ensureCache() actually resolved from the DB.
+    const effectiveConfigObj = (ud && ud._configObj) || configObj;
+    const epgDescription = getEpgText(id, Object.keys(epgSources).length ? epgSources : (ud ? ud.epgData : {}), effectiveConfigObj ? effectiveConfigObj.timezoneOffset : 0);
     const aggregatedTagsArr = [...new Set(channel.streams.flatMap(s => [
         ...(s.groupTags ? s.groupTags.split(" • ") : []),
         ...((s.title && s.title !== "Direct Stream") ? s.title.split(" • ") : [])
@@ -1774,6 +1786,7 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
 });
 
 const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
+const { startAutoRefresh: startTvLogosRefresh } = require('./tvLogosRef');
 const { backgroundLogoRefresh } = require('./iptvParser');
 const { prewarm } = require('./prewarm');
 const PORT = process.env.PORT || 3000;
@@ -1814,6 +1827,7 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     }
 
     startIptvOrgRefresh();
+    startTvLogosRefresh();
 
     // Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
     setInterval(() => {

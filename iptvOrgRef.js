@@ -65,7 +65,6 @@ const ALIAS_PATTERNS = Array.from(ALIAS_BILATERAL.entries())
     .map(([k, v]) => [new RegExp(`\\b${k.replace(/[^a-z0-9]+/g, '\\s+')}\\b`, 'i'), v]);
 
 let tokenIndex = new Map();        // sortedKey -> entry
-let tokenAmbiguous = new Set();    // sortedKeys with multiple countries (ambiguous)
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
 let fuseByFirst = new Map();       // leading token -> Fuse over entries sharing it
 
@@ -217,7 +216,6 @@ async function refresh() {
         const newExactMap = new Map();
         const newFuseList = [];
         const newTokenIndex = new Map();   // sortedKey -> entry
-        const newTokenAmbiguous = new Set(); // sortedKeys with multiple countries
         // Tracks, per normalized name, which distinct countries have a channel
         // with that name. Used below to refuse to populate the unscoped
         // "name|" global fallback slot for names that collide across more
@@ -226,7 +224,6 @@ async function refresh() {
         // channel happened to load first, which is wrong far more often than
         // it's right for popular acronym-style names.
         const nameCountryCounts = new Map(); // normalizedName -> Set<country>
-        const tokenCountryCounts = new Map(); // sortedKey -> Set<country>
 
         for (const ch of channelsRes.data) {
             if (ch.closed) continue;
@@ -246,11 +243,6 @@ async function refresh() {
             }
             for (const sk of tokenKeys) {
                 if (!newTokenIndex.has(sk)) newTokenIndex.set(sk, entry);
-                // Track which countries have channels with this token set
-                if (countryLower) {
-                    if (!tokenCountryCounts.has(sk)) tokenCountryCounts.set(sk, new Set());
-                    tokenCountryCounts.get(sk).add(countryLower);
-                }
             }
 
             for (const n of names) {
@@ -292,15 +284,6 @@ async function refresh() {
         for (const [key, countries] of nameCountryCounts) {
             if (countries.size > 1) {
                 newExactMap.delete(`${key}|`);
-            }
-        }
-
-        // Mark token keys that are ambiguous (multiple countries) so Tier 2/3
-        // lookups return null when countryScopeKey is unknown/global instead of
-        // returning an arbitrary first-indexed channel.
-        for (const [sk, countries] of tokenCountryCounts) {
-            if (countries.size > 1) {
-                newTokenAmbiguous.add(sk);
             }
         }
 
@@ -375,7 +358,6 @@ async function refresh() {
         fuseList = newFuseList;
         fuseByFirst = newFuseByFirst;
         tokenIndex = newTokenIndex;
-        tokenAmbiguous = newTokenAmbiguous;
 
         // Bucket token entries by their leading token — from the source name,
         // not the alphabetical sortedKey — so the subsequence tier in
@@ -483,8 +465,17 @@ function lookupChannelFuzzy(cleanName, countryScopeKey, firstTokHint) {
         if (result.score > 0.2) continue; // enforce conservative threshold
         const match = result.item;
 
-        // Country filtering
-        if (countryScopeKey && match.country !== countryScopeKey) continue;
+        // Country filtering. countryScopeKey can be the literal string
+        // 'global' (no country known) — that's a sentinel, not a real ISO
+        // code, so it must be excluded here exactly like Tiers 2 and 3 do
+        // (`!countryScopeKey || countryScopeKey === 'global'`). Without this,
+        // `match.country !== 'global'` is true for every real candidate
+        // (country codes are never literally "global"), so EVERY fuzzy
+        // candidate was rejected on every unscoped lookup — the entire fuzzy
+        // tier was silently dead whenever no country was resolved, which is
+        // the majority of real-world lookups (any group/channel name that
+        // doesn't cleanly resolve to one country).
+        if (countryScopeKey && countryScopeKey !== 'global' && match.country !== countryScopeKey) continue;
         // Reject regional/pan-regional feeds that share the scope code (e.g.
         // "HBO Latin America" is country 'us' but is not the US feed).
         if (isRegionConflicting(match.name, countryScopeKey)) continue;
@@ -522,11 +513,7 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     // ---- Tier 2: token-set exact (order-insensitive) ----
     const tokEntry = tokenIndex.get(sortedKey);
     if (tokEntry) {
-        // When countryScopeKey is unknown/global and the token set is ambiguous
-        // (exists in multiple countries), return null instead of an arbitrary match
-        if ((!countryScopeKey || countryScopeKey === 'global') && tokenAmbiguous.has(sortedKey)) {
-            // Ambiguous token set without country scope - fall through to next tier
-        } else if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
+        if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {
             return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
         }
     }
@@ -554,7 +541,6 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
         for (const brand of brandsToScan) {
             const bucket = tokenByFirst.get(brand) || [];
             const scanLimit = bucket.length > MAX_T3_SCAN ? MAX_T3_SCAN : bucket.length;
-            const candidates = [];
             for (let i = 0; i < scanLimit; i++) {
                 const entry = bucket[i];
                 if (countryScopeKey && countryScopeKey !== 'global' && entry.country && entry.country !== countryScopeKey) continue;
@@ -562,21 +548,8 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
                 if (candToks.length < toks.length) continue;
                 if (orderSensitive ? isSubsequence(toks, candToks) : isTokenSubset(toks, candToks)) {
                     if (isRegionConflicting(entry.name, countryScopeKey)) continue;
-                    candidates.push(entry);
+                    return { ...buildMatchResult(entry), fuzzy: true, matchFuzzy: 'subsequence' };
                 }
-            }
-            // When countryScopeKey is unknown/global, only return a match if all
-            // candidates are from the same country (unambiguous). If multiple
-            // distinct countries match, return null to avoid arbitrary selection.
-            if (candidates.length > 0) {
-                if (!countryScopeKey || countryScopeKey === 'global') {
-                    const countries = new Set(candidates.map(c => c.country).filter(Boolean));
-                    if (countries.size > 1) {
-                        // Ambiguous: multiple countries match - fall through
-                        continue;
-                    }
-                }
-                return { ...buildMatchResult(candidates[0]), fuzzy: true, matchFuzzy: 'subsequence' };
             }
         }
     }
