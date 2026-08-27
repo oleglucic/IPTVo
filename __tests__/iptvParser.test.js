@@ -158,22 +158,22 @@ describe('epgScheduleNextRefresh (coverage-informed EPG cadence)', () => {
 describe('pickGenres (smart auto-grouping)', () => {
   test('prefers iptv-org categories for a generic Uncategorized group', () => {
     const match = { categories: ['sports', 'news'] };
-    expect(iptvParser.pickGenres(match, 'Uncategorized')).toEqual(['sports', 'news']);
+    expect(iptvParser.pickGenres(match, null, 'Uncategorized')).toEqual(['Sports']);
   });
 
   test('prefers iptv-org categories for a blank group', () => {
     const match = { categories: ['movies'] };
-    expect(iptvParser.pickGenres(match, '   ')).toEqual(['movies']);
+    expect(iptvParser.pickGenres(match, null, '   ')).toEqual(['Movies']);
   });
 
   test('keeps the playlist group when it carries a real label', () => {
     const match = { categories: ['sports'] };
-    expect(iptvParser.pickGenres(match, 'Sports')).toEqual(['Sports']);
+    expect(iptvParser.pickGenres(match, null, 'Sports')).toEqual(['Sports']);
   });
 
   test('returns the group even without categories', () => {
-    expect(iptvParser.pickGenres(null, 'News')).toEqual(['News']);
-    expect(iptvParser.pickGenres({ categories: [] }, '')).toEqual(['Uncategorized']);
+    expect(iptvParser.pickGenres(null, null, 'News')).toEqual(['News']);
+    expect(iptvParser.pickGenres({ categories: [] }, null, '')).toEqual(['Uncategorized']);
   });
 });
 
