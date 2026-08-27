@@ -95,12 +95,13 @@ function pickGenres(iptvOrgMatch, countryScopeKey, group) {
 
     if (country && category) return [`${country} | ${category}`];
     if (category) return [category];
-    if (country) return [`${country} | General`];
 
     // Nothing detected at all — fall back to the raw group as-is (previous
     // behavior) rather than losing the channel's genre entirely.
     const generic = !g || /^uncategorized$/i.test(g) || /^\s*$/.test(g);
-    return [generic ? 'Uncategorized' : g];
+    if (generic && country) return [`${country} | General`];
+    if (generic) return ['Uncategorized'];
+    return [g];
 }
 
 /**
@@ -808,7 +809,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     const tvLogo = lookupTvLogo(displayName, countryScopeKey);
                     const logoChain = [tvLogo, iptvOrgLogo, logo].filter(Boolean);
                     const displayLogo = logoChain[0] || null;
-                    const genres = pickGenres(iptvOrgMatch, countryScopeKey, grp);
+                    const genres = pickGenres(iptvOrgMatch, countryScopeKey, rawGrp);
                     const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
@@ -1086,7 +1087,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 const tvLogo = lookupTvLogo(displayName, countryScopeKey);
                 const logoChain = [tvLogo, iptvOrgLogo, finalLogo].filter(Boolean);
                 const displayLogo = logoChain[0] || null;
-                const genres = pickGenres(iptvOrgMatch, countryScopeKey, finalGrp);
+                const genres = pickGenres(iptvOrgMatch, countryScopeKey, rawGrp);
                 const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
