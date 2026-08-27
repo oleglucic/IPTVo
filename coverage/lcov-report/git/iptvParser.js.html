@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">23.52% </span>
+                <span class="strong">23.44% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>208/884</span>
+                <span class='fraction'>207/883</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">19.57% </span>
+                <span class="strong">19.64% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>166/848</span>
+                <span class='fraction'>166/845</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">24.78% </span>
+                <span class="strong">24.67% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>174/702</span>
+                <span class='fraction'>173/701</span>
             </div>
         
             
@@ -1658,7 +1658,8 @@
 <a name='L1593'></a><a href='#L1593'>1593</a>
 <a name='L1594'></a><a href='#L1594'>1594</a>
 <a name='L1595'></a><a href='#L1595'>1595</a>
-<a name='L1596'></a><a href='#L1596'>1596</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">3x</span>
+<a name='L1596'></a><a href='#L1596'>1596</a>
+<a name='L1597'></a><a href='#L1597'>1597</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
@@ -1755,11 +1756,12 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">7x</span>
 <span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -3350,12 +3352,13 @@ function pickGenres(iptvOrgMatch, countryScopeKey, group) {
 &nbsp;
     if (country &amp;&amp; category) return [`${country} | ${category}`];
     if (category) return [category];
-    if (country) return [`${country} | General`];
 &nbsp;
-    // Nothing detected at all — fall back to the raw group as-is (previous
-    // behavior) rather than losing the channel's genre entirely.
-    const generic = !g || <span class="branch-1 cbranch-no" title="branch not covered" >/^uncategorized$/i.test(g) </span>|| <span class="branch-2 cbranch-no" title="branch not covered" >/^\s*$/.test(g);</span>
-    return [generic ? 'Uncategorized' : <span class="branch-1 cbranch-no" title="branch not covered" >g]</span>;
+    // No category detected (no iptv-org match, no keyword hit). With a
+    // resolved country, prefer a country-scoped "General" label over a raw,
+    // uninformative group name. Without one, fall back to the raw group as-is
+    // (previous behavior) rather than losing the channel's genre entirely.
+    if (country) return [`${country} | General`];
+    return [g || 'Uncategorized'];
 }
 &nbsp;
 /**
@@ -4063,7 +4066,7 @@ let cName = <span class="cstat-no" title="statement not covered" >cleanNameStr.r
                     const tvLogo = <span class="cstat-no" title="statement not covered" >lookupTvLogo(displayName, countryScopeKey);</span>
                     const logoChain = <span class="cstat-no" title="statement not covered" >[tvLogo, iptvOrgLogo, logo].filter(Boolean);</span>
                     const displayLogo = <span class="cstat-no" title="statement not covered" >logoChain[0] || null;</span>
-                    const genres = <span class="cstat-no" title="statement not covered" >pickGenres(iptvOrgMatch, countryScopeKey, grp);</span>
+                    const genres = <span class="cstat-no" title="statement not covered" >pickGenres(iptvOrgMatch, countryScopeKey, rawGrp);</span>
                     const mItem = <span class="cstat-no" title="statement not covered" >{ id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo &amp;&amp; catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };</span>
 <span class="cstat-no" title="statement not covered" >                    tMap.set(cId, { meta: mItem, streams: [] });</span>
 <span class="cstat-no" title="statement not covered" >                    tCat.push(mItem);</span>
@@ -4341,7 +4344,7 @@ let cName = <span class="cstat-no" title="statement not covered" >cleanNameStr.r
                 const tvLogo = <span class="cstat-no" title="statement not covered" >lookupTvLogo(displayName, countryScopeKey);</span>
                 const logoChain = <span class="cstat-no" title="statement not covered" >[tvLogo, iptvOrgLogo, finalLogo].filter(Boolean);</span>
                 const displayLogo = <span class="cstat-no" title="statement not covered" >logoChain[0] || null;</span>
-                const genres = <span class="cstat-no" title="statement not covered" >pickGenres(iptvOrgMatch, countryScopeKey, finalGrp);</span>
+                const genres = <span class="cstat-no" title="statement not covered" >pickGenres(iptvOrgMatch, countryScopeKey, rawGrp);</span>
                 const mItem = <span class="cstat-no" title="statement not covered" >{ id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo &amp;&amp; catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };</span>
 <span class="cstat-no" title="statement not covered" >                tMap.set(cId, { meta: mItem, streams: [] });</span>
 <span class="cstat-no" title="statement not covered" >                tCat.push(mItem);</span>
@@ -4855,7 +4858,7 @@ module.exports = { streamFetchIPTV, getEpgText, userCaches, getUserCache, MAX_CA
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-08-27T14:33:56.096Z
+                at 2026-08-27T14:51:08.778Z
             </div>
         <script src="../prettify.js"></script>
         <script>

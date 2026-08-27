@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">10% </span>
+                <span class="strong">9.75% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>36/360</span>
+                <span class='fraction'>36/369</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">1.6% </span>
+                <span class="strong">1.56% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>4/250</span>
+                <span class='fraction'>4/256</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">4.34% </span>
+                <span class="strong">4.16% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>1/23</span>
+                <span class='fraction'>1/24</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">12.02% </span>
+                <span class="strong">11.74% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>35/291</span>
+                <span class='fraction'>35/298</span>
             </div>
         
             
@@ -849,7 +849,23 @@
 <a name='L784'></a><a href='#L784'>784</a>
 <a name='L785'></a><a href='#L785'>785</a>
 <a name='L786'></a><a href='#L786'>786</a>
-<a name='L787'></a><a href='#L787'>787</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">2x</span>
+<a name='L787'></a><a href='#L787'>787</a>
+<a name='L788'></a><a href='#L788'>788</a>
+<a name='L789'></a><a href='#L789'>789</a>
+<a name='L790'></a><a href='#L790'>790</a>
+<a name='L791'></a><a href='#L791'>791</a>
+<a name='L792'></a><a href='#L792'>792</a>
+<a name='L793'></a><a href='#L793'>793</a>
+<a name='L794'></a><a href='#L794'>794</a>
+<a name='L795'></a><a href='#L795'>795</a>
+<a name='L796'></a><a href='#L796'>796</a>
+<a name='L797'></a><a href='#L797'>797</a>
+<a name='L798'></a><a href='#L798'>798</a>
+<a name='L799'></a><a href='#L799'>799</a>
+<a name='L800'></a><a href='#L800'>800</a>
+<a name='L801'></a><a href='#L801'>801</a>
+<a name='L802'></a><a href='#L802'>802</a>
+<a name='L803'></a><a href='#L803'>803</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
@@ -1365,7 +1381,23 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -2150,8 +2182,24 @@ function <span class="fstat-no" title="function not covered" >lookupChannelSmart
     // ---- Tier 2: token-set exact (order-insensitive) ----
     const tokEntry = <span class="cstat-no" title="statement not covered" >tokenIndex.get(sortedKey);</span>
 <span class="cstat-no" title="statement not covered" >    if (tokEntry) {</span>
-<span class="cstat-no" title="statement not covered" >        if (!countryScopeKey || countryScopeKey === 'global' || tokEntry.country === countryScopeKey || tokEntry.country === '') {</span>
-<span class="cstat-no" title="statement not covered" >            return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };</span>
+<span class="cstat-no" title="statement not covered" >        if (countryScopeKey &amp;&amp; countryScopeKey !== 'global') {</span>
+            // Scoped lookup: accept the first candidate matching the scope
+<span class="cstat-no" title="statement not covered" >            if (tokEntry.country === countryScopeKey || tokEntry.country === '') {</span>
+<span class="cstat-no" title="statement not covered" >                return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };</span>
+            }
+        } else {
+            // Unscoped (global): only accept if exactly one unique candidate exists
+            // Build list of all entries with this sortedKey to check uniqueness
+            const allCandidates = <span class="cstat-no" title="statement not covered" >[];</span>
+<span class="cstat-no" title="statement not covered" >            for (const [key, entry] of tokenIndex.entries()) {</span>
+<span class="cstat-no" title="statement not covered" >                if (key === sortedKey) <span class="cstat-no" title="statement not covered" >allCandidates.push(entry);</span></span>
+            }
+            // Accept only when exactly one unique officialId remains
+            const uniqueIds = <span class="cstat-no" title="statement not covered" >new Set(allCandidates.map(<span class="fstat-no" title="function not covered" >e </span>=&gt; <span class="cstat-no" title="statement not covered" >e.officialId)</span>);</span>
+<span class="cstat-no" title="statement not covered" >            if (uniqueIds.size === 1) {</span>
+<span class="cstat-no" title="statement not covered" >                return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };</span>
+            }
+            // Multiple candidates — leave unmatched for override/AI
         }
     }
 &nbsp;
@@ -2428,7 +2476,7 @@ module.exports = {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-08-27T14:33:56.096Z
+                at 2026-08-27T14:51:08.778Z
             </div>
         <script src="../prettify.js"></script>
         <script>
