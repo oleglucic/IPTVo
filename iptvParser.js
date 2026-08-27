@@ -8,6 +8,7 @@ const { startAiQueue } = require('./aiCurator');
 const { getAllOverrides } = require('./db');
 const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup');
 const { lookupChannel, lookupChannelSmart, isValidCountryCode, resolveGroupScope } = require('./iptvOrgRef');
+const { lookupTvLogo } = require('./tvLogosRef');
 const { configKeyFingerprint } = require('./cryptoUtils');
 
 /**
@@ -47,17 +48,63 @@ function normalizeConfig(config) {
 }
 
 /**
- * Selects genres from iptv-org categories when the playlist group is generic; otherwise uses the playlist group.
- * @param {Object} iptvOrgMatch - The iptv-org match, including available categories.
- * @param {string} group - The playlist group label.
- * @returns {string[]} The selected genre labels.
+ * Keyword -> normalized category label, used to infer a genre category from
+ * a raw playlist group when there's no iptv-org match to supply one. Checked
+ * against the group text with quality/backup noise words already stripped.
  */
-function pickGenres(iptvOrgMatch, group) {
-    const cats = iptvOrgMatch && iptvOrgMatch.categories && iptvOrgMatch.categories.length ? iptvOrgMatch.categories : null;
+const GROUP_CATEGORY_KEYWORDS = [
+    [/\bsport|f1|football|soccer|nba|nfl|nhl|mlb|rugby|cricket|tennis|golf|boxing|wwe|ufc|mma\b/i, 'Sports'],
+    [/\bnews\b/i, 'News'],
+    [/\bmovie|cinema|film|vod\b/i, 'Movies'],
+    [/\bseries|drama\b/i, 'Series'],
+    [/\bkid|cartoon|disney|junior|baby\b/i, 'Kids'],
+    [/\bmusic\b/i, 'Music'],
+    [/\bdocu\b/i, 'Documentary'],
+    [/\breligio|god|islam|christ|catholic\b/i, 'Religious'],
+    [/\badult|xxx\b/i, 'Adult'],
+    [/\bentertain\b/i, 'Entertainment'],
+    [/\blocal|regional\b/i, 'Local'],
+];
+
+/**
+ * Builds a single, quality-variant-agnostic "smart group" label ("UK | Sports")
+ * from a resolved country scope and a genre category, so channels split
+ * across multiple raw playlist groups by an incidental quality/backup tag
+ * ("UK Sports HD", "UK Sports SD", "UK Sports VIP") collapse into one genre
+ * instead of each becoming its own dropdown entry.
+ * @param {Object|null} iptvOrgMatch - The iptv-org match, if any (supplies categories).
+ * @param {string} countryScopeKey - Validated ISO country code, or 'global'.
+ * @param {string} group - The raw playlist group label (fallback source for category).
+ * @returns {string[]} One or more genre labels.
+ */
+function pickGenres(iptvOrgMatch, countryScopeKey, group) {
     const g = (group || '').trim();
+
+    // Category: prefer iptv-org's own category for a matched channel (most
+    // authoritative); otherwise infer from the raw group text with quality/
+    // backup/vip noise words stripped first, so "UK Sports HD" still reads
+    // as "Sports" rather than missing the keyword inside noise.
+    let category = null;
+    if (iptvOrgMatch && iptvOrgMatch.categories && iptvOrgMatch.categories.length) {
+        category = iptvOrgMatch.categories[0];
+        category = category.charAt(0).toUpperCase() + category.slice(1);
+    } else {
+        const stripped = g.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|vip|backup|alt|online|live|24\s*\/?\s*7)\b/gi, ' ').trim();
+        for (const [re, label] of GROUP_CATEGORY_KEYWORDS) {
+            if (re.test(stripped)) { category = label; break; }
+        }
+    }
+
+    const country = (countryScopeKey && countryScopeKey !== 'global') ? countryScopeKey.toUpperCase() : null;
+
+    if (country && category) return [`${country} | ${category}`];
+    if (category) return [category];
+    if (country) return [`${country} | General`];
+
+    // Nothing detected at all — fall back to the raw group as-is (previous
+    // behavior) rather than losing the channel's genre entirely.
     const generic = !g || /^uncategorized$/i.test(g) || /^\s*$/.test(g);
-    if (generic && cats) return cats;
-    return [g || 'Uncategorized'];
+    return [generic ? 'Uncategorized' : g];
 }
 
 /**
@@ -741,10 +788,10 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 logoTrack.set(cId, { url: finalLogo, name: cName });
                 // Store iptv-org logo separately for fallback chain
                 const iptvOrgLogo = iptvOrgMatch ? iptvOrgMatch.logo : null;
-                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay };
+                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay, countryScopeKey };
 
             } else if (t.startsWith('http') && cItem) {
-                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay } = cItem;
+                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay, countryScopeKey } = cItem;
                 const catId = `iptv_${grp.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}`;
                 groups.add(grp);
 
@@ -757,9 +804,16 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                             ? `${iptvOrgMatch.canonicalName}${timeshiftDisplay}`
                             : iptvOrgMatch.canonicalName)
                         : cName.replace(/\b\w/g, c => c.toUpperCase());
-                    const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : logo;
-                    const genres = pickGenres(iptvOrgMatch, grp);
-                    const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || logo, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                    // Logo priority: tv-logos (large, high-res, curated set —
+                    // see tvLogosRef.js) -> iptv-org's own logos.json -> the
+                    // provider's own tvg-logo/stream_icon -> (nothing here;
+                    // imageEngine.js's generated placeholder is the final,
+                    // last-resort fallback when even the provider has none).
+                    const tvLogo = lookupTvLogo(displayName, countryScopeKey);
+                    const logoChain = [tvLogo, iptvOrgLogo, logo].filter(Boolean);
+                    const displayLogo = logoChain[0] || null;
+                    const genres = pickGenres(iptvOrgMatch, countryScopeKey, grp);
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
                 }
@@ -1031,9 +1085,13 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                         ? `${iptvOrgMatch.canonicalName}${timeshiftDisplay}`
                         : iptvOrgMatch.canonicalName)
                     : cName.replace(/\b\w/g, c => c.toUpperCase());
-                const displayLogo = iptvOrgMatch ? iptvOrgMatch.logo : finalLogo;
-                const genres = pickGenres(iptvOrgMatch, finalGrp);
-                const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: iptvOrgLogo || finalLogo, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                // Logo priority: tv-logos -> iptv-org -> provider (see block 1
+                // above for the full rationale).
+                const tvLogo = lookupTvLogo(displayName, countryScopeKey);
+                const logoChain = [tvLogo, iptvOrgLogo, finalLogo].filter(Boolean);
+                const displayLogo = logoChain[0] || null;
+                const genres = pickGenres(iptvOrgMatch, countryScopeKey, finalGrp);
+                const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }
