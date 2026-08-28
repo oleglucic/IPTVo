@@ -94,22 +94,26 @@ describe('epgHub resolveCanonicalSourceId', () => {
     ref.lookupChannel.mockClear();
   });
 
-  test('returns null when no iptv-org match exists', async () => {
+  test('falls back to a synthesized base key when no iptv-org match exists', async () => {
     ref.lookupChannelSmart.mockReturnValue(null);
     ref.lookupChannel.mockReturnValue(null);
     const result = await resolveCanonicalSourceId('no.such.channel.xx');
-    expect(result).toBeNull();
+    // No iptv-org match at all is a real, common gap (not a matching
+    // failure) — a synthesized alnum "base" bridge key is still produced
+    // from the source's own cleaned name+scope so EPG data can still reach
+    // a channel synthesized with the same shape (see resolveCanonicalSourceId).
+    expect(result).toEqual({ official: null, base: 'nosuchchannel.xx' });
   });
 
-  test('does not cache miss while reference is unready, retries when ready', async () => {
+  test('does not cache a fallback-only result while reference is unready, retries when ready', async () => {
     // Simulate unready state (lastRefreshed = 0)
     ref.lastRefreshed = 0;
     ref.lookupChannelSmart.mockReturnValue(null);
     ref.lookupChannel.mockReturnValue(null);
 
-    // First call while unready - should return null but not cache
+    // First call while unready - should return the fallback (not cached)
     const firstResult = await resolveCanonicalSourceId('cnn.us');
-    expect(firstResult).toBeNull();
+    expect(firstResult).toEqual({ official: null, base: 'cnn.us' });
     expect(ref.lookupChannelSmart).toHaveBeenCalledTimes(1);
 
     // Simulate reference becoming ready
