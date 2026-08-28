@@ -67,11 +67,15 @@ const GROUP_CATEGORY_KEYWORDS = [
 ];
 
 /**
- * Assigns a channel to a country-scoped genre label.
- * @param {Object|null} iptvOrgMatch - The iptv-org match, when available.
- * @param {string} countryScopeKey - The validated country code, or `global`.
- * @param {string} group - The raw playlist group used to infer a genre when needed.
- * @returns {string[]} The applicable genre label, or `Uncategorized` when none can be determined.
+ * Builds a single, quality-variant-agnostic "smart group" label ("UK | Sports")
+ * from a resolved country scope and a genre category, so channels split
+ * across multiple raw playlist groups by an incidental quality/backup tag
+ * ("UK Sports HD", "UK Sports SD", "UK Sports VIP") collapse into one genre
+ * instead of each becoming its own dropdown entry.
+ * @param {Object|null} iptvOrgMatch - The iptv-org match, if any (supplies categories).
+ * @param {string} countryScopeKey - Validated ISO country code, or 'global'.
+ * @param {string} group - The raw playlist group label (fallback source for category).
+ * @returns {string[]} One or more genre labels.
  */
 function pickGenres(iptvOrgMatch, countryScopeKey, group) {
     const g = (group || '').trim();
@@ -95,13 +99,12 @@ function pickGenres(iptvOrgMatch, countryScopeKey, group) {
 
     if (country && category) return [`${country} | ${category}`];
     if (category) return [category];
-
-    // No category detected (no iptv-org match, no keyword hit). With a
-    // resolved country, prefer a country-scoped "General" label over a raw,
-    // uninformative group name. Without one, fall back to the raw group as-is
-    // (previous behavior) rather than losing the channel's genre entirely.
     if (country) return [`${country} | General`];
-    return [g || 'Uncategorized'];
+
+    // Nothing detected at all — fall back to the raw group as-is (previous
+    // behavior) rather than losing the channel's genre entirely.
+    const generic = !g || /^uncategorized$/i.test(g) || /^\s*$/.test(g);
+    return [generic ? 'Uncategorized' : g];
 }
 
 /**
@@ -611,7 +614,13 @@ async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
     console.log(`[parseM3uData] START for configKey=${configKeyFingerprint(configKey)}...`);
     const __overridesRows = await getAllOverrides();
-    const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
+    // Compound key (raw_name + scope), not raw_name alone: the same raw
+    // playlist name commonly repeats across multiple countries (e.g.
+    // "Animal Planet" listed verbatim under both Serbia and Canada groups),
+    // and a name-only override silently applied to every country's copy of
+    // that name, so a wrong match for even one country's channel infected
+    // every other country's identically-named channel too.
+    const overridesMap = new Map(__overridesRows.map(o => [`${o.raw_name}\u0001${o.scope || 'global'}`, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
     console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration context object is missing.");
@@ -752,7 +761,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     // Queue is not needed for AI as we have an authoritative match
                 } else {
                     // 2. Check Supabase Override DB if no iptv-org match
-                    const dbMapping = overridesMap.get(rawName) || null;
+                    const dbMapping = overridesMap.get(`${rawName}\u0001${countryScopeKey || 'global'}`) || null;
                     if (dbMapping && dbMapping.confidence >= 0.5) {
                         cId = dbMapping.canonical_id;
                     } else {
@@ -809,7 +818,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     const tvLogo = lookupTvLogo(displayName, countryScopeKey);
                     const logoChain = [tvLogo, iptvOrgLogo, logo].filter(Boolean);
                     const displayLogo = logoChain[0] || null;
-                    const genres = pickGenres(iptvOrgMatch, countryScopeKey, rawGrp);
+                    const genres = pickGenres(iptvOrgMatch, countryScopeKey, grp);
                     const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
@@ -904,7 +913,7 @@ const published = publishParseResult(configKey, {
 }
 
 /**
- * Loads live channel data from an Xtream server, normalizes channels and streams, and updates the cache with EPG and logo metadata.
+ * Loads, normalizes, and caches live channel data from an Xtream server, including stream metadata and EPG information.
  * @param {string} configKey - The key identifying the configuration and its cache entry.
  * @param {Object} configObj - Xtream connection, filtering, EPG, and enrichment configuration.
  */
@@ -912,7 +921,13 @@ async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
     console.log(`[parseXtreamData] START for configKey=${configKeyFingerprint(configKey)}...`);
     const __overridesRows = await getAllOverrides();
-    const overridesMap = new Map(__overridesRows.map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
+    // Compound key (raw_name + scope), not raw_name alone: the same raw
+    // playlist name commonly repeats across multiple countries (e.g.
+    // "Animal Planet" listed verbatim under both Serbia and Canada groups),
+    // and a name-only override silently applied to every country's copy of
+    // that name, so a wrong match for even one country's channel infected
+    // every other country's identically-named channel too.
+    const overridesMap = new Map(__overridesRows.map(o => [`${o.raw_name}\u0001${o.scope || 'global'}`, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
     console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration mapping context payload is missing.");
@@ -1042,7 +1057,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 cId = `${IPTVO_ID_PREFIX}${iptvOrgMatch.officialId}${timeshiftSuffix}`;
             } else {
                 // 2. Check Supabase Override DB if no iptv-org match
-                const dbMapping = overridesMap.get(rawName) || null;
+                const dbMapping = overridesMap.get(`${rawName}\u0001${countryScopeKey || 'global'}`) || null;
                 if (dbMapping && dbMapping.confidence >= 0.5) {
                     cId = dbMapping.canonical_id;
                 } else {
@@ -1087,7 +1102,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 const tvLogo = lookupTvLogo(displayName, countryScopeKey);
                 const logoChain = [tvLogo, iptvOrgLogo, finalLogo].filter(Boolean);
                 const displayLogo = logoChain[0] || null;
-                const genres = pickGenres(iptvOrgMatch, countryScopeKey, rawGrp);
+                const genres = pickGenres(iptvOrgMatch, countryScopeKey, finalGrp);
                 const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);

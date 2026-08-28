@@ -14,16 +14,17 @@ if (connectionString) {
 
 // -- getOverride --------------------------------------------------------------
 /**
- * Fetch a single override mapping by raw channel name.
+ * Fetch a single override mapping by raw channel name and country scope.
  * @param {string} rawName
+ * @param {string} [scope='global']
  * @returns {Promise<{canonical_id: string, confidence: number}|null>}
  */
-async function getOverride(rawName) {
+async function getOverride(rawName, scope = 'global') {
     if (!pool) return null;
     try {
         const { rows } = await pool.query(
-            'SELECT canonical_id, confidence FROM ai_overrides WHERE raw_name = $1',
-            [rawName]
+            'SELECT canonical_id, confidence FROM ai_overrides WHERE raw_name = $1 AND scope = $2',
+            [rawName, scope]
         );
         if (!rows[0]) return null;
         return { canonical_id: rows[0].canonical_id, confidence: parseFloat(rows[0].confidence) };
@@ -35,20 +36,23 @@ async function getOverride(rawName) {
 
 // -- setOverride ----------------------------------------------------------------
 /**
- * Insert or update an override mapping.
+ * Insert or update an override mapping, scoped to a country so the same raw
+ * channel name can carry a different override per country instead of one
+ * override applying to every country's copy of that name.
  * @param {string} rawName
  * @param {string} canonicalId
  * @param {number} [confidence=0.85]
+ * @param {string} [scope='global']
  */
-async function setOverride(rawName, canonicalId, confidence = 0.85) {
+async function setOverride(rawName, canonicalId, confidence = 0.85, scope = 'global') {
     if (!pool) return;
     try {
         await pool.query(
-            `INSERT INTO ai_overrides (raw_name, canonical_id, confidence, updated_at)
-             VALUES ($1, $2, $3, now())
-             ON CONFLICT (raw_name)
-             DO UPDATE SET canonical_id = $2, confidence = $3, updated_at = now()`,
-            [rawName, canonicalId, confidence]
+            `INSERT INTO ai_overrides (raw_name, scope, canonical_id, confidence, updated_at)
+             VALUES ($1, $2, $3, $4, now())
+             ON CONFLICT (raw_name, scope)
+             DO UPDATE SET canonical_id = $3, confidence = $4, updated_at = now()`,
+            [rawName, scope, canonicalId, confidence]
         );
     } catch (e) {
         console.error('[DB Error] setOverride:', e.message);
@@ -60,15 +64,16 @@ async function setOverride(rawName, canonicalId, confidence = 0.85) {
  * Increase a mapping's confidence score (capped at 0.99).
  * @param {string} rawName
  * @param {number} [delta=0.01]
+ * @param {string} [scope='global']
  */
-async function incrementConfidence(rawName, delta = 0.01) {
+async function incrementConfidence(rawName, delta = 0.01, scope = 'global') {
     if (!pool) return;
     try {
         await pool.query(
             `UPDATE ai_overrides
              SET confidence = LEAST(confidence + $2, 0.99), updated_at = now()
-             WHERE raw_name = $1`,
-            [rawName, delta]
+             WHERE raw_name = $1 AND scope = $3`,
+            [rawName, delta, scope]
         );
     } catch (e) {
         console.error('[DB Error] incrementConfidence:', e.message);
@@ -80,15 +85,16 @@ async function incrementConfidence(rawName, delta = 0.01) {
  * Decrease a mapping's confidence score (floored at 0.0).
  * @param {string} rawName
  * @param {number} [delta=0.1]
+ * @param {string} [scope='global']
  */
-async function decrementConfidence(rawName, delta = 0.1) {
+async function decrementConfidence(rawName, delta = 0.1, scope = 'global') {
     if (!pool) return;
     try {
         await pool.query(
             `UPDATE ai_overrides
              SET confidence = GREATEST(confidence - $2, 0.0), updated_at = now()
-             WHERE raw_name = $1`,
-            [rawName, delta]
+             WHERE raw_name = $1 AND scope = $3`,
+            [rawName, delta, scope]
         );
     } catch (e) {
         console.error('[DB Error] decrementConfidence:', e.message);
@@ -97,15 +103,16 @@ async function decrementConfidence(rawName, delta = 0.1) {
 
 // -- incrementUsage ---------------------------------------------------------------
 /**
- * Bump usage_count for a raw_name mapping.
+ * Bump usage_count for a raw_name+scope mapping.
  * @param {string} rawName
+ * @param {string} [scope='global']
  */
-async function incrementUsage(rawName) {
+async function incrementUsage(rawName, scope = 'global') {
     if (!pool) return;
     try {
         await pool.query(
-            'UPDATE ai_overrides SET usage_count = usage_count + 1 WHERE raw_name = $1',
-            [rawName]
+            'UPDATE ai_overrides SET usage_count = usage_count + 1 WHERE raw_name = $1 AND scope = $2',
+            [rawName, scope]
         );
     } catch (e) {
         console.error('[DB Error] incrementUsage:', e.message);
@@ -133,9 +140,9 @@ async function getAllOverrides() {
 // -- Legacy aliases kept for any remaining call-sites ----------------------------
 const getMapping  = getOverride;
 const saveMapping = setOverride;
-const adjustConfidence = async (rawName, isSuccess) => {
-    if (isSuccess) return incrementConfidence(rawName);
-    return decrementConfidence(rawName);
+const adjustConfidence = async (rawName, isSuccess, scope = 'global') => {
+    if (isSuccess) return incrementConfidence(rawName, undefined, scope);
+    return decrementConfidence(rawName, undefined, scope);
 };
 const getAllMappings = getAllOverrides;
 
