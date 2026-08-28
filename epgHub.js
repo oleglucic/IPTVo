@@ -76,6 +76,13 @@ async function resolveCanonicalSourceId(sourceId) {
                 nameToClean = key.slice(0, lastDot);
             }
         }
+        // Strip bracketed/parenthetical junk (e.g. the "(RS)" in
+        // "Viasat.Kino.(RS).exTV1000.rs") BEFORE cleaning — left in, it
+        // either breaks normalizeSourceId's own regex further up the
+        // pipeline or survives into the alnum bridge key below as noise
+        // that a synthesized channel id (which never has such junk) would
+        // never independently produce, silently preventing the match.
+        nameToClean = nameToClean.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ');
         const clean = nameToClean
             .replace(/\b(hd|fhd|uhd|4k|sd|hdr|plus|dummy|emu)\b/gi, '')
             .replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
@@ -90,14 +97,31 @@ async function resolveCanonicalSourceId(sourceId) {
             if (cc && isValidCountryCode(cc[1].toLowerCase())) {
                 base = official.slice(0, -cc[0].length);
             }
+        } else if (clean) {
+            // No iptv-org match anywhere (the source's own channel simply
+            // isn't in iptv-org's database at all — a real, fairly common
+            // gap, not a matching failure). Still produce a fully alnum,
+            // separator-free bridge key from the source's OWN cleaned
+            // name+scope: this is exactly the same "PascalCaseName.cc"
+            // shape (lowercased here) that iptvParser.js's
+            // synthesizeIptvOrgStyleId produces for a channel with no
+            // iptv-org match, so the two sides meet in the middle without
+            // any change needed on the read side (epgLookupKeys already
+            // strips a channel's own id down to this same form to build its
+            // bridge key). This is what lets EPG data for a channel like
+            // "FilmBox Arthouse" (no iptv-org RS entry) still reach a
+            // channel synthesized as iptvo_FilmboxArthouse.rs.
+            base = clean.replace(/[^a-z0-9]/g, '') + (scope ? `.${scope}` : '');
         }
     } catch (_) { /* no match -> null */ }
-    const result = official ? { official, base } : null;
-    // Never pin a negative result while the iptv-org reference indexes are still
-    // loading — a cold matcher maps everything to null, and caching that would
-    // permanently block this source id from ever gaining a canonical alias. Only
-    // cache once the reference is confirmed ready (or for real positive matches).
-    if (result || getIptvOrgReady()) cache.set(key, result);
+    const result = (official || base) ? { official, base } : null;
+    // Never pin a negative/fallback-only result while the iptv-org reference
+    // indexes are still loading — a cold matcher maps everything to null
+    // (or an unnecessary fallback base), and caching that would permanently
+    // block this source id from ever gaining its real canonical alias once
+    // the reference finishes loading. A genuine `official` match can be
+    // cached immediately either way.
+    if (official || getIptvOrgReady()) cache.set(key, result);
     return result;
 }
 
@@ -243,7 +267,15 @@ function normalizeSourceId(rawId) {
     // pipeline already trusts, so this list can never drift out of sync
     // again. 'net' is kept as an explicit extra suffix (not a country code)
     // for backward compatibility with sources that already used it.
-    const m = /^([a-z0-9 .'-]+)\.([a-z]{2,3})$/i.exec(r);
+    //
+    // Validate against a parenthetical/bracket-stripped copy — some sources
+    // embed extra tags mid-id (e.g. "Viasat.Kino.(RS).exTV1000.rs"), and the
+    // allowed character class below never included "(" ")", so the whole id
+    // was rejected outright and its programme data silently dropped before
+    // ever reaching storage. `r` itself (the stored/returned key) is left
+    // untouched — this only fixes the over-strict validation gate.
+    const forValidation = r.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
+    const m = /^([a-z0-9 .'-]+)\.([a-z]{2,3})$/i.exec(forValidation);
     if (m && (m[2] === 'net' || isValidCountryCode(m[2]))) {
         return r;
     }
@@ -335,10 +367,13 @@ async function run() {
             const dominant = candidates.reduce((best, c) => (c.programs && c.programs.length > (best.programs ? best.programs.length : 0)) ? c : best, candidates[0]);
             // Store under the raw source-id key, the matched official key, and
             // the cc-stripped base key (so a .uk user channel finds .ie data for
-            // the same brand). Dedupe keys whose forms coincide.
+            // the same brand). Dedupe keys whose forms coincide. `canonical.base`
+            // may now be set even when `canonical.official` isn't — see
+            // resolveCanonicalSourceId's no-iptv-org-match fallback — so the
+            // official key must only be added when it's actually present.
             const storeKeys = new Set([channelKey]);
             if (canonical) {
-                storeKeys.add(`global_${canonical.official}`);
+                if (canonical.official) storeKeys.add(`global_${canonical.official}`);
                 if (canonical.base) {
                     const baseKey = `global_${canonical.base}`;
                     // Only write base key once (first variant wins)
@@ -405,7 +440,10 @@ async function backfillCanonicalAliases() {
                 const sourceId = rawKey.replace(/^global_/, '');
                 const canonical = await resolveCanonicalSourceId(sourceId);
                 if (!canonical) continue;
-                const targetKeys = new Set([`global_${canonical.official}`]);
+                // Same official-may-be-null-while-base-is-set fix as the main
+                // ingestion loop above.
+                const targetKeys = new Set();
+                if (canonical.official) targetKeys.add(`global_${canonical.official}`);
                 if (canonical.base) targetKeys.add(`global_${canonical.base}`);
                 for (const targetKey of targetKeys) {
                     if (targetKey === rawKey) continue;

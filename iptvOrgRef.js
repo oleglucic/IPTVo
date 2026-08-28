@@ -64,7 +64,7 @@ for (const [k, v] of Object.entries(ALIASES)) {
 const ALIAS_PATTERNS = Array.from(ALIAS_BILATERAL.entries())
     .map(([k, v]) => [new RegExp(`\\b${k.replace(/[^a-z0-9]+/g, '\\s+')}\\b`, 'i'), v]);
 
-let tokenIndex = new Map();        // sortedKey -> entry
+let tokenIndex = new Map();        // sortedKey -> entry[] (one per distinct country sharing that token set)
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
 let fuseByFirst = new Map();       // leading token -> Fuse over entries sharing it
 
@@ -102,6 +102,18 @@ function normalize(str) {
  * @param {boolean} [applyAliases=true] - Whether to expand recognized brand aliases.
  * @return {string[]} The normalized channel tokens.
  */
+// Small, deliberately conservative word-form equivalence table applied
+// per-token in tokenize() — NOT a general English stemmer (which would risk
+// false collisions like "news" -> "new"). Only well-known singular/plural
+// pairs that commonly vary between providers and iptv-org's own naming
+// (iptv-org itself is inconsistent: compare "PremierSport1.sk" singular vs
+// "PremierSports1.ie" plural for the same brand) go here.
+const WORD_EQUIVALENTS = {
+    'sport': 'sports',
+    'movie': 'movies',
+    'kid': 'kids',
+};
+
 function tokenize(name, applyAliases = true) {
     if (!name) return [];
     let s = String(name).toLowerCase();
@@ -124,8 +136,11 @@ function tokenize(name, applyAliases = true) {
         }
     }
     const toks = s.split(TOKEN_SPLIT).filter(Boolean);
-    // Drop noise tokens (HD/UK/Plus/…)
-    return toks.filter(t => !SUFFIX_WORDS.has(t) && t.length > 0);
+    // Drop noise tokens (HD/UK/Plus/…), then normalize known singular/plural
+    // word-form pairs so e.g. "sport" and "sports" always tokenize the same
+    // regardless of which form the provider or iptv-org itself used.
+    return toks.filter(t => !SUFFIX_WORDS.has(t) && t.length > 0)
+        .map(t => WORD_EQUIVALENTS[t] || t);
 }
 
 /**
@@ -137,6 +152,24 @@ function tokensToKeys(tokens) {
     const sorted = [...tokens].sort((a, b) => a.localeCompare(b)).join(' ');
     const ordered = tokens.join(' ');
     return { sortedKey: sorted, orderedKey: ordered };
+}
+
+/**
+ * Appends an entry to a sortedKey's bucket in the token index, keeping at
+ * most one entry per distinct country (the first one seen for that
+ * country). Replaces the old "first entry ever wins, globally, across every
+ * country" scheme — that scheme meant a name shared by two countries (e.g.
+ * "Hype TV" in both Jamaica and Serbia) only ever kept ONE of them in the
+ * index, silently dropping the other regardless of what country a lookup
+ * asked for.
+ * @param {Map<string, Array>} map
+ * @param {string} key
+ * @param {Object} entry
+ */
+function addToTokenIndex(map, key, entry) {
+    let arr = map.get(key);
+    if (!arr) { arr = []; map.set(key, arr); }
+    if (!arr.some(e => e.country === entry.country)) arr.push(entry);
 }
 
 /**
@@ -215,7 +248,7 @@ async function refresh() {
 
         const newExactMap = new Map();
         const newFuseList = [];
-        const newTokenIndex = new Map();   // sortedKey -> entry
+        const newTokenIndex = new Map();   // sortedKey -> entry[]
         // Tracks, per normalized name, which distinct countries have a channel
         // with that name. Used below to refuse to populate the unscoped
         // "name|" global fallback slot for names that collide across more
@@ -242,7 +275,7 @@ async function refresh() {
                 tokenKeys.add(sortedKey);
             }
             for (const sk of tokenKeys) {
-                if (!newTokenIndex.has(sk)) newTokenIndex.set(sk, entry);
+                addToTokenIndex(newTokenIndex, sk, entry);
             }
 
             for (const n of names) {
@@ -347,7 +380,7 @@ async function refresh() {
             const toks = tokenize(ch.name, true); // alias-aware
             if (!toks.length) continue;
             const { sortedKey } = tokensToKeys(toks);
-            if (!newTokenIndex.has(sortedKey)) newTokenIndex.set(sortedKey, entry);
+            addToTokenIndex(newTokenIndex, sortedKey, entry);
         }
 
         exactMatchMap = newExactMap;
@@ -364,13 +397,15 @@ async function refresh() {
         // lookupChannelSmart scans the handful that share the query's leading
         // token, instead of the full 48k-index on every miss.
         const newTokenByFirst = new Map();
-        for (const [, entry] of newTokenIndex.entries()) {
-            const leadToks = tokenize(entry.name, false);
-            const firstTok = leadToks[0] || '';
-            if (!firstTok) continue;
-            const arr = newTokenByFirst.get(firstTok);
-            if (arr) arr.push(entry);
-            else newTokenByFirst.set(firstTok, [entry]);
+        for (const [, arr] of newTokenIndex.entries()) {
+            for (const entry of arr) {
+                const leadToks = tokenize(entry.name, false);
+                const firstTok = leadToks[0] || '';
+                if (!firstTok) continue;
+                const bucket = newTokenByFirst.get(firstTok);
+                if (bucket) bucket.push(entry);
+                else newTokenByFirst.set(firstTok, [entry]);
+            }
         }
         tokenByFirst = newTokenByFirst;
         // The set of leading tokens present in the index — used to gate the
@@ -511,26 +546,20 @@ function lookupChannelSmart(cleanName, countryScopeKey) {
     const { sortedKey } = tokensToKeys(toks);
 
     // ---- Tier 2: token-set exact (order-insensitive) ----
-    const tokEntry = tokenIndex.get(sortedKey);
-    if (tokEntry) {
+    const tokEntries = tokenIndex.get(sortedKey);
+    if (tokEntries && tokEntries.length) {
         if (countryScopeKey && countryScopeKey !== 'global') {
-            // Scoped lookup: accept the first candidate matching the scope
-            if (tokEntry.country === countryScopeKey || tokEntry.country === '') {
-                return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
-            }
-        } else {
-            // Unscoped (global): only accept if exactly one unique candidate exists
-            // Build list of all entries with this sortedKey to check uniqueness
-            const allCandidates = [];
-            for (const [key, entry] of tokenIndex.entries()) {
-                if (key === sortedKey) allCandidates.push(entry);
-            }
-            // Accept only when exactly one unique officialId remains
-            const uniqueIds = new Set(allCandidates.map(e => e.officialId));
-            if (uniqueIds.size === 1) {
-                return { ...buildMatchResult(tokEntry), fuzzy: true, match: 'token' };
-            }
-            // Multiple candidates — leave unmatched for override/AI
+            const scoped = tokEntries.find(e => e.country === countryScopeKey || e.country === '');
+            if (scoped) return { ...buildMatchResult(scoped), fuzzy: true, match: 'token' };
+        } else if (tokEntries.length === 1 || new Set(tokEntries.map(e => e.country)).size <= 1) {
+            // Unscoped: only safe to return a specific entry when every
+            // candidate sharing this exact token set agrees on country (no
+            // real ambiguity) — same principle as the exact-match tier's
+            // ambiguousNames guard. Multiple distinct countries with no
+            // scope to disambiguate means a "confident" pick here would be
+            // an arbitrary guess, so fall through to the more conservative
+            // Tier 3/4 checks instead.
+            return { ...buildMatchResult(tokEntries[0]), fuzzy: true, match: 'token' };
         }
     }
 

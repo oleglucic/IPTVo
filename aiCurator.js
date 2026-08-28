@@ -23,20 +23,31 @@ const globalAiCache = new Map();
  * @param {Array<{name: string, scope: string}>} batchItems - Channel names and their parser-derived scopes.
  * @param {string} apiKey - OpenRouter API key.
  * @param {string} [model] - OpenRouter model to use.
- * @return {Object<string, string> | {__rateLimited: true}} A mapping of raw channel names to canonical base names, or a rate-limit marker when processing must stop.
+ * @return {Object<string, string> | {__rateLimited: true}} A mapping of array-index strings ("0", "1", ...) to canonical base names, or a rate-limit marker when processing must stop.
  */
 async function processAiBatch(batchItems, apiKey, model) {
     if (!apiKey) return {};
 
-    // batchItems: [{ name, scope }] — scope is parser-computed (from group-title), AI must NOT invent it
-    const prompt = `You are a channel deduplication engine. I will give you an array of {name, scope} pairs from messy IPTV strings.
-Some of these are duplicates or backups of the same station.
+    // batchItems: [{ name, scope }] — scope is parser-computed (from group-title), AI must NOT invent it.
+    // The same raw name legitimately appears more than once in a batch when
+    // it exists in multiple countries (e.g. "Animal Planet" from Serbia AND
+    // from Canada) — that's exactly the case this whole scope-aware override
+    // system exists to keep distinct. Keying the response by "index" instead
+    // of "name" is deliberate: a JSON object requires unique keys, so a
+    // name-keyed response can only hold ONE value for a name that appears
+    // twice in the batch, silently dropping the other occurrence before we
+    // even get to storing anything.
+    const indexed = batchItems.map((b, i) => ({ index: i, name: b.name, scope: b.scope }));
+    const prompt = `You are a channel deduplication engine. I will give you an array of {index, name, scope} entries from messy IPTV strings.
+Some of these are duplicates or backups of the same station. The same name can legitimately appear more than once with a DIFFERENT scope (country) — treat those as separate entries, not duplicates of each other.
 For each entry, return a clean, canonical BASE NAME ONLY (no country/scope prefix, no underscore prefix) using lowercase letters and numbers only, no spaces (e.g., "skysportsf1", "hbo"). Do NOT include the scope in your answer.
-Ensure alternate links, backups, and quality variations of the identical station receive the EXACT same base name so they collapse together.
+Ensure alternate links, backups, and quality variations of the identical station (same name AND same scope) receive the EXACT same base name so they collapse together.
+
+Return ONLY a raw JSON object where the KEY is the "index" field (as a string, e.g. "0", "1") from my input — NOT the name — and the value is the clean base name. No markdown.
 
 Return ONLY a raw JSON object where the key is the name and the value is the clean base name. No markdown.
 
-Input: ${JSON.stringify(batchItems)}`;
+Input: ${JSON.stringify(indexed)}`;
 
     try {
         console.log(`[AI Curator] Resolving duplicates for a batch of ${sanitizeForLog(batchItems.length)} channels...`);
@@ -139,7 +150,12 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     });
 
     const channelsToProcess = [];
-    const overridesMap = new Map((await getAllOverrides()).map(o => [o.raw_name, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
+    // Compound key so the SAME raw name in different countries (e.g.
+    // "Animal Planet" from both Serbia and Canada) is tracked as two
+    // distinct entries instead of collapsing into one — see the ai_overrides
+    // schema comment in dbInit.js for why raw_name alone was never enough.
+    const compoundKey = (name, scope) => `${name}\u0001${scope || 'global'}`;
+    const overridesMap = new Map((await getAllOverrides()).map(o => [compoundKey(o.raw_name, o.scope), { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
 
     // Cap the per-call scan so a single 55k-channel config cannot peg one CPU
     // core for hours in an unyielding loop. 8000 covers the worst realistic
@@ -151,7 +167,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
             const isShortOrUnknown = ch.baseCleanName === 'unknown' || ch.baseCleanName.length < 3;
             const hasBaseNameConflict = (rawNamesByBase.get(ch.baseCleanName)?.size || 0) > 1;
             const isOverMerged = (idCounts.get(ch.cId) || 0) > 3;
-            const existing = overridesMap.get(ch.rawName) || null;
+            const existing = overridesMap.get(compoundKey(ch.rawName, ch.countryScopeKey)) || null;
             const isLowConfidence = existing && existing.confidence < 0.5;
             let priority = 0;
             if (isOverMerged) priority += 3;
@@ -179,7 +195,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
         const isOverMerged = (idCounts.get(ch.cId) || 0) > 3;
 
         // Check if DB already has mapping and confidence is low
-        const existing = overridesMap.get(ch.rawName) || null;
+        const existing = overridesMap.get(compoundKey(ch.rawName, ch.countryScopeKey)) || null;
         const isLowConfidence = existing && existing.confidence < 0.5;
         const wasAlreadyMapped = !!existing && !isLowConfidence;
 
@@ -194,20 +210,19 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
         if (wasAlreadyMapped) continue;
 
         if (isAlt || isShortOrUnknown || hasBaseNameConflict || isOverMerged || isLowConfidence || !existing) {
-            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || 'global', priority, cId: ch.cId });
+            channelsToProcess.push({ name: ch.rawName, scope: ch.countryScopeKey || 'global', priority });
         }
     }
 
-    const scopeMap = new Map(channelsToProcess.map(c => [c.name, c.scope]));
-    const cIdMap = new Map(channelsToProcess.map(c => [c.name, c.cId]));
-    const priorityMap = new Map();
+    const priorityMap = new Map(); // compoundKey -> {name, scope, priority}
     for (const item of channelsToProcess) {
-        const existingPriority = priorityMap.get(item.name);
-        if (existingPriority === undefined || item.priority > existingPriority) {
-            priorityMap.set(item.name, item.priority);
+        const key = compoundKey(item.name, item.scope);
+        const existing = priorityMap.get(key);
+        if (!existing || item.priority > existing.priority) {
+            priorityMap.set(key, item);
         }
     }
-    const uniqueToProcess = [...priorityMap.entries()].sort((a, b) => b[1] - a[1]).map(entry => ({ name: entry[0], scope: scopeMap.get(entry[0]) || 'global' }));
+    const uniqueToProcess = [...priorityMap.values()].sort((a, b) => b.priority - a.priority);
     if (uniqueToProcess.length === 0) {
         console.log(`[AI Curator] No flagged channels requiring processing for ${sanitizeForLog(configKey)} (all handled by iptv-org).`);
         return;
@@ -223,19 +238,26 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                 break;
             }
 
-        const batchScopeMap = new Map(batch.map(b => [b.name, b.scope]));
-        for (const [raw, cleanBase] of Object.entries(aiResults)) {
+        // aiResults is keyed by array-index (as a string) into `batch`, not by
+        // name — see processAiBatch for why (duplicate names with different
+        // scopes can't both survive a name-keyed JSON response).
+        for (const [idxStr, cleanBase] of Object.entries(aiResults)) {
+            const idx = Number.parseInt(idxStr, 10);
+            const item = Number.isInteger(idx) ? batch[idx] : null;
+            if (!item) {
+                console.warn(`[AI Curator] Response referenced unknown index "${sanitizeForLog(idxStr)}" — skipping.`);
+                continue;
+            }
+            const raw = item.name;
+            const scope = item.scope || 'global';
             if (cleanBase && typeof cleanBase === 'string' && cleanBase.length > 0) {
-                const scope = batchScopeMap.get(raw) || 'global';
                 const sanitizedBase = cleanBase.replace(/[^a-z0-9]/g, '');
 
-                // Extract timeshift suffix from the original cId if present
-                const originalCId = cIdMap.get(raw) || '';
-                const timeshiftMatch = originalCId.match(/(_plus\d+)$/);
-                const timeshiftSuffix = timeshiftMatch ? timeshiftMatch[1] : '';
-
-                // Try to match the AI-cleaned name against iptv-org again
-                // This helps channels that weren't matched initially but might match after AI normalization
+                // Try to match the AI-cleaned name against iptv-org again,
+                // scoped to THIS entry's own country — not some other
+                // same-named entry's country from elsewhere in the batch.
+                // This helps channels that weren't matched initially but
+                // might match after AI normalization.
                 const iptvOrgMatch = lookupChannel(sanitizedBase, scope) || lookupChannelFuzzy(sanitizedBase, scope);
 
                 let finalId;
@@ -244,8 +266,8 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     // 'iptvo_' + officialId only — officialId already carries the
                     // country as a ".cc" suffix (e.g. "SkySportsF1.uk"), so no
                     // need to re-prefix with the country again.
-                    finalId = `iptvo_${iptvOrgMatch.officialId}${timeshiftSuffix}`;
-                    console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" -> "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
+                    finalId = `iptvo_${iptvOrgMatch.officialId}`;
+                    console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" (${sanitizeForLog(scope)}) -> "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
                 } else {
                     // No iptv-org match yet. Synthesize an id in the SAME
                     // iptv-org "PascalCaseName.cc" shape (kept in sync with
@@ -254,11 +276,11 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     const pascalName = cleanBase.split(/\s+/).filter(Boolean)
                         .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('') || 'Unknown';
                     const suffix = (scope && scope !== 'global') ? `.${scope}` : '';
-                    finalId = `iptvo_${pascalName}${suffix}${timeshiftSuffix}`;
+                    finalId = `iptvo_${pascalName}${suffix}`;
                 }
 
-                globalAiCache.set(raw, finalId);
-                await setOverride(raw, finalId, 0.85);
+                globalAiCache.set(compoundKey(raw, scope), finalId);
+                await setOverride(raw, finalId, 0.85, scope);
             }
         }
 

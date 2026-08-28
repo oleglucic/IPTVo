@@ -26,14 +26,34 @@ async function initSchema() {
         )`,
 
         // ai_overrides (created in earlier versions)
+        // PRIMARY KEY is (raw_name, scope), not raw_name alone: the same raw
+        // playlist channel name commonly repeats across multiple countries
+        // (e.g. many providers list "Animal Planet" verbatim in dozens of
+        // country groups). A raw_name-only key meant ONE override silently
+        // applied to every country's copy of that name, so if the AI (or
+        // iptv-org) matched the wrong country for even one instance, every
+        // other country's identically-named channel inherited that same
+        // wrong id. See aiCurator.js / iptvParser.js for the matching write/
+        // read side of this.
         `CREATE TABLE IF NOT EXISTS ai_overrides (
-            raw_name VARCHAR(500) PRIMARY KEY,
+            raw_name VARCHAR(500) NOT NULL,
+            scope VARCHAR(10) NOT NULL DEFAULT 'global',
             canonical_id VARCHAR(255) NOT NULL,
             confidence DECIMAL(3,2) NOT NULL DEFAULT 0.85,
             usage_count INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (raw_name, scope)
         )`,
+        // Migration for installs created before `scope` existed: add the
+        // column (existing rows default to 'global', matching their
+        // historical scope-blind behavior — they don't silently become
+        // wrong, they just keep applying regardless of country as before
+        // until re-curated), then widen the primary key. Safe to re-run:
+        // DROP/ADD CONSTRAINT on an already-composite key is a no-op.
+        `ALTER TABLE ai_overrides ADD COLUMN IF NOT EXISTS scope VARCHAR(10) NOT NULL DEFAULT 'global'`,
+        `ALTER TABLE ai_overrides DROP CONSTRAINT IF EXISTS ai_overrides_pkey`,
+        `ALTER TABLE ai_overrides ADD CONSTRAINT ai_overrides_pkey PRIMARY KEY (raw_name, scope)`,
 
         // epg_history (for catch-up)
         `CREATE TABLE IF NOT EXISTS epg_history (
