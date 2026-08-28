@@ -1,6 +1,11 @@
 ## 🤝 Contributors
 
 - coderabbitai[bot] (@136622811+coderabbitai)
+- Oleg lučić (@183150217+oleglucic)
+
+## 🤝 Contributors
+
+- coderabbitai[bot] (@136622811+coderabbitai)
 - CodeRabbit (@noreply)
 - Oleg lučić (@183150217+oleglucic)
 

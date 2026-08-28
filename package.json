@@ -1,6 +1,6 @@
 {
   "name": "iptvo",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "IPTVo - Stremio/Nuvio IPTV addon with intelligent channel deduplication, iptv-org integration, AI curation, and automatic poster generation",
   "main": "server.js",
   "scripts": {
