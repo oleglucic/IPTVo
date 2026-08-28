@@ -116,7 +116,8 @@ describe('aiCurator', () => {
             axios.post.mockResolvedValue({
                 data: {
                     choices: [{
-                        message: { content: '{"CNN\\nHD [bad]": "cnn"}' }
+                        // Responses are keyed by array-index into the batch, not by name.
+                        message: { content: '{"0": "cnn"}' }
                     }]
                 }
             });
@@ -205,7 +206,8 @@ describe('aiCurator', () => {
             axios.post.mockResolvedValue({
                 data: {
                     choices: [{
-                        message: { content: '{"Some Channel Backup": "somechannel"}' }
+                        // Responses are keyed by array-index into the batch, not by name.
+                        message: { content: '{"0": "somechannel"}' }
                     }]
                 }
             });
@@ -216,8 +218,10 @@ describe('aiCurator', () => {
 
             await startAiQueue(dirtyChannels, 'cfgKey', 'key123');
 
-            expect(setOverride).toHaveBeenCalledWith('Some Channel Backup', 'iptvo_Somechannel.us', 0.85);
-            expect(globalAiCache.get('Some Channel Backup')).toBe('iptvo_Somechannel.us');
+            expect(setOverride).toHaveBeenCalledWith('Some Channel Backup', 'iptvo_Somechannel.us', 0.85, 'us');
+            // globalAiCache is keyed by a compound "name\u0001scope" key so the
+            // same raw name in different countries doesn't collide.
+            expect(globalAiCache.get('Some Channel Backup\u0001us')).toBe('iptvo_Somechannel.us');
         });
 
         test('uses the authoritative iptv-org id when the AI-cleaned name matches after normalization', async () => {
@@ -227,7 +231,8 @@ describe('aiCurator', () => {
             axios.post.mockResolvedValue({
                 data: {
                     choices: [{
-                        message: { content: '{"CNN Backup Feed": "cnn"}' }
+                        // Responses are keyed by array-index into the batch, not by name.
+                        message: { content: '{"0": "cnn"}' }
                     }]
                 }
             });
@@ -238,7 +243,7 @@ describe('aiCurator', () => {
 
             await startAiQueue(dirtyChannels, 'cfgKey', 'key123');
 
-            expect(setOverride).toHaveBeenCalledWith('CNN Backup Feed', 'iptvo_cnn', 0.85);
+            expect(setOverride).toHaveBeenCalledWith('CNN Backup Feed', 'iptvo_cnn', 0.85, 'us');
         });
 
         test('skips channels already matched by iptv-org (never sent to AI)', async () => {
