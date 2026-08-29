@@ -52,7 +52,24 @@ async function initSchema() {
         // until re-curated), then widen the primary key. Safe to re-run:
         // DROP/ADD CONSTRAINT on an already-composite key is a no-op.
         `ALTER TABLE ai_overrides ADD COLUMN IF NOT EXISTS scope VARCHAR(10) NOT NULL DEFAULT 'global'`,
-        `ALTER TABLE ai_overrides DROP CONSTRAINT IF EXISTS ai_overrides_pkey`,
+        // Drop whatever the EXISTING primary key constraint is actually named
+        // (not necessarily "ai_overrides_pkey" — Postgres can auto-generate a
+        // different name depending on how/when the table was first created,
+        // and a name-specific DROP CONSTRAINT IF EXISTS silently no-ops when
+        // it guesses wrong, leaving the old single-column PK in place; the
+        // next statement then tries to ADD a second primary key alongside it,
+        // which Postgres rejects outright: "multiple primary keys ... are not
+        // allowed"). Looking it up dynamically works regardless of its name.
+        `DO $$
+         DECLARE pk_name text;
+         BEGIN
+             SELECT tc.constraint_name INTO pk_name
+             FROM information_schema.table_constraints tc
+             WHERE tc.table_name = 'ai_overrides' AND tc.constraint_type = 'PRIMARY KEY';
+             IF pk_name IS NOT NULL THEN
+                 EXECUTE format('ALTER TABLE ai_overrides DROP CONSTRAINT %I', pk_name);
+             END IF;
+         END $$;`,
         `ALTER TABLE ai_overrides ADD CONSTRAINT ai_overrides_pkey PRIMARY KEY (raw_name, scope)`,
 
         // epg_history (for catch-up)
