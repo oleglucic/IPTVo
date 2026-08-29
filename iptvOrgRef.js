@@ -48,6 +48,28 @@ const ALIASES = {
     // iptv-org spells "LaLiga por Movistar+" / "Deportes por Movistar+".
     'm': 'movistar',
     'm+': 'movistar',
+    // Disney's 2022-2024 wind-down of the international "Fox" brand in favor
+    // of "Star" (Balkans/Bulgaria/Portugal/Middle East/India/Latin America)
+    // — verified against iptv-org's own data: some countries' entries were
+    // updated to the new name (e.g. StarLife.bg replaced FoxLife.bg) while
+    // others (e.g. FoxLife.rs) are still sitting on the pre-rebrand name
+    // despite the same October 2023 Balkans rebrand having applied there
+    // too — a real, ongoing gap in iptv-org's crowdsourced data, not
+    // something a single country's entry can fix on its own. Aliasing both
+    // forms to the same token set means a provider's channel is found
+    // correctly regardless of which side (the provider or iptv-org) is
+    // using the current name for that particular country. Kept to safe,
+    // distinctive 2-word phrases — no bare "fox"/"star" alias, since either
+    // word alone collides with completely unrelated real channels ("Fox
+    // News", "Star Sports", "Star World", ...).
+    'fox life': 'star life',
+    'fox crime': 'star crime',
+    'fox movies': 'star movies',
+    // Viasat's own movie-channel family rebrand (TV1000 -> Viasat Kino and
+    // its Action/Comedy/Megahit/World variants) — verified against iptv-org
+    // (e.g. ViasatKino.ua lists "TV1000 East" as an alt_name already, but
+    // other countries' TV1000 entries have no Viasat Kino alt_name at all).
+    'tv1000': 'viasat kino',
 };
 // Reverse direction too: iptv-org's official short name -> playlist long name.
 // The reverse is skipped when the abbreviation is a bare single letter, and
