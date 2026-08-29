@@ -61,16 +61,28 @@ async function initSchema() {
         // which Postgres rejects outright: "multiple primary keys ... are not
         // allowed"). Looking it up dynamically works regardless of its name.
         `DO $$
-         DECLARE pk_name text;
+         DECLARE
+             target_relation regclass := 'ai_overrides'::regclass;
+             target_schema text;
+             target_table text;
+             pk_name text;
          BEGIN
+             SELECT n.nspname, c.relname INTO target_schema, target_table
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.oid = target_relation;
+
              SELECT tc.constraint_name INTO pk_name
              FROM information_schema.table_constraints tc
-             WHERE tc.table_name = 'ai_overrides' AND tc.constraint_type = 'PRIMARY KEY';
+             WHERE tc.table_schema = target_schema
+               AND tc.table_name = target_table
+               AND tc.constraint_type = 'PRIMARY KEY';
              IF pk_name IS NOT NULL THEN
-                 EXECUTE format('ALTER TABLE ai_overrides DROP CONSTRAINT %I', pk_name);
+                 EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', target_schema, target_table, pk_name);
              END IF;
+             EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I PRIMARY KEY (raw_name, scope)',
+                 target_schema, target_table, 'ai_overrides_pkey');
          END $$;`,
-        `ALTER TABLE ai_overrides ADD CONSTRAINT ai_overrides_pkey PRIMARY KEY (raw_name, scope)`,
 
         // epg_history (for catch-up)
         `CREATE TABLE IF NOT EXISTS epg_history (
