@@ -84,7 +84,10 @@ for (const [k, v] of Object.entries(ALIASES)) {
 }
 // Precompile alias regexes once: each tokenize() call otherwise rebuilds them.
 const ALIAS_PATTERNS = Array.from(ALIAS_BILATERAL.entries())
-    .map(([k, v]) => [new RegExp(`\\b${k.replace(/[^a-z0-9]+/g, '\\s+')}\\b`, 'i'), v]);
+    .map(([k, v]) => {
+        const separatorInsensitiveKey = k.split(/[^a-z0-9]+/).filter(Boolean).join('[^a-z0-9]*');
+        return [new RegExp(`\\b${separatorInsensitiveKey}\\b`, 'i'), v];
+    });
 
 let tokenIndex = new Map();        // sortedKey -> entry[] (one per distinct country sharing that token set)
 let tokenByFirst = new Map();      // firstToken -> [entry] (bucketed subsequence search)
