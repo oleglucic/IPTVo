@@ -1071,6 +1071,144 @@ console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`
     }
 });
 
+// ---- Community channel matching -------------------------------------------
+// Lets a logged-in user manually match a channel their own catalog couldn't
+// resolve against iptv-org to a shared community_channels entry (existing or
+// new), so it gets a real name/aliases/EPG+logo bridging instead of sitting
+// on the raw synthesized fallback id forever. See db.js's voteCommunityChannel
+// for the consensus/promotion mechanics this feeds into ai_overrides.
+
+// List this user's channels that are still on the synthesized fallback id —
+// i.e. genuinely unmatched (no iptv-org entry, and no override with enough
+// confidence to be trusted yet), not just ones the live iptv-org matcher
+// itself couldn't find (those may already be resolved via an override).
+app.get('/api/unmatched-channels', requireAuth, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        const ud = userCaches.get(userId);
+        if (!ud || !ud.channelMap) {
+            return res.json({ channels: [] });
+        }
+        const channels = [];
+        for (const [chKey, channel] of ud.channelMap.entries()) {
+            if (channel.meta.__matchSource === 'synthesized') {
+                channels.push({
+                    id: chKey,
+                    name: channel.meta.name,
+                    rawName: channel.meta.rawName,
+                    group: channel.meta.group,
+                    scope: channel.meta.__scope || 'global',
+                    logo: channel.meta.logo || null,
+                });
+            }
+        }
+        res.json({ channels });
+    } catch (e) {
+        console.error('[Community Match] unmatched-channels error:', sanitizeForLog(e.message));
+        res.status(500).json({ error: 'Failed to list unmatched channels' });
+    }
+});
+
+// Search for something to match an unmatched channel to — both the shared
+// community_channels catalog and, as a best-effort single suggestion, a
+// direct iptv-org lookup (in case the auto-matcher simply missed a real
+// entry that does exist). iptv-org here is one best-guess suggestion, not a
+// full search — iptvOrgRef.js doesn't expose a general substring search over
+// its ~85k entries, only exact/token/fuzzy channel-name lookups.
+app.get('/api/community-search', requireAuth, dashboardLimiter, async (req, res) => {
+    try {
+        const q = (req.query.q || '').toString().trim();
+        const scope = (req.query.scope || 'global').toString().toLowerCase();
+        if (!q || q.length < 2) {
+            return res.status(400).json({ error: 'Query must be at least 2 characters' });
+        }
+        const { searchCommunityChannels } = require('./db');
+        const { lookupChannelSmart, lookupChannel } = require('./iptvOrgRef');
+
+        const community = await searchCommunityChannels(q, scope);
+        const cleaned = q.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        const iptvOrgHit = lookupChannelSmart(cleaned, scope) || lookupChannel(cleaned.replace(/[^a-z0-9]/g, ''), scope);
+
+        res.json({
+            community: community.map(c => ({
+                id: c.id, canonicalId: c.canonical_id, displayName: c.display_name,
+                country: c.country, categories: c.categories, aliases: c.aliases,
+            })),
+            iptvOrgSuggestion: iptvOrgHit ? {
+                officialId: iptvOrgHit.officialId,
+                name: iptvOrgHit.canonicalName,
+                country: iptvOrgHit.countryScopeKey,
+            } : null,
+        });
+    } catch (e) {
+        console.error('[Community Match] community-search error:', sanitizeForLog(e.message));
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
+
+// Cast this user's match: to an existing community_channels entry, to a
+// real iptv-org entry search surfaced, or create a brand new community
+// entry and match to that. Takes effect for this user (and anyone else
+// sharing that raw playlist name) on their next catalog reload.
+app.post('/api/community-match', requireAuth, dashboardLimiter, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        const { rawName, scope, communityChannelId, iptvOrgOfficialId, newChannel } = req.body;
+        if (!rawName || typeof rawName !== 'string') {
+            return res.status(400).json({ error: 'rawName is required' });
+        }
+        const effectiveScope = (scope || 'global').toString().toLowerCase();
+        const { setOverride, createCommunityChannel, voteCommunityChannel } = require('./db');
+
+        let result;
+        if (iptvOrgOfficialId) {
+            // Direct match to a real iptv-org entry — no community vote needed,
+            // this is as authoritative as a match gets. Same confidence tier
+            // as an AI-curated match once verified (see aiCurator.js).
+            const canonicalId = `iptvo_${iptvOrgOfficialId}`;
+            await setOverride(rawName, canonicalId, 0.95, effectiveScope);
+            result = { canonicalId, voteCount: null, promoted: true };
+        } else if (communityChannelId) {
+            result = await voteCommunityChannel({ communityChannelId, rawName, scope: effectiveScope, configKey: userId });
+        } else if (newChannel && newChannel.displayName) {
+            const pascalName = newChannel.displayName.split(/\s+/).filter(Boolean)
+                .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('') || 'Unknown';
+            const canonicalId = `iptvo_${pascalName}${effectiveScope !== 'global' ? `.${effectiveScope}` : ''}`;
+            const created = await createCommunityChannel({
+                canonicalId, displayName: newChannel.displayName,
+                country: effectiveScope, categories: Array.isArray(newChannel.categories) ? newChannel.categories : [],
+            });
+            if (!created) return res.status(500).json({ error: 'Failed to create community channel' });
+            result = await voteCommunityChannel({ communityChannelId: created.id, rawName, scope: effectiveScope, configKey: userId });
+        } else {
+            return res.status(400).json({ error: 'Provide iptvOrgOfficialId, communityChannelId, or newChannel' });
+        }
+
+        if (!result) {
+            return res.status(500).json({ error: 'Match failed to save' });
+        }
+
+        // Same invalidation as a config update (see /api/auth/config above) —
+        // a manual match changes what the next parse will resolve this raw
+        // name to, so the cached catalog/EPG for it needs to be rebuilt.
+        bumpConfigGeneration(userId);
+        const existing = userCaches.get(userId);
+        if (!existing || existing.status !== 'loading') {
+            userCaches.delete(userId);
+        }
+        const delPrefix = userId + '|';
+        for (const key of catalogPageCache.keys()) {
+            if (key.startsWith(delPrefix)) catalogPageCache.delete(key);
+        }
+        await deleteCacheFromRedis(userId);
+
+        res.json({ success: true, ...result });
+    } catch (e) {
+        console.error('[Community Match] community-match error:', sanitizeForLog(e.message));
+        res.status(500).json({ error: 'Match failed' });
+    }
+});
+
 // Change password
 app.put('/api/auth/password', async (req, res) => {
     try {
