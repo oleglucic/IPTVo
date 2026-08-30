@@ -731,6 +731,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 // "iptvo_" prefix + "PascalCaseName.cc", so unmatched channels
                 // already look like the real thing below once a match is found.
                 let cId = `${IPTVO_ID_PREFIX}${synthesizeIptvOrgStyleId(cName, countryScopeKey)}${timeshiftSuffix}`;
+                // Tracks which of the three resolution paths actually produced
+                // cId, so the community-matching API can tell a genuinely
+                // still-unmatched channel (still on this synthesized fallback)
+                // apart from one already resolved via a confident override.
+                let matchSource = 'synthesized';
 
                 // DEBUG: Log first few channels to trace iptv-org matching
                 // if (Math.random() < 0.01) {
@@ -758,12 +763,14 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     // so the old "${country}_${officialId}" scheme was duplicating
                     // the same country twice in one id.
                     cId = `${IPTVO_ID_PREFIX}${iptvOrgMatch.officialId}${timeshiftSuffix}`;
+                    matchSource = 'iptv-org';
                     // Queue is not needed for AI as we have an authoritative match
                 } else {
                     // 2. Check Supabase Override DB if no iptv-org match
                     const dbMapping = overridesMap.get(`${rawName}\u0001${countryScopeKey || 'global'}`) || null;
                     if (dbMapping && dbMapping.confidence >= 0.5) {
                         cId = dbMapping.canonical_id;
+                        matchSource = 'override';
                     } else {
                         // Queue for async background AI deduplication if not mapped or low confidence
                         dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
@@ -794,10 +801,10 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 logoTrack.set(cId, { url: finalLogo, name: cName });
                 // Store iptv-org logo separately for fallback chain
                 const iptvOrgLogo = iptvOrgMatch ? iptvOrgMatch.logo : null;
-                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay, countryScopeKey };
+                cItem = { cId, cName, rawName, logo: finalLogo, iptvOrgLogo, grp: finalGrp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay, countryScopeKey, matchSource };
 
             } else if (t.startsWith('http') && cItem) {
-                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay, countryScopeKey } = cItem;
+                const { cId, cName, rawName, logo, iptvOrgLogo, grp, groupTags, catchupInfo, iptvOrgMatch, timeshiftDisplay, countryScopeKey, matchSource } = cItem;
                 const catId = `iptv_${grp.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}`;
                 groups.add(grp);
 
@@ -819,7 +826,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     const logoChain = [tvLogo, iptvOrgLogo, logo].filter(Boolean);
                     const displayLogo = logoChain[0] || null;
                     const genres = pickGenres(iptvOrgMatch, countryScopeKey, grp);
-                    const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                    const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch, __matchSource: matchSource, __scope: countryScopeKey };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
                 }
@@ -1040,6 +1047,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             // No 'iptv:' prefix - colons in IDs can break client URL parsing.
             // Same unified iptv-org-style scheme as the M3U parsing path above.
             let cId = `${IPTVO_ID_PREFIX}${synthesizeIptvOrgStyleId(cName, countryScopeKey)}${timeshiftSuffix}`;
+                // Tracks which of the three resolution paths actually produced
+                // cId, so the community-matching API can tell a genuinely
+                // still-unmatched channel (still on this synthesized fallback)
+                // apart from one already resolved via a confident override.
+                let matchSource = 'synthesized';
 
             // 1. Check iptv-org reference data first (authoritative source) using cleaned name
             // Only run iptv-org matching if explicitly enabled in config
@@ -1055,11 +1067,13 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 // Use iptv-org's official ID as the canonical identifier. officialId
                 // already carries the country as a ".cc" suffix, so no re-prefixing.
                 cId = `${IPTVO_ID_PREFIX}${iptvOrgMatch.officialId}${timeshiftSuffix}`;
+                matchSource = 'iptv-org';
             } else {
                 // 2. Check Supabase Override DB if no iptv-org match
                 const dbMapping = overridesMap.get(`${rawName}\u0001${countryScopeKey || 'global'}`) || null;
                 if (dbMapping && dbMapping.confidence >= 0.5) {
                     cId = dbMapping.canonical_id;
+                    matchSource = 'override';
                 } else {
                     // Queue for async background AI deduplication if not mapped or low confidence
                     dirtyChannels.push({ rawName, baseCleanName, cId, countryScopeKey });
@@ -1103,7 +1117,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 const logoChain = [tvLogo, iptvOrgLogo, finalLogo].filter(Boolean);
                 const displayLogo = logoChain[0] || null;
                 const genres = pickGenres(iptvOrgMatch, countryScopeKey, finalGrp);
-                const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch };
+                const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch, __matchSource: matchSource, __scope: countryScopeKey };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
             }

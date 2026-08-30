@@ -61,28 +61,52 @@ async function initSchema() {
         // which Postgres rejects outright: "multiple primary keys ... are not
         // allowed"). Looking it up dynamically works regardless of its name.
         `DO $$
-         DECLARE
-             target_relation regclass := 'ai_overrides'::regclass;
-             target_schema text;
-             target_table text;
-             pk_name text;
+         DECLARE pk_name text;
          BEGIN
-             SELECT n.nspname, c.relname INTO target_schema, target_table
-             FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.oid = target_relation;
-
              SELECT tc.constraint_name INTO pk_name
              FROM information_schema.table_constraints tc
-             WHERE tc.table_schema = target_schema
-               AND tc.table_name = target_table
-               AND tc.constraint_type = 'PRIMARY KEY';
+             WHERE tc.table_name = 'ai_overrides' AND tc.constraint_type = 'PRIMARY KEY';
              IF pk_name IS NOT NULL THEN
-                 EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', target_schema, target_table, pk_name);
+                 EXECUTE format('ALTER TABLE ai_overrides DROP CONSTRAINT %I', pk_name);
              END IF;
-             EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I PRIMARY KEY (raw_name, scope)',
-                 target_schema, target_table, 'ai_overrides_pkey');
          END $$;`,
+        `ALTER TABLE ai_overrides ADD CONSTRAINT ai_overrides_pkey PRIMARY KEY (raw_name, scope)`,
+
+        // community_channels / community_channel_votes: user-driven manual
+        // matching for channels iptv-org has no entry for at all (so AI
+        // curation and iptv-org matching both have nothing to find), but
+        // which DO have usable EPG (epgHub's canonical bridge key — see
+        // resolveCanonicalSourceId's no-match fallback) and/or a logo
+        // (tvLogosRef.lookupTvLogo) once given a clean name + country.
+        // community_channels is the persistent, named, alias-bearing entry a
+        // user matches a raw channel name TO; community_channel_votes
+        // records who voted for which (raw_name, scope) -> entry pairing, so
+        // consensus can be measured honestly (distinct config_key, not just
+        // a count anyone could inflate by resubmitting). See db.js's
+        // voteCommunityChannel for the promotion-into-ai_overrides logic
+        // this feeds — that's what the parser actually reads; these two
+        // tables are the provenance/curation layer behind it.
+        `CREATE TABLE IF NOT EXISTS community_channels (
+            id SERIAL PRIMARY KEY,
+            canonical_id VARCHAR(255) UNIQUE NOT NULL,
+            display_name VARCHAR(255) NOT NULL,
+            country VARCHAR(10) NOT NULL DEFAULT 'global',
+            categories TEXT[] NOT NULL DEFAULT '{}',
+            aliases TEXT[] NOT NULL DEFAULT '{}',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_community_channels_country ON community_channels(country)`,
+        `CREATE INDEX IF NOT EXISTS idx_community_channels_name ON community_channels(display_name)`,
+        `CREATE TABLE IF NOT EXISTS community_channel_votes (
+            community_channel_id INTEGER NOT NULL REFERENCES community_channels(id) ON DELETE CASCADE,
+            raw_name VARCHAR(500) NOT NULL,
+            scope VARCHAR(10) NOT NULL DEFAULT 'global',
+            config_key VARCHAR(255) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (raw_name, scope, config_key)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_ccv_raw_scope ON community_channel_votes(raw_name, scope)`,
 
         // epg_history (for catch-up)
         `CREATE TABLE IF NOT EXISTS epg_history (

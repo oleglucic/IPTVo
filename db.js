@@ -137,7 +137,131 @@ async function getAllOverrides() {
     }
 }
 
-// -- Legacy aliases kept for any remaining call-sites ----------------------------
+// -- Community channel matching --------------------------------------------------
+// Lets a user manually match a channel iptv-org has no entry for (so nothing
+// in the normal matching pipeline can find it) to a shared, named,
+// alias-bearing "community_channels" entry. A single vote takes effect
+// immediately for everyone sharing that raw playlist name (an explicit user
+// action is trusted more than an unmatched channel sitting there broken),
+// and once enough DISTINCT users (by config_key, not just resubmission
+// count) independently agree, confidence is raised and the raw name is
+// folded into the entry's aliases for future reference. The live, in-effect
+// mapping the parser actually reads is still ai_overrides — these two
+// tables are the curation/provenance layer feeding it, not a second
+// matching path the parser needs to know about.
+const COMMUNITY_VOTE_CONFIDENCE = { 1: 0.70, 2: 0.80 }; // 3+ votes -> 0.95 (see below)
+const COMMUNITY_CONSENSUS_THRESHOLD = 3;
+
+/**
+ * Searches community_channels by display name or a known alias.
+ * @param {string} query - Search text.
+ * @param {string} [scope] - Optional country to prioritize/filter by.
+ * @returns {Promise<Array>} Matching rows, best (country-matching) first.
+ */
+async function searchCommunityChannels(query, scope) {
+    if (!pool || !query) return [];
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, canonical_id, display_name, country, categories, aliases
+             FROM community_channels
+             WHERE display_name ILIKE $1 OR $2 ILIKE ANY(aliases)
+             ORDER BY (country = $3) DESC, display_name ASC
+             LIMIT 25`,
+            [`%${query}%`, query, scope || 'global']
+        );
+        return rows || [];
+    } catch (e) {
+        console.error('[DB Error] searchCommunityChannels:', e.message);
+        return [];
+    }
+}
+
+/**
+ * Creates a new community_channels entry, or returns the existing one if
+ * canonical_id already exists (idempotent — a user creating "the same"
+ * entry twice shouldn't duplicate it).
+ * @param {{canonicalId: string, displayName: string, country?: string, categories?: string[]}} params
+ * @returns {Promise<Object|null>} The created (or existing) row.
+ */
+async function createCommunityChannel({ canonicalId, displayName, country = 'global', categories = [] }) {
+    if (!pool) return null;
+    try {
+        const { rows } = await pool.query(
+            `INSERT INTO community_channels (canonical_id, display_name, country, categories)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (canonical_id) DO UPDATE SET updated_at = now()
+             RETURNING id, canonical_id, display_name, country, categories, aliases`,
+            [canonicalId, displayName, country, categories]
+        );
+        return rows[0] || null;
+    } catch (e) {
+        console.error('[DB Error] createCommunityChannel:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Casts (or updates) one user's vote matching a raw channel name to a
+ * community_channels entry, then immediately promotes the current
+ * leading candidate for that (raw_name, scope) into ai_overrides so the
+ * match takes effect on the next catalog reload — for the voter right away,
+ * and for anyone else sharing that raw playlist name too. Confidence rises
+ * with distinct-voter consensus; at the threshold, the raw name is folded
+ * into the entry's aliases.
+ * @param {{communityChannelId: number, rawName: string, scope: string, configKey: string}} params
+ * @returns {Promise<{canonicalId: string, voteCount: number, promoted: boolean}|null>}
+ */
+async function voteCommunityChannel({ communityChannelId, rawName, scope = 'global', configKey }) {
+    if (!pool || !communityChannelId || !rawName || !configKey) return null;
+    try {
+        await pool.query(
+            `INSERT INTO community_channel_votes (community_channel_id, raw_name, scope, config_key)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (raw_name, scope, config_key)
+             DO UPDATE SET community_channel_id = $1, created_at = now()`,
+            [communityChannelId, rawName, scope, configKey]
+        );
+
+        const { rows: leaderRows } = await pool.query(
+            `SELECT community_channel_id, COUNT(*)::int AS votes
+             FROM community_channel_votes
+             WHERE raw_name = $1 AND scope = $2
+             GROUP BY community_channel_id
+             ORDER BY votes DESC, community_channel_id ASC
+             LIMIT 1`,
+            [rawName, scope]
+        );
+        const leader = leaderRows[0];
+        if (!leader) return null;
+
+        const { rows: chRows } = await pool.query(
+            'SELECT canonical_id FROM community_channels WHERE id = $1',
+            [leader.community_channel_id]
+        );
+        const canonicalId = chRows[0] && chRows[0].canonical_id;
+        if (!canonicalId) return null;
+
+        const promoted = leader.votes >= COMMUNITY_CONSENSUS_THRESHOLD;
+        const confidence = promoted ? 0.95 : (COMMUNITY_VOTE_CONFIDENCE[leader.votes] || 0.70);
+        await setOverride(rawName, canonicalId, confidence, scope);
+
+        if (promoted) {
+            await pool.query(
+                `UPDATE community_channels
+                 SET aliases = array_append(aliases, $1), updated_at = now()
+                 WHERE id = $2 AND NOT ($1 = ANY(aliases))`,
+                [rawName, leader.community_channel_id]
+            );
+        }
+
+        return { canonicalId, voteCount: leader.votes, promoted };
+    } catch (e) {
+        console.error('[DB Error] voteCommunityChannel:', e.message);
+        return null;
+    }
+}
+
+
 const getMapping  = getOverride;
 const saveMapping = setOverride;
 const adjustConfidence = async (rawName, isSuccess, scope = 'global') => {
@@ -574,6 +698,10 @@ module.exports = {
     decrementConfidence,
     incrementUsage,
     getAllOverrides,
+    // Community channel matching
+    searchCommunityChannels,
+    createCommunityChannel,
+    voteCommunityChannel,
     hasSupabase,
     saveEpgSnapshot,
     getEpgHistory,
