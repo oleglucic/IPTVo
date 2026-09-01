@@ -172,6 +172,32 @@
     text-overflow: ellipsis;
 }
 
+.sidebar-divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: var(--space-3) var(--space-2);
+}
+
+.nav-badge {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 var(--space-1);
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    color: var(--color-text-inverse);
+    background: var(--color-brand);
+    border-radius: var(--radius-full);
+}
+
+.step-link.active .nav-badge {
+    background: var(--color-brand-strong);
+}
+
 /* ==================== Content Area ==================== */
 .content-area {
     flex: 1;
@@ -835,5 +861,321 @@
     }
     .header.glass {
         padding: 0 var(--space-3);
+    }
+}
+
+/* ==================== Channel Matching (community matching) ==================== */
+.match-count-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+}
+
+.match-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+/* Loading skeleton — mirrors the shape of a match-item so there's no layout
+   jump once real content arrives. */
+.match-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.match-skeleton-row {
+    height: 68px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(90deg, var(--color-surface) 25%, var(--color-surface-hover) 37%, var(--color-surface) 63%);
+    background-size: 400% 100%;
+    animation: skeletonShimmer 1.4s ease infinite;
+}
+
+@keyframes skeletonShimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+}
+
+.match-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: var(--space-2);
+    padding: var(--space-12) var(--space-6);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-lg);
+}
+
+.match-empty-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-full);
+    margin-bottom: var(--space-2);
+}
+
+.match-empty-icon svg {
+    width: 28px;
+    height: 28px;
+}
+
+/* All-matched: a warmer, success-tinted variant of the empty state. */
+.match-empty.is-success .match-empty-icon {
+    background: var(--color-success-muted);
+    color: var(--color-success);
+}
+
+.match-empty.is-neutral .match-empty-icon {
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+}
+
+.match-empty-hint {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    max-width: 44ch;
+    line-height: var(--leading-relaxed);
+}
+
+.match-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.match-item:hover {
+    border-color: var(--color-border-hover);
+}
+
+.match-item.is-matched {
+    animation: matchResolved var(--transition-slow) forwards;
+}
+
+@keyframes matchResolved {
+    0% { opacity: 1; transform: scale(1); }
+    60% { opacity: 0.5; transform: scale(0.98); }
+    100% { opacity: 0; transform: scale(0.96); max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-width: 0; }
+}
+
+.match-item-logo {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    object-fit: contain;
+    border: 1px solid var(--color-border);
+}
+
+.match-item-logo-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+}
+
+.match-item-logo-placeholder svg {
+    width: 18px;
+    height: 18px;
+}
+
+.match-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.match-item-name {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.match-item-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: 2px;
+}
+
+.match-item-raw {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.match-item-scope {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    padding: 1px var(--space-2);
+    background: var(--color-bg);
+    border-radius: var(--radius-full);
+    text-transform: uppercase;
+}
+
+/* ---- Match modal ---- */
+.match-modal {
+    max-width: 520px;
+}
+
+.match-modal-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    text-align: left;
+}
+
+.match-modal-logo {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    object-fit: contain;
+    border: 1px solid var(--color-border);
+}
+
+.match-search-results {
+    max-height: 320px;
+    overflow-y: auto;
+    margin-top: var(--space-4);
+}
+
+.match-search-hint,
+.match-search-empty {
+    padding: var(--space-6) var(--space-2);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+}
+
+.match-result-group-label {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+    margin: var(--space-3) 0 var(--space-2);
+}
+
+.match-result-group-label:first-child {
+    margin-top: 0;
+}
+
+.match-result-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    text-align: left;
+    margin-bottom: var(--space-2);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+}
+
+.match-result-item:hover,
+.match-result-item:focus-visible {
+    border-color: var(--color-brand);
+    background: var(--color-brand-muted);
+}
+
+.match-result-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.match-result-name {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-text-primary);
+}
+
+.match-result-sub {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    margin-top: 1px;
+}
+
+.match-result-arrow {
+    flex-shrink: 0;
+    color: var(--color-text-muted);
+}
+
+/* ---- Create-new-channel disclosure ---- */
+.match-create {
+    margin-top: var(--space-4);
+    border-top: 1px solid var(--color-border);
+    padding-top: var(--space-4);
+}
+
+.match-create summary {
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--color-brand);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.match-create summary::-webkit-details-marker {
+    display: none;
+}
+
+.match-create summary::before {
+    content: '+';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-full);
+    background: var(--color-brand-muted);
+    font-size: var(--text-base);
+    line-height: 1;
+    transition: transform var(--transition-fast);
+}
+
+.match-create[open] summary::before {
+    transform: rotate(45deg);
+}
+
+.match-create-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+}
+
+@media (max-width: 640px) {
+    .match-item-raw {
+        display: none;
     }
 }

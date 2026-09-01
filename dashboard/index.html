@@ -286,6 +286,18 @@
                             </a>
                         </li>
                     </ul>
+                    <div class="sidebar-divider" role="separator"></div>
+                    <ul class="step-list">
+                        <li class="step-item" data-step="6">
+                            <a class="step-link" href="#step6" data-action="navigate-step">
+                                <span class="step-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><path d="M8 11h6"></path></svg>
+                                </span>
+                                <span class="step-label">Channel Matching</span>
+                                <span class="nav-badge" id="unmatchedBadge" hidden>0</span>
+                            </a>
+                        </li>
+                    </ul>
                     <div class="sidebar-foot">
                         <span class="privacy-mini">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
@@ -527,6 +539,91 @@
                             <button type="button" class="btn btn-secondary btn-step-prev" data-action="prev-step">Back</button>
                         </footer>
                     </section>
+
+                    <!-- ============ Channel Matching (community-assisted) ============ -->
+                    <section id="step6" class="step-panel" aria-labelledby="step6-title">
+                        <header class="step-header">
+                            <p class="eyebrow">Ongoing, whenever you like</p>
+                            <h2 id="step6-title">Fix unmatched channels</h2>
+                            <p class="step-description">
+                                Most channels match automatically against iptv-org's public database. A few won't —
+                                usually because the name is written oddly, or the channel simply isn't in iptv-org yet.
+                                Match them yourself here: it takes effect immediately for you, and once a few other
+                                people agree on the same match, it becomes the default for everyone with that channel.
+                            </p>
+                        </header>
+
+                        <div class="panel-toolbar">
+                            <button type="button" class="btn btn-ghost" id="refreshUnmatchedBtn" data-action="refresh-unmatched">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                                <span>Refresh</span>
+                            </button>
+                            <div class="toolbar-spacer"></div>
+                            <span class="match-count-label" id="unmatchedCountLabel" hidden></span>
+                        </div>
+
+                        <div class="match-list" id="matchList" aria-live="polite">
+                            <!-- Loading / empty / populated states rendered by matching.js -->
+                            <div class="match-skeleton">
+                                <div class="match-skeleton-row"></div>
+                                <div class="match-skeleton-row"></div>
+                                <div class="match-skeleton-row"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ============ Match modal: search & assign a channel ============ -->
+                    <div id="matchModal" class="modal" role="dialog" aria-labelledby="matchModalTitle" aria-modal="true" hidden>
+                        <div class="modal-backdrop" data-action="close-match-modal"></div>
+                        <div class="modal-content match-modal">
+                            <button type="button" class="modal-close" data-action="close-match-modal" aria-label="Close">&times;</button>
+                            <div class="auth-head match-modal-head">
+                                <img id="matchModalLogo" class="match-modal-logo" alt="" hidden>
+                                <div>
+                                    <h2 id="matchModalTitle">Match a channel</h2>
+                                    <p class="form-hint" id="matchModalSubtitle"></p>
+                                </div>
+                            </div>
+
+                            <div class="search-box">
+                                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                                <input type="search" id="matchSearchInput" placeholder="Search by channel name…" aria-label="Search for a channel to match to" autocomplete="off">
+                            </div>
+
+                            <div class="match-search-results" id="matchSearchResults">
+                                <p class="match-search-hint">Start typing a channel name to search iptv-org and the community catalog.</p>
+                            </div>
+
+                            <details class="match-create" id="matchCreateDetails">
+                                <summary>Can't find it? Add it as a new channel</summary>
+                                <div class="match-create-form">
+                                    <div class="form-group">
+                                        <label for="matchCreateName">Channel name</label>
+                                        <input type="text" id="matchCreateName" placeholder="e.g. FilmBox Arthouse">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="matchCreateCategory">Category (optional)</label>
+                                        <select id="matchCreateCategory">
+                                            <option value="">— Not sure —</option>
+                                            <option value="general">General</option>
+                                            <option value="entertainment">Entertainment</option>
+                                            <option value="sports">Sports</option>
+                                            <option value="news">News</option>
+                                            <option value="movies">Movies</option>
+                                            <option value="series">Series</option>
+                                            <option value="kids">Kids</option>
+                                            <option value="music">Music</option>
+                                            <option value="documentary">Documentary</option>
+                                            <option value="religious">Religious</option>
+                                        </select>
+                                    </div>
+                                    <button type="button" class="btn btn-primary" id="matchCreateSubmit" data-action="create-and-match">
+                                        Create &amp; match
+                                    </button>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
                 </div>
             </main>
 

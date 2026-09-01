@@ -1062,8 +1062,6 @@ app.put('/api/auth/config', async (req, res) => {
         await sessionSet(token, session);
 
         console.log(`[Auth] Config updated for user: ${sanitizeForLog(userId)}`);
-console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
-console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
         res.json({ success: true });
     } catch (e) {
         console.error('[Auth] Config update error:', sanitizeForLog(e.message));
