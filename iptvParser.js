@@ -322,6 +322,25 @@ function synthesizeIptvOrgStyleId(cleanName, countryScopeKey) {
     const base = toIptvOrgStyleName(cleanName);
     return (countryScopeKey && countryScopeKey !== 'global') ? `${base}.${countryScopeKey}` : base;
 }
+
+// A canonical id can collect multiple provider entries. Preserve synthesized
+// provenance if any contributor is still unmatched so the community endpoint
+// does not hide it behind an earlier matched entry with the same id.
+const MATCH_SOURCE_PRIORITY = { override: 1, 'iptv-org': 2, synthesized: 3 };
+function mergeMatchSource(existingSource, incomingSource) {
+    const existingPriority = MATCH_SOURCE_PRIORITY[existingSource] || 0;
+    const incomingPriority = MATCH_SOURCE_PRIORITY[incomingSource] || 0;
+    return incomingPriority > existingPriority ? incomingSource : existingSource;
+}
+
+function mergeChannelMatchProvenance(meta, matchSource, rawName, scope) {
+    const mergedSource = mergeMatchSource(meta.__matchSource, matchSource);
+    if (mergedSource !== meta.__matchSource) {
+        meta.__matchSource = mergedSource;
+        meta.rawName = rawName;
+        meta.__scope = scope;
+    }
+}
 const { saveCacheToRedis, saveLogoUrl } = require('./redisCache');
 const { getLogoUrl, setLogoUrl } = require('./db');
 
@@ -829,6 +848,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                     const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: grp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch, __matchSource: matchSource, __scope: countryScopeKey };
                     tMap.set(cId, { meta: mItem, streams: [] });
                     tCat.push(mItem);
+                } else {
+                    mergeChannelMatchProvenance(tMap.get(cId).meta, matchSource, rawName, countryScopeKey);
                 }
                 
                 const sInfo = parseStreamInfo(rawName);
@@ -1120,6 +1141,8 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
                 const mItem = { id: cId, type: 'tv', name: displayName, genres, catalogId: catId, logo: displayLogo, fallbackLogo: logoChain[1] || null, rawName: rawName, group: finalGrp, groupTags: groupTags, hasCatchup: !!(catchupInfo && catchupInfo.hasCatchup), catchupDays: catchupInfo ? catchupInfo.catchupDays : 0, __iptvOrgMatch: !!iptvOrgMatch, __matchSource: matchSource, __scope: countryScopeKey };
                 tMap.set(cId, { meta: mItem, streams: [] });
                 tCat.push(mItem);
+            } else {
+                mergeChannelMatchProvenance(tMap.get(cId).meta, matchSource, rawName, countryScopeKey);
             }
 
             const sInfo = parseStreamInfo(rawName);

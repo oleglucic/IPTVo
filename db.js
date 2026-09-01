@@ -43,11 +43,13 @@ async function getOverride(rawName, scope = 'global') {
  * @param {string} canonicalId
  * @param {number} [confidence=0.85]
  * @param {string} [scope='global']
+ * @param {{query: Function}} [client] - Optional transaction client.
  */
-async function setOverride(rawName, canonicalId, confidence = 0.85, scope = 'global') {
-    if (!pool) return;
+async function setOverride(rawName, canonicalId, confidence = 0.85, scope = 'global', client = null) {
+    const queryable = client || pool;
+    if (!queryable) return;
     try {
-        await pool.query(
+        await queryable.query(
             `INSERT INTO ai_overrides (raw_name, scope, canonical_id, confidence, updated_at)
              VALUES ($1, $2, $3, $4, now())
              ON CONFLICT (raw_name, scope)
@@ -56,6 +58,7 @@ async function setOverride(rawName, canonicalId, confidence = 0.85, scope = 'glo
         );
     } catch (e) {
         console.error('[DB Error] setOverride:', e.message);
+        if (client) throw e;
     }
 }
 
@@ -213,8 +216,16 @@ async function createCommunityChannel({ canonicalId, displayName, country = 'glo
  */
 async function voteCommunityChannel({ communityChannelId, rawName, scope = 'global', configKey }) {
     if (!pool || !communityChannelId || !rawName || !configKey) return null;
+    const client = await pool.connect();
     try {
-        await pool.query(
+        await client.query('BEGIN');
+        // Serialize votes for the same raw name and scope, including the first
+        // vote where no row exists yet for a row-level lock to acquire.
+        await client.query(
+            'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+            [`${rawName}\u0001${scope}`]
+        );
+        await client.query(
             `INSERT INTO community_channel_votes (community_channel_id, raw_name, scope, config_key)
              VALUES ($1, $2, $3, $4)
              ON CONFLICT (raw_name, scope, config_key)
@@ -222,7 +233,7 @@ async function voteCommunityChannel({ communityChannelId, rawName, scope = 'glob
             [communityChannelId, rawName, scope, configKey]
         );
 
-        const { rows: leaderRows } = await pool.query(
+        const { rows: leaderRows } = await client.query(
             `SELECT community_channel_id, COUNT(*)::int AS votes
              FROM community_channel_votes
              WHERE raw_name = $1 AND scope = $2
@@ -232,21 +243,21 @@ async function voteCommunityChannel({ communityChannelId, rawName, scope = 'glob
             [rawName, scope]
         );
         const leader = leaderRows[0];
-        if (!leader) return null;
+        if (!leader) throw new Error('Community vote leader could not be resolved');
 
-        const { rows: chRows } = await pool.query(
-            'SELECT canonical_id FROM community_channels WHERE id = $1',
+        const { rows: chRows } = await client.query(
+            'SELECT canonical_id FROM community_channels WHERE id = $1 FOR SHARE',
             [leader.community_channel_id]
         );
         const canonicalId = chRows[0] && chRows[0].canonical_id;
-        if (!canonicalId) return null;
+        if (!canonicalId) throw new Error('Community vote leader channel could not be resolved');
 
         const promoted = leader.votes >= COMMUNITY_CONSENSUS_THRESHOLD;
         const confidence = promoted ? 0.95 : (COMMUNITY_VOTE_CONFIDENCE[leader.votes] || 0.70);
-        await setOverride(rawName, canonicalId, confidence, scope);
+        await setOverride(rawName, canonicalId, confidence, scope, client);
 
         if (promoted) {
-            await pool.query(
+            await client.query(
                 `UPDATE community_channels
                  SET aliases = array_append(aliases, $1), updated_at = now()
                  WHERE id = $2 AND NOT ($1 = ANY(aliases))`,
@@ -254,10 +265,18 @@ async function voteCommunityChannel({ communityChannelId, rawName, scope = 'glob
             );
         }
 
+        await client.query('COMMIT');
         return { canonicalId, voteCount: leader.votes, promoted };
     } catch (e) {
+        try {
+            await client.query('ROLLBACK');
+        } catch (rollbackError) {
+            console.error('[DB Error] voteCommunityChannel rollback:', rollbackError.message);
+        }
         console.error('[DB Error] voteCommunityChannel:', e.message);
-        return null;
+        throw e;
+    } finally {
+        client.release();
     }
 }
 

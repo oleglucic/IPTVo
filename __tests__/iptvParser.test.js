@@ -46,6 +46,74 @@ describe('iptvParser', () => {
     });
   });
 });
+
+describe('iptvParser match-source merging', () => {
+  const { getAllOverrides } = require('../db');
+  const { saveCacheToRedis, saveLogoUrl } = require('../redisCache');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    saveCacheToRedis.mockResolvedValue(undefined);
+    saveLogoUrl.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    delete process.env.IPTVO_ALLOW_INLINE_M3U;
+    require('../iptvParser').userCaches.clear();
+  });
+
+  test('preserves an unmatched M3U entry when an override shares its canonical id', async () => {
+    process.env.IPTVO_ALLOW_INLINE_M3U = '1';
+    getAllOverrides.mockResolvedValue([
+      { raw_name: 'Second', scope: 'global', canonical_id: 'iptvo_First', confidence: 0.8 }
+    ]);
+    const iptvParser = require('../iptvParser');
+
+    await iptvParser.streamFetchIPTV('m3u-merge', {
+      type: 'm3u',
+      iptvOrg: false,
+      m3uContent: [
+        '#EXTM3U',
+        '#EXTINF:-1 group-title="News",Second',
+        'https://example.com/second.ts',
+        '#EXTINF:-1 group-title="News",First',
+        'https://example.com/first.ts'
+      ].join('\n')
+    });
+
+    const channels = [...iptvParser.userCaches.get('m3u-merge').channelMap.values()];
+    expect(channels).toHaveLength(1);
+    expect(channels[0].meta).toMatchObject({ __matchSource: 'synthesized', rawName: 'First' });
+  });
+
+  test('preserves an unmatched Xtream entry when an override shares its canonical id', async () => {
+    const axios = require('axios');
+    axios.get = jest.fn()
+      .mockResolvedValueOnce({ data: [{ category_id: '1', category_name: 'News' }] })
+      .mockResolvedValueOnce({
+        data: [
+          { stream_type: 'live', stream_id: 1, category_id: '1', name: 'Second' },
+          { stream_type: 'live', stream_id: 2, category_id: '1', name: 'First' }
+        ]
+      });
+    getAllOverrides.mockResolvedValue([
+      { raw_name: 'Second', scope: 'global', canonical_id: 'iptvo_First', confidence: 0.8 }
+    ]);
+    const iptvParser = require('../iptvParser');
+
+    await iptvParser.streamFetchIPTV('xtream-merge', {
+      type: 'xtream',
+      xtreamUrl: 'https://example.com',
+      username: 'user',
+      password: 'pass',
+      iptvOrg: false
+    });
+
+    const channels = [...iptvParser.userCaches.get('xtream-merge').channelMap.values()];
+    expect(channels).toHaveLength(1);
+    expect(channels[0].meta).toMatchObject({ __matchSource: 'synthesized', rawName: 'First' });
+  });
+});
 describe('iptvParser (SSRF hardening)', () => {
   let iptvParser;
 

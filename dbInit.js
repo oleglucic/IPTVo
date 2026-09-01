@@ -63,9 +63,9 @@ async function initSchema() {
         `DO $$
          DECLARE pk_name text;
          BEGIN
-             SELECT tc.constraint_name INTO pk_name
-             FROM information_schema.table_constraints tc
-             WHERE tc.table_name = 'ai_overrides' AND tc.constraint_type = 'PRIMARY KEY';
+             SELECT conname INTO pk_name
+             FROM pg_constraint
+             WHERE conrelid = 'ai_overrides'::regclass AND contype = 'p';
              IF pk_name IS NOT NULL THEN
                  EXECUTE format('ALTER TABLE ai_overrides DROP CONSTRAINT %I', pk_name);
              END IF;
