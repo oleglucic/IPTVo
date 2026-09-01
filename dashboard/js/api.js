@@ -142,6 +142,27 @@ class APIClient {
         });
     }
 
+    // Community channel matching
+    async getUnmatchedChannels() {
+        return this.request('/api/unmatched-channels', {
+            method: 'GET'
+        });
+    }
+
+    async searchCommunityChannels(query, scope) {
+        const params = new URLSearchParams({ q: query, scope: scope || 'global' });
+        return this.request(`/api/community-search?${params.toString()}`, {
+            method: 'GET'
+        });
+    }
+
+    async submitCommunityMatch(payload) {
+        return this.request('/api/community-match', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    }
+
     async getHealth() {
         return this.request('/health', {
             method: 'GET'

@@ -9,6 +9,13 @@ const state = {
     token: null,
     isAuthenticated: false,
 
+    // True once the server has confirmed a saved config exists for this user
+    // (set from api.validate()'s response, not from any in-session UI state
+    // like whether the install links happen to be showing — that only
+    // reflects a save performed THIS session and stays false for a
+    // returning user with an already-working setup from before).
+    hasSavedConfig: false,
+
     // Configuration
     config: {
         type: 'm3u',

@@ -3,6 +3,7 @@
 import state, { getters, mutations, detectTimezoneOffset } from './state.js';
 import { api } from './api.js';
 import { toast } from './toast.js';
+import { initMatching, onMatchingStepShown } from './matching.js';
 
 // DOM Elements
 const elements = {};
@@ -336,6 +337,10 @@ function navigateToStep(step) {
     // configured provider — no explicit "Load Groups" press required. A manual
     // "Refresh" button remains for re-fetching.
     if (step === 2) maybeAutoLoadGroups().catch(() => {});
+
+    // Same idea for unmatched channels: load (or silently refresh) the moment
+    // the user opens this step, rather than requiring a manual first click.
+    if (step === 6) onMatchingStepShown(state.hasSavedConfig);
 }
 
 /**
@@ -745,6 +750,7 @@ async function handleSaveConfig() {
         // Replace http(s):// with stremio:// for deep link
         elements.stremioLink.href = addonUrl.replace(/^https?:\/\//, 'stremio://');
         elements.installSection.hidden = false;
+        state.hasSavedConfig = true;
 
         elements.saveStatus.className = 'save-status success';
         elements.saveStatus.textContent = 'Configuration saved successfully!';
@@ -806,10 +812,20 @@ async function initializeApp() {
             }
             mutations.setConfig(mergedConfig);
             updateFormFromState();
+            state.hasSavedConfig = true;
         }
     } catch {
         // Validation failed, will redirect to auth
     }
+
+    // Fetch the unmatched-channel count for the sidebar badge right away,
+    // rather than waiting for the user to click into that step — a badge
+    // that only appears after you've already found the thing it's pointing
+    // to isn't useful. loadUnmatched() catches its own errors internally
+    // (see matching.js), so this never needs to be awaited or guarded here;
+    // the step itself will offer a retry if this silent background load
+    // happens to fail.
+    onMatchingStepShown(state.hasSavedConfig);
 }
 
 /**
@@ -1153,6 +1169,7 @@ function bindEvents() {
 async function init() {
     cacheElements();
     bindEvents();
+    initMatching();
 
     // Fetch the server version once at boot so both the intro and the authed
     // app show the real version instead of the 0.0.1 fallback. Public endpoint.
