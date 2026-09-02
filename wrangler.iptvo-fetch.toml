@@ -5,7 +5,7 @@
 # The `name` MUST match the worker it's deployed to so Workers Builds deploy to
 # it by name. Connect this to GitHub in the Workers & Pages dashboard -> iptvo-fetch.
 name = "iptvo-fetch"
-main = "logo-proxy.worker.js"
+main = "workers/logo-proxy.worker.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 

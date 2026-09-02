@@ -10,20 +10,7 @@ const { extractM3uCatchupInfo, extractXtreamCatchupInfo } = require('./catchup')
 const { lookupChannel, lookupChannelSmart, isValidCountryCode, resolveGroupScope } = require('./iptvOrgRef');
 const { lookupTvLogo } = require('./tvLogosRef');
 const { configKeyFingerprint } = require('./cryptoUtils');
-
-/**
- * Sanitizes a string for safe logging (prevents log injection).
- * Removes newlines, tabs, carriage returns, and limits length.
- * @param {string} str - The string to sanitize
- * @returns {string} - Sanitized string safe for logging
- */
-function sanitizeForLog(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/[\r\n\t]/g, '?')
-        .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
-        .substring(0, 200);  // Limit length
-}
+const log = require('./logger').for('iptvParser');
 
 /**
  * Normalizes a stored config object into the field names the parser reads.
@@ -409,7 +396,7 @@ function publishParseResult(configKey, entry) {
         ? loading._generation
         : getConfigGeneration(configKey);
     if (startedGen !== getConfigGeneration(configKey)) {
-        console.log(`[parser] discarded stale parse for config=${configKeyFingerprint(configKey)}... (config changed mid-parse)`);
+        log.info(`parser discarded stale parse for config=${configKeyFingerprint(configKey)}... (config changed mid-parse)`);
         userCaches.delete(configKey);
         return false;
     }
@@ -631,7 +618,7 @@ async function streamFetchIPTV(configKey, configObj) {
  */
 async function parseM3uData(configKey, configObj) {
     const __t0 = Date.now();
-    console.log(`[parseM3uData] START for configKey=${configKeyFingerprint(configKey)}...`);
+    log.info(`parseM3uData START for configKey=${configKeyFingerprint(configKey)}...`);
     const __overridesRows = await getAllOverrides();
     // Compound key (raw_name + scope), not raw_name alone: the same raw
     // playlist name commonly repeats across multiple countries (e.g.
@@ -640,7 +627,7 @@ async function parseM3uData(configKey, configObj) {
     // that name, so a wrong match for even one country's channel infected
     // every other country's identically-named channel too.
     const overridesMap = new Map(__overridesRows.map(o => [`${o.raw_name}\u0001${o.scope || 'global'}`, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
-    console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
+    log.info(`parser Preloaded ${overridesMap.size} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration context object is missing.");
         const m3uTargetUrl = configObj.m3uUrl || configObj.m3u;
@@ -879,7 +866,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         for (const [, channel] of tMap.entries()) {
             if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
         }
-        console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+        log.info(`iptv-org Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
 const published = publishParseResult(configKey, {
             status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
@@ -887,11 +874,11 @@ const published = publishParseResult(configKey, {
             epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
             lastUpdated: Date.now()
         });
-        console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms${published ? '' : ' (discarded: config changed mid-parse)'}`);
-        if (published) saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
+        log.info(`parser READY configKey=${configKeyFingerprint(configKey)}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms${published ? '' : ' (discarded: config changed mid-parse)'}`);
+        if (published) saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => log.error('Redis Error write-through failed:', e));
 
         // Save logo and logo URLs to Redis (for change detection, background, non-blocking)
-        if (published) saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
+        if (published) saveLogoUrlsToRedis(configKey, tMap).catch(e => log.error('Logo URL Save Error', e));
 
         // Queue background logo pre-fetch for channels without iptv-org match
         const missingLogos = [];
@@ -905,16 +892,23 @@ const published = publishParseResult(configKey, {
             }
         }
         if (missingLogos.length > 0) {
-            console.log(`[LogoPrefetch] Queuing ${sanitizeForLog(missingLogos.length)} logos for background fetch...`);
-            queueLogoPrefetch(missingLogos).catch(e => console.error('[LogoPrefetch] Error:', sanitizeForLog(e.message)));
+            log.info(`LogoPrefetch Queuing ${missingLogos.length} logos for background fetch...`);
+            queueLogoPrefetch(missingLogos).catch(e => log.error('LogoPrefetch Error', e));
         }
 
-        // Always trigger async background AI process when dirty channels exist
-        if (dirtyChannels.length > 0 && configObj.openrouterKey) {
-            console.log(`[AI Curator] Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
+        // Trigger the async background AI process only when the user explicitly
+        // enabled it. The dashboard persists `aiEnabled`; legacy base64 configs
+        // never had that field, so a missing `aiEnabled` + present key keeps the
+        // historical behaviour (AI on). A present-but-false `aiEnabled` now
+        // correctly disables AI even if a key was previously entered.
+        const aiEnabled = (configObj.aiEnabled !== undefined)
+            ? !!configObj.aiEnabled
+            : !!configObj.openrouterKey;
+        if (dirtyChannels.length > 0 && aiEnabled && configObj.openrouterKey) {
+            log.info(`AI Curator Starting AI queue with openrouterKey for ${dirtyChannels.length} dirty channels`);
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => log.error('AI Queue Error', err));
         } else if (dirtyChannels.length > 0) {
-            console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config. Config keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, ai=${sanitizeForLog(configObj.ai)}`);
+            log.info(`AI Curator Skipping - AI disabled or OpenRouter API key not provided in config. aiEnabled=${configObj.aiEnabled}`);
         }
 
     } catch(e) {
@@ -925,7 +919,7 @@ const published = publishParseResult(configKey, {
         const prev = userCaches.get(configKey);
         const attempts = (backoffAttempts.get(configKey) || 0) + 1;
         backoffAttempts.set(configKey, attempts);
-        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms backoffAttempt=${sanitizeForLog(attempts)}`);
+        log.error(`parser ERROR configKey=${configKeyFingerprint(configKey)}... message=${e.message} elapsed=${Date.now() - __t0}ms backoffAttempt=${attempts}`);
         publishParseResult(configKey, {
             status: 'error',
             channelMap: (prev && prev.channelMap) || new Map(),
@@ -947,7 +941,7 @@ const published = publishParseResult(configKey, {
  */
 async function parseXtreamData(configKey, configObj) {
     const __t0 = Date.now();
-    console.log(`[parseXtreamData] START for configKey=${configKeyFingerprint(configKey)}...`);
+    log.info(`parseXtreamData START for configKey=${configKeyFingerprint(configKey)}...`);
     const __overridesRows = await getAllOverrides();
     // Compound key (raw_name + scope), not raw_name alone: the same raw
     // playlist name commonly repeats across multiple countries (e.g.
@@ -956,7 +950,7 @@ async function parseXtreamData(configKey, configObj) {
     // that name, so a wrong match for even one country's channel infected
     // every other country's identically-named channel too.
     const overridesMap = new Map(__overridesRows.map(o => [`${o.raw_name}\u0001${o.scope || 'global'}`, { canonical_id: o.canonical_id, confidence: parseFloat(o.confidence) }]));
-    console.log(`[parser] Preloaded ${sanitizeForLog(overridesMap.size)} override mappings from DB`);
+    log.info(`parser Preloaded ${overridesMap.size} override mappings from DB`);
     try {
         if (!configObj) throw new Error("Configuration mapping context payload is missing.");
 
@@ -975,7 +969,7 @@ async function parseXtreamData(configKey, configObj) {
 
         const apiBase = `${baseUrl}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
 
-        console.log(`[Xtream Engine] Querying data channels from endpoint: ${sanitizeForLog(baseUrl)}`);
+        log.info(`Xtream Engine Querying data channels from endpoint: ${baseUrl}`);
 
         const [catRes, streamRes] = await Promise.all([
             axios.get(`${apiBase}&action=get_live_categories`, { timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(() => ({ data: [] })),
@@ -1068,11 +1062,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             // No 'iptv:' prefix - colons in IDs can break client URL parsing.
             // Same unified iptv-org-style scheme as the M3U parsing path above.
             let cId = `${IPTVO_ID_PREFIX}${synthesizeIptvOrgStyleId(cName, countryScopeKey)}${timeshiftSuffix}`;
-                // Tracks which of the three resolution paths actually produced
-                // cId, so the community-matching API can tell a genuinely
-                // still-unmatched channel (still on this synthesized fallback)
-                // apart from one already resolved via a confident override.
-                let matchSource = 'synthesized';
+            // Tracks which of the three resolution paths actually produced
+            // cId, so the community-matching API can tell a genuinely
+            // still-unmatched channel (still on this synthesized fallback)
+            // apart from one already resolved via a confident override.
+            let matchSource = 'synthesized';
 
             // 1. Check iptv-org reference data first (authoritative source) using cleaned name
             // Only run iptv-org matching if explicitly enabled in config
@@ -1169,7 +1163,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
         for (const [, channel] of tMap.entries()) {
             if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
         }
-        console.log(`[iptv-org] Matched ${sanitizeForLog(iptvOrgMatchCount)}/${sanitizeForLog(tMap.size)} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
+        log.info(`iptv-org Matched ${iptvOrgMatchCount}/${tMap.size} channels (${tMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / tMap.size) : 0}%)`);
 
 const published = publishParseResult(configKey, {
             status: 'ready', channelMap: tMap, logoTracker: logoTrack, catalogItems: tCat, uniqueGroups: groups, epgData: tEpg,
@@ -1177,17 +1171,22 @@ const published = publishParseResult(configKey, {
             epgLastUpdated, epgNextRefreshAt, epgCoverageMs,
             lastUpdated: Date.now()
         });
-        console.log(`[parser] READY configKey=${configKeyFingerprint(configKey)}... channels=${sanitizeForLog(tMap.size)} groups=${sanitizeForLog(groups.size)} elapsed=${Date.now() - __t0}ms`);
-        if (published) saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => console.error('[Redis Error] write-through failed:', sanitizeForLog(e.message)));
-        console.log(`[Xtream Engine] Categorized and loaded ${sanitizeForLog(tCat.length)} streams inside memory.`);
+        log.info(`parser READY configKey=${configKeyFingerprint(configKey)}... channels=${tMap.size} groups=${groups.size} elapsed=${Date.now() - __t0}ms`);
+        if (published) saveCacheToRedis(configKey, userCaches.get(configKey)).catch(e => log.error('Redis Error write-through failed:', e));
+        log.info(`Xtream Engine Categorized and loaded ${tCat.length} streams inside memory.`);
 
         // Save logo URLs to Redis for change detection (background, non-blocking)
-        saveLogoUrlsToRedis(configKey, tMap).catch(e => console.error('[Logo URL Save Error]', sanitizeForLog(e.message)));
+        saveLogoUrlsToRedis(configKey, tMap).catch(e => log.error('Logo URL Save Error', e));
 
-        if (dirtyChannels.length > 0 && configObj.openrouterKey) {
-            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => console.error("[AI Queue Error]", sanitizeForLog(err.message)));
+        // Same AI gate as the M3U path: only run when explicitly enabled,
+        // defaulting to on for legacy configs that predate the aiEnabled field.
+        const aiEnabled = (configObj.aiEnabled !== undefined)
+            ? !!configObj.aiEnabled
+            : !!configObj.openrouterKey;
+        if (dirtyChannels.length > 0 && aiEnabled && configObj.openrouterKey) {
+            startAiQueue(dirtyChannels, configKey, configObj.openrouterKey, configObj.aiModel).catch(err => log.error('AI Queue Error', err));
         } else if (dirtyChannels.length > 0) {
-            console.log(`[AI Curator] Skipping - OpenRouter API key not provided in config`);
+            log.info('AI Curator Skipping - AI disabled or OpenRouter API key not provided in config');
         }
 
     } catch(e) {
@@ -1196,8 +1195,8 @@ const published = publishParseResult(configKey, {
         const prev = userCaches.get(configKey);
         const attempts = (backoffAttempts.get(configKey) || 0) + 1;
         backoffAttempts.set(configKey, attempts);
-        console.error("[Xtream Engine Error]", sanitizeForLog(e.message));
-        console.error(`[parser] ERROR configKey=${configKeyFingerprint(configKey)}... message=${sanitizeForLog(e.message)} elapsed=${Date.now() - __t0}ms backoffAttempt=${sanitizeForLog(attempts)}`);
+        log.error('Xtream Engine Error', e);
+        log.error(`parser ERROR configKey=${configKeyFingerprint(configKey)}... message=${e.message} elapsed=${Date.now() - __t0}ms backoffAttempt=${attempts}`);
         publishParseResult(configKey, {
             status: 'error',
             channelMap: (prev && prev.channelMap) || new Map(),
@@ -1225,7 +1224,7 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
 
     // Prevent SSRF: validate EPG URL before fetching
     if (!isSafeUrl(epgUrl)) {
-        console.error('[handleXmltvEpg] Invalid EPG URL: private/internal addresses not allowed');
+        log.error('handleXmltvEpg Invalid EPG URL: private/internal addresses not allowed');
         return { tEpg, spanMs: 0 };
     }
 
@@ -1314,13 +1313,13 @@ async function handleXmltvEpg(epgUrl, tMap, epgMap) {
                 resolve({ tEpg, spanMs: progs > 0 ? (maxStop - minStart) : 0 });
             });
             saxStream.on('error', (err) => {
-                console.error('[EPG SAX Error]', sanitizeForLog(err.message));
+                log.error('EPG SAX Error', err);
                 resolve({ tEpg, spanMs: 0 });
             });
 
             finalizedStream.pipe(saxStream);
         } catch(e) {
-            console.error("EPG Error", sanitizeForLog(e.message));
+            log.error('EPG Error', e);
             resolve({ tEpg, spanMs: 0 });
         }
     });
@@ -1361,9 +1360,9 @@ async function loadIptvOrgGuideMap() {
             arr.push({ siteId: g.site_id || '', lang: g.lang || (g.sources && g.sources[0] && g.sources[0].lang) || '', urls });
         }
         iptvOrgGuideCache = { byId, fetchedAt: now };
-        console.log(`[iptv-org] Guide map loaded: ${byId.size} channels with direct URL sources`);
+        log.info(`iptv-org Guide map loaded: ${byId.size} channels with direct URL sources`);
     } catch (e) {
-        console.error('[iptv-org] Guide map load failed:', sanitizeForLog(e.message));
+        log.error('iptv-org Guide map load failed:', e);
     }
     return byId;
 }
@@ -1517,7 +1516,7 @@ async function saveLogoUrlsToRedis(configKey, tMap) {
         }
     }
     if (saved > 0) {
-        console.log(`[LogoCache] Saved ${sanitizeForLog(saved)} logo URLs for change tracking (Redis + DB)`);
+        log.info(`LogoCache Saved ${saved} logo URLs for change tracking (Redis + DB)`);
     }
 }
 
@@ -1525,7 +1524,7 @@ async function saveLogoUrlsToRedis(configKey, tMap) {
  * Refreshes channel logos when their URLs are new, changed, or associated with a previous fetch failure.
  */
 async function backgroundLogoRefresh() {
-    console.log('[LogoRefresh] Starting background logo refresh...');
+    log.info('LogoRefresh Starting background logo refresh...');
     let checked = 0;
     let refreshed = 0;
     let unchanged = 0;
@@ -1553,7 +1552,7 @@ async function backgroundLogoRefresh() {
                 }
 
                 // URL changed or first time seeing this channel - need refresh
-                console.log(`[LogoRefresh] Logo URL changed/new for ${sanitizeForLog(cId)}, refreshing...`);
+                log.info(`LogoRefresh Logo URL changed/new for ${cId}, refreshing...`);
 
                 try {
                     // Fetch via imageEngine (which uses Worker proxy + Redis cache)
@@ -1574,7 +1573,7 @@ async function backgroundLogoRefresh() {
 
                 } catch (err) {
                     errors++;
-                    console.error(`[LogoRefresh] Failed for ${sanitizeForLog(cId)}: ${sanitizeForLog(err.message)}`);
+                    log.error(`LogoRefresh Failed for ${cId}`, err);
                 }
             }
         }
@@ -1602,15 +1601,15 @@ async function backgroundLogoRefresh() {
                     await saveLogoUrl(cId, meta.logo, meta.__iptvOrgMatch ? 'iptv-org' : 'playlist');
                 } catch (err) {
                     errors++;
-                    console.error(`[LogoRefresh] retry-miss failed for ${sanitizeForLog(cId)}: ${sanitizeForLog(err.message)}`);
+                    log.error(`LogoRefresh retry-miss failed for ${cId}`, err);
                 }
             }
         }
 
-        console.log(`[LogoRefresh] Complete: checked=${sanitizeForLog(checked)}, refreshed=${sanitizeForLog(refreshed)}, unchanged=${sanitizeForLog(unchanged)}, errors=${sanitizeForLog(errors)}`);
+        log.info(`LogoRefresh Complete: checked=${checked}, refreshed=${refreshed}, unchanged=${unchanged}, errors=${errors}`);
 
     } catch (err) {
-        console.error('[LogoRefresh] Fatal error:', sanitizeForLog(err.message));
+        log.error('LogoRefresh Fatal error:', err);
     }
 }
 

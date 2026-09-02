@@ -2,19 +2,19 @@
 // AI-queue processing logic introduced/changed in this PR.
 
 jest.mock('axios');
-jest.mock('../db', () => ({
+jest.mock('../src/db', () => ({
     setOverride: jest.fn(),
     getAllOverrides: jest.fn()
 }));
-jest.mock('../iptvOrgRef', () => ({
+jest.mock('../src/iptvOrgRef', () => ({
     lookupChannel: jest.fn(),
     lookupChannelFuzzy: jest.fn()
 }));
 
 const axios = require('axios');
-const { setOverride, getAllOverrides } = require('../db');
-const { lookupChannel, lookupChannelFuzzy } = require('../iptvOrgRef');
-const { startAiQueue, globalAiCache } = require('../aiCurator');
+const { setOverride, getAllOverrides } = require('../src/db');
+const { lookupChannel, lookupChannelFuzzy } = require('../src/iptvOrgRef');
+const { startAiQueue, globalAiCache } = require('../src/aiCurator');
 
 describe('aiCurator', () => {
     let logSpy;
@@ -148,10 +148,14 @@ describe('aiCurator', () => {
             await startAiQueue(dirtyChannels, 'cfgKey', 'key123');
 
             const errCall = errorSpy.mock.calls.find(call =>
-                call[0].includes('[AI Curator Error] Failed to process batch:')
+                call[0].includes('Failed to process batch')
             );
             expect(errCall).toBeDefined();
-            expect(errCall[1]).toBe('boom?Injected line?after tab');
+            // The logger bundles the sanitized error message into the first
+            // (and only) argument: newlines/tabs collapsed to '?', no raw
+            // prefix.
+            expect(errCall[0]).toContain('boom?Injected line?after tab');
+            expect(errCall[0]).not.toContain('\\n');
         });
 
         test('logs a dedicated message and stops early on rate limit (status 429)', async () => {
@@ -173,12 +177,11 @@ describe('aiCurator', () => {
             expect(setOverride).not.toHaveBeenCalled();
         });
 
-        // Regression/boundary case: sanitizeForLog() treats its argument as falsy
-        // when it is `0`, and short-circuits to an empty string. Since the batch
-        // start index `i` is `0` on the very first iteration, that numeric value
-        // is silently dropped from the "Stopping early" log line. This test
-        // documents the current, real behavior of the sanitization helper.
-        test('sanitizeForLog collapses a numeric 0 (batch start index) into an empty string', async () => {
+        // Regression/boundary case: the shared logger's sanitizeForLog() now
+        // correctly renders a numeric `0` as "0" (the old local helper
+        // short-circuited falsy values to an empty string, silently dropping the
+        // batch start index). This test pins the fixed behaviour.
+        test('logger renders numeric 0 for the batch start index instead of dropping it', async () => {
             lookupChannel.mockReturnValue(null);
             const rateLimitError = new Error('Too Many Requests');
             rateLimitError.response = { status: 429 };
@@ -194,8 +197,7 @@ describe('aiCurator', () => {
                 call[0].includes('Stopping early due to rate limit')
             );
             expect(stoppingLog).toBeDefined();
-            // "Processed " is immediately followed by " of" because sanitizeForLog(0) === ''
-            expect(stoppingLog[0]).toContain('Processed  of 1 channels this cycle.');
+            expect(stoppingLog[0]).toContain('Processed 0 of 1 channels this cycle.');
         });
     });
 

@@ -8,7 +8,7 @@
 # The `name` MUST match the worker name in the Cloudflare dashboard for
 # Workers Builds to deploy to it (see Workers name requirement).
 name = "iptvo-assets"
-main = "iptvo-assets.worker.js"
+main = "workers/iptvo-assets.worker.js"
 compatibility_date = "2024-01-01"
 
 # Worker limits — MUST be top-level (a `limits` key after [[kv_namespaces]]

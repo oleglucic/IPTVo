@@ -2,13 +2,14 @@
 // Run database schema initialization on startup. Safe to run multiple times.
 
 const pool = require('./db').pool;
+const log = require('./logger').for('dbInit');
 
 /**
  * Initializes the PostgreSQL schema and supporting indexes when a database connection is available.
  */
 async function initSchema() {
     if (!pool) {
-        console.log('[DB Init] No DATABASE_URL - skipping schema init');
+        log.info('No DATABASE_URL - skipping schema init');
         return;
     }
 
@@ -176,12 +177,12 @@ async function initSchema() {
         } catch (e) {
             // Ignore "already exists" errors, log others
             if (!e.message.includes('already exists') && !e.message.includes('duplicate')) {
-                console.error('[DB Init] Schema error:', e.message);
+                log.error('Schema error:', e.message);
             }
         }
     }
 
-    console.log('[DB Init] Schema initialized (tables + indexes)');
+    log.info('Schema initialized (tables + indexes)');
 }
 
 module.exports = { initSchema };

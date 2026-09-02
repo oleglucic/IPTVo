@@ -41,6 +41,10 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 │ - ai_overrides│  │ - logo buffers│  │ - edge cache  │
 │ - epg_history │  │ - logo URLs   │  │ - rate limit  │
 │ - logo_urls   │  │               │  │ - fallback    │
+│ - community_  │  │               │  │               │
+│   channels    │  │               │  │               │
+│ - community_  │  │               │  │               │
+│  channel_votes│  │               │  │               │
 └───────────────┘  └───────────────┘  └───────────────┘
 ```
 
@@ -49,15 +53,17 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 | File | Purpose |
 | ------ | --------- |
 | `server.js` | Express server, auth, Stremio addon, health endpoints |
-| `iptvParser.js` | M3U/Xtream parsing, iptv-org matching, AI queue |
-| `imageEngine.js` | Poster generation, logo caching (memory→Redis→Worker→SVG) |
-| `logo-proxy.worker.js` | Cloudflare Worker for logo fetching with fallbacks |
-| `redisCache.js` | Redis persistence for channel cache & logo buffers |
-| `db.js` / `dbInit.js` | PostgreSQL schema & queries |
-| `cryptoUtils.js` | AES-GCM encryption, password hashing |
-| `iptvOrgRef.js` | iptv-org reference data (daily refresh) |
-| `aiCurator.js` | OpenRouter AI batching for unmatched channels |
-| `dashboard.html` | Web UI for config management |
+| `src/iptvParser.js` | M3U/Xtream parsing, iptv-org matching, AI queue |
+| `src/imageEngine.js` | Poster generation, logo caching (memory→Redis→Worker→SVG) |
+| `workers/logo-proxy.worker.js` | Cloudflare Worker for logo fetching with fallbacks |
+| `src/redisCache.js` | Redis persistence for channel cache & logo buffers |
+| `src/db.js` / `src/dbInit.js` | PostgreSQL schema & queries |
+| `src/cryptoUtils.js` | AES-GCM encryption, password hashing |
+| `src/iptvOrgRef.js` | iptv-org reference data (daily refresh) |
+| `src/aiCurator.js` | OpenRouter AI batching for unmatched channels |
+| `src/logger.js` | Central leveled logger (`debug/info/warn/error`), auto-sanitizes all output, honors `LOG_LEVEL`/`LOG_FORMAT` |
+| `dashboard/js/matching.js` + `server.js`/`src/db.js` | Community channel matching: manual iptv-org/community/custom assignment, vote-based consensus (community_channels / community_channel_votes) |
+| `dashboard/index.html` | Web UI for config management |
 | `docker-compose.yml` | Container orchestration |
 
 ## Code Style
@@ -66,7 +72,7 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 - **Async IIFE** for top-level await in `server.js`
 - **No global state mutation** in modules - export functions
 - **Error handling**: try/catch with logging, never throw in hot paths
-- **Sensitive data redaction** in all logs (passwords, keys, URLs with auth)
+- **Logging**: use the shared logger (`src/logger.js`, `require('./logger').for('<tag>')`) — never raw `console.*`. It auto-sanitizes redaction (passwords, keys, URLs with auth), prepends the tag, and honors `LOG_LEVEL`/`LOG_FORMAT`. No manual `sanitizeForLog()` wrapping needed.
 
 ## Security
 
@@ -82,9 +88,9 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 
 ### Add New DB Table
 
-1. Add `CREATE TABLE` in `dbInit.js` statements array
-2. Add query functions in `db.js`
-3. Export new functions from `db.js`
+1. Add `CREATE TABLE` in `src/dbInit.js` statements array
+2. Add query functions in `src/db.js`
+3. Export new functions from `src/db.js`
 
 ### Add Auth-Protected Endpoint
 

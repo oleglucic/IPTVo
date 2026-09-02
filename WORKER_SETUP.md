@@ -6,9 +6,9 @@ IPTVo uses three Cloudflare Workers, all served under the coherent domain root
 
 | Worker | Code | Config | Route | Purpose |
 | ------ | ---- | ------ | ----- | ------- |
-| `iptvo-root` | `logo-proxy.worker.js` | `wrangler.toml` | owns `assets.oleglucic.com` | domain anchor; `/logo` at root |
-| `iptvo-fetch` | `logo-proxy.worker.js` | `wrangler.iptvo-fetch.toml` | `/iptvo/fetcher/*` | logo fetch via Cloudflare edge (rate-limit protection) |
-| `iptvo-assets` | `iptvo-assets.worker.js` | `wrangler.iptvo-assets.toml` | `/iptvo/assets/*` | edge cache for posters + catalog/meta JSON |
+| `iptvo-root` | `workers/logo-proxy.worker.js` | `wrangler.toml` | owns `assets.oleglucic.com` | domain anchor; `/logo` at root |
+| `iptvo-fetch` | `workers/logo-proxy.worker.js` | `wrangler.iptvo-fetch.toml` | `/iptvo/fetcher/*` | logo fetch via Cloudflare edge (rate-limit protection) |
+| `iptvo-assets` | `workers/iptvo-assets.worker.js` | `wrangler.iptvo-assets.toml` | `/iptvo/assets/*` | edge cache for posters + catalog/meta JSON |
 
 ## Prerequisites
 

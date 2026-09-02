@@ -6,15 +6,15 @@ jest.mock('axios', () => {
   return jest.fn(() => Promise.resolve({ data: Readable.from([]) }));
 });
 
-jest.mock('../aiCurator', () => ({
+jest.mock('../src/aiCurator', () => ({
   startAiQueue: jest.fn()
 }));
 
-jest.mock('../db', () => ({
+jest.mock('../src/db', () => ({
   getAllOverrides: jest.fn()
 }));
 
-jest.mock('../redisCache', () => ({
+jest.mock('../src/redisCache', () => ({
   saveCacheToRedis: jest.fn(),
   saveLogoUrl: jest.fn()
 }));
@@ -27,7 +27,7 @@ describe('iptvParser', () => {
     jest.clearAllMocks();
 
     // Dynamically require the module to get fresh instance
-    iptvParser = require('../iptvParser');
+    iptvParser = require('../src/iptvParser');
   });
 
   describe('Module existence', () => {
@@ -48,8 +48,8 @@ describe('iptvParser', () => {
 });
 
 describe('iptvParser match-source merging', () => {
-  const { getAllOverrides } = require('../db');
-  const { saveCacheToRedis, saveLogoUrl } = require('../redisCache');
+const { getAllOverrides } = require('../src/db');
+  const { saveCacheToRedis, saveLogoUrl } = require('../src/redisCache');
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -60,7 +60,7 @@ describe('iptvParser match-source merging', () => {
   afterEach(() => {
     delete process.env.IPTVO_ALLOW_INLINE_M3U;
     delete require('axios').get;
-    require('../iptvParser').userCaches.clear();
+    require('../src/iptvParser').userCaches.clear();
   });
 
   test('preserves an unmatched M3U entry when an override shares its canonical id', async () => {
@@ -68,7 +68,7 @@ describe('iptvParser match-source merging', () => {
     getAllOverrides.mockResolvedValue([
       { raw_name: 'Second', scope: 'global', canonical_id: 'iptvo_First', confidence: 0.8 }
     ]);
-    const iptvParser = require('../iptvParser');
+const iptvParser = require('../src/iptvParser');
 
     await iptvParser.streamFetchIPTV('m3u-merge', {
       type: 'm3u',
@@ -100,7 +100,7 @@ describe('iptvParser match-source merging', () => {
     getAllOverrides.mockResolvedValue([
       { raw_name: 'Second', scope: 'global', canonical_id: 'iptvo_First', confidence: 0.8 }
     ]);
-    const iptvParser = require('../iptvParser');
+const iptvParser = require('../src/iptvParser');
 
     await iptvParser.streamFetchIPTV('xtream-merge', {
       type: 'xtream',
@@ -120,7 +120,7 @@ describe('iptvParser (SSRF hardening)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    iptvParser = require('../iptvParser');
+    iptvParser = require('../src/iptvParser');
   });
 
 describe('revalidateResponseUrl', () => {
@@ -273,7 +273,7 @@ describe('handleXmltvEpg', () => {
       data: Readable.from([Buffer.from(xml)])
     });
 
-    const { handleXmltvEpg } = require('../iptvParser');
+    const { handleXmltvEpg } = require('../src/iptvParser');
     // channel id -> canonical cId mapping; both programmes map onto cnn.us
     const tMap = new Map([['cnn.us', true]]);
     const epgMap = new Map([['cnn.us', 'cnn.us']]);

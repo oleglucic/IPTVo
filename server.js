@@ -4,15 +4,17 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { addonBuilder } = require('stremio-addon-sdk');
-const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry, bumpConfigGeneration, adoptGeneration } = require('./iptvParser');
-const { run: runEpgHub, seedSources: seedEpgHub, backfillCanonicalAliases } = require('./epgHub');
-const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./redisCache');
-const { isValidCountryCode } = require('./iptvOrgRef');
-const { getCatchupStreams, isCatchupCapableUrl, snapshotAllEpgToHistory } = require('./catchup');
-const { getPremiumPoster } = require('./imageEngine');
-const { initSchema } = require('./dbInit');
-const { pruneEpgHistory } = require('./db');
-const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, configKeyFingerprint } = require('./cryptoUtils');
+const { streamFetchIPTV, getEpgText, userCaches, MAX_CACHE_AGE, refreshEpgForEntry, bumpConfigGeneration, adoptGeneration } = require('./src/iptvParser');
+const { run: runEpgHub, seedSources: seedEpgHub, backfillCanonicalAliases } = require('./src/epgHub');
+const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./src/redisCache');
+const { isValidCountryCode } = require('./src/iptvOrgRef');
+const { getCatchupStreams, isCatchupCapableUrl, snapshotAllEpgToHistory } = require('./src/catchup');
+const { getPremiumPoster } = require('./src/imageEngine');
+const { initSchema } = require('./src/dbInit');
+const { pruneEpgHistory } = require('./src/db');
+const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, configKeyFingerprint } = require('./src/cryptoUtils');
+const { sanitizeForLog } = require('./src/logger');
+const log = require('./src/logger').for('server');
 
 // Assets base URL. When set (e.g. https://assets.oleglucic.com), poster/logo/
 // catalog links resolve to the Cloudflare assets Worker+edge instead of the
@@ -148,20 +150,6 @@ const dashboardLimiter = rateLimit({
 });
 
 /**
- * Produces a bounded, printable representation of a value for logging.
- * @param {string} str - The value to sanitize.
- * @returns {string} A printable string with control characters and structured-log delimiters replaced, limited to 200 characters.
- */
-function sanitizeForLog(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/[\r\n\t]/g, '?')
-        .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
-        .replace(/[%{}]/g, '?')  // Escape structured logging format chars
-        .substring(0, 200);  // Limit length
-}
-
-/**
  * Determines whether a URL is allowed for external fetching.
  * @param {string} url - The URL to evaluate.
  * @returns {boolean} `true` if the URL uses HTTP or HTTPS and its host is not a blocked local, private, link-local, or metadata address, `false` otherwise.
@@ -222,7 +210,7 @@ const CATALOG_PAGE_CACHE_TTL = 30 * 1000; // 30s
 // any token — required for cluster/replicas). Redis auto-expires on TTL; this
 // prunes any whose expiresAt passed without firing, across all workers.
 setInterval(() => {
-    sessionPruneExpired().catch(e => console.error('[SessionPrune] failed:', sanitizeForLog(e.message)));
+    sessionPruneExpired().catch(e => log.error('SessionPrune failed:', e.message));
 }, 60 * 60 * 1000);
 
 // Serve dashboard (new structure)
@@ -269,7 +257,7 @@ app.get('/api/releases', dashboardLimiter, async (req, res) => {
         releasesCacheTime = Date.now();
         res.json({ releases: slim });
     } catch (err) {
-        console.error('releases fetch failed:', err.message);
+        log.error('releases fetch failed:', err.message);
         res.status(502).json({ error: 'Failed to load releases' });
     }
 });
@@ -345,19 +333,19 @@ app.post('/api/test-config', requireAuth, testConfigLimiter, async (req, res) =>
             const cleanUrl = xtreamUrl.replace(/\/$/, '');
             if (!isSafeUrl(cleanUrl)) return res.status(400).json({ error: 'Invalid Xtream URL: private/internal addresses not allowed' });
             // Never log credentials - only the panel host
-            console.log(`[TestConfig] Testing Xtream panel at ${new URL(cleanUrl).host}`);
+            log.info(`Testing Xtream panel at ${new URL(cleanUrl).host}`);
             const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`, { timeout: 20000, maxRedirects: 0 });
             const streams = Array.isArray(apiRes.data) ? apiRes.data : [];
             if (streams.length === 0) {
                 return res.status(400).json({ error: 'Connected, but no live channels returned (check credentials or panel URL)' });
             }
             const groupSet = new Set(streams.map(s => (s && (s.category_name || s.category_id)) || 'Uncategorized'));
-            console.log(`[TestConfig] OK: ${streams.length} channels, ${groupSet.size} groups (xtream)`);
+            log.info(`OK: ${streams.length} channels, ${groupSet.size} groups (xtream)`);
             return res.json({ channels: streams.length, groups: groupSet.size });
         }
         if (!m3uUrl) return res.status(400).json({ error: 'Missing M3U Stream URL' });
         if (!isSafeUrl(m3uUrl)) return res.status(400).json({ error: 'Invalid M3U URL: private/internal addresses not allowed' });
-        console.log('[TestConfig] Fetching M3U playlist');
+        log.info('Fetching M3U playlist');
         const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, responseType: 'arraybuffer', timeout: 20000, maxRedirects: 0 });
         const text = Buffer.from(m3uRes.data).toString('utf8');
         const lines = text.split('\n');
@@ -371,11 +359,11 @@ app.post('/api/test-config', requireAuth, testConfigLimiter, async (req, res) =>
             }
         }
         if (channels === 0) return res.status(400).json({ error: 'Connected, but no channels found in the playlist' });
-        console.log(`[TestConfig] OK: ${channels} channels, ${groups.size} groups (m3u)`);
+        log.info(`OK: ${channels} channels, ${groups.size} groups (m3u)`);
         return res.json({ channels, groups: groups.size });
     } catch (err) {
         const safeMsg = sanitizeForLog(err.message);
-        console.error(`[TestConfig] Failed: ${safeMsg}`);
+        log.error(`Failed:`, err.message);
         return res.status(502).json({ error: `Connection failed: ${safeMsg || 'unable to reach provider'}` });
     }
 });
@@ -403,18 +391,28 @@ function extractConfig(req) {
             rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
             while (rawB64.length % 4 !== 0) rawB64 += '=';
             const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
-            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch {}
-            const parsed = JSON.parse(decoded);
+            let parsed;
+            try {
+                parsed = JSON.parse(decodeURIComponent(escape(decoded)));
+            } catch {
+                parsed = JSON.parse(decoded);
+            }
             // Legacy configs shipped with `iptvOrgEnabled` (dashboard alias) but
             // the parser gates on `iptvOrg`. Normalize so both shapes enable it.
             if (parsed && typeof parsed.iptvOrgEnabled !== 'undefined' && typeof parsed.iptvOrg === 'undefined') {
                 parsed.iptvOrg = parsed.iptvOrgEnabled;
             }
+            // Legacy configs used `ai`; the dashboard persists `aiEnabled`. The
+            // parser's AI gate reads `aiEnabled`, so normalize the old key on
+            // legacy (base64) installs rather than dropping their preference.
+            if (parsed && typeof parsed.ai !== 'undefined' && typeof parsed.aiEnabled === 'undefined') {
+                parsed.aiEnabled = parsed.ai;
+            }
             return parsed;
         }
         return null;
     } catch (e) {
-        console.error('[extractConfig] Error:', sanitizeForLog(e.message));
+        log.error('extractConfig Error:', e.message);
         return null;
     }
 }
@@ -530,7 +528,7 @@ async function getEffectiveEpgMany(chKeys, entry) {
             // One batched query covers every missing channel (Earlier per-channel
             // reads were capped at 50, silently dropping EPG for later channels
             // on a page). Warm each result into the Redis cache.
-            const byKey = await require('./db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
+            const byKey = await require('./src/db').getEpgProgramsMany(needDb, Date.now(), Date.now() + 7 * 24 * 60 * 60 * 1000);
             // Iterate needDb in lookup-priority order (preserves precedence)
             for (const lk of needDb) {
                 const progs = byKey.get(lk);
@@ -547,7 +545,7 @@ async function getEffectiveEpgMany(chKeys, entry) {
                 }
             }
         } catch (e) {
-            console.error('[EPG][Central] batched resolution failed:', sanitizeForLog(e.message));
+            log.error('EPG Central batched resolution failed:', e.message);
         }
     }
     return out;
@@ -566,27 +564,27 @@ async function getEffectiveEpgMany(chKeys, entry) {
 async function ensureCache(config, configObj) {
     // If configObj contains _userId, resolve the full config from database
     if (configObj && configObj._userId) {
-        const user = await require('./db').getUserById(configObj._userId);
+        const user = await require('./src/db').getUserById(configObj._userId);
         if (user && user.encrypted_config && user.config_iv && user.config_salt) {
-            const { decryptConfig } = require('./cryptoUtils');
+            const { decryptConfig } = require('./src/cryptoUtils');
             const resolvedConfig = await decryptConfig(user.encrypted_config, user.config_iv, user.config_salt, process.env.ENCRYPTION_KEY);
             if (resolvedConfig) {
                 config = configObj._userId; // Use userId as cache key
                 configObj = resolvedConfig;
-                console.log(`[ensureCache] Resolved config for user: ${sanitizeForLog(configObj._userId)}`);
+                log.info(`Resolved config for user: ${configObj._userId}`);
             }
         }
     }
 
-    console.log(`[ensureCache] called for config=${configKeyFingerprint(config)}... configObj=${!!configObj}`);
-    if (!configObj) { console.log('[ensureCache] no configObj, returning null'); return null; }
+    log.info(`called for config=${configKeyFingerprint(config)}... configObj=${!!configObj}`);
+    if (!configObj) { log.info('no configObj, returning null'); return null; }
     let cached = userCaches.get(config);
     // Stash the config reference so the decoupled EPG-only refresh loop and the
     // proactive refresh can re-fetch without decoding the cache key (user-system
     // keys are plaintext UUIDs the base64 decode can't handle). Saved on the
     // entry so it survives a rehydrate.
     if (cached) cached._configObj = configObj;
-    console.log(`[ensureCache] cache state: ${sanitizeForLog(cached ? cached.status : 'MISSING')}`);
+    log.info(`cache state: ${cached ? cached.status : 'MISSING'}`);
 
     // Total cache miss (Reduced cold start): check Redis first, then start background parse
     if (!cached) {
@@ -603,18 +601,18 @@ async function ensureCache(config, configObj) {
             for (const [, channel] of redisCached.channelMap.entries()) {
                 if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
             }
-            console.log(`[ensureCache] rehydrated from Redis, channels=${redisCached.channelMap.size}, age=${Math.round((Date.now() - redisCached.lastUpdated)/60000)}min, iptv-org matched=${iptvOrgMatchCount}/${redisCached.channelMap.size} (${redisCached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / redisCached.channelMap.size) : 0}%)`);
+            log.info(`rehydrated from Redis, channels=${redisCached.channelMap.size}, age=${Math.round((Date.now() - redisCached.lastUpdated)/60000)}min, iptv-org matched=${iptvOrgMatchCount}/${redisCached.channelMap.size} (${redisCached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / redisCached.channelMap.size) : 0}%)`);
 
             // Check if Redis cache is stale (older than 2 hours) - refresh in background
             if (Date.now() - redisCached.lastUpdated > 2 * 60 * 60 * 1000) {
-                streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] background refresh failed:', sanitizeForLog(e.message)));
+                streamFetchIPTV(config, configObj).catch(e => log.error('background refresh failed:', e.message));
             }
             return redisCached;
         }
 
-        console.log(`[ensureCache] cold-start: starting background parse, returning placeholder...`);
+        log.info('cold-start: starting background parse, returning placeholder...');
         // Start background parse WITHOUT waiting - just kick it off
-        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] fetch failed:', sanitizeForLog(e.message)));
+        streamFetchIPTV(config, configObj).catch(e => log.error('fetch failed:', e.message));
 
         // Return a minimal "loading" cache so catalog can return empty but not timeout
         const loadingCache = {
@@ -659,7 +657,7 @@ async function ensureCache(config, configObj) {
     if (cached.status === 'error'
         ? (Date.now() >= (cached.retryAt || 0))
         : (cached.status === 'ready' && (Date.now() - cached.lastUpdated > 60 * 60 * 1000))) {
-        streamFetchIPTV(config, configObj).catch(e => console.error('[ensureCache] refresh failed:', sanitizeForLog(e.message)));
+        streamFetchIPTV(config, configObj).catch(e => log.error('refresh failed:', e.message));
     }
 
     return cached;
@@ -684,7 +682,7 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
     };
 
     // Redis check
-    const { hasRedis } = require('./redisCache');
+    const { hasRedis } = require('./src/redisCache');
     if (hasRedis) {
         try {
             const redis = require('ioredis');
@@ -700,7 +698,7 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
     }
 
     // Postgres check
-    const db = require('./db');
+    const db = require('./src/db');
     if (db.hasSupabase) {
         try {
             const { Pool } = require('pg');
@@ -716,7 +714,7 @@ app.get('/health/detailed', healthDetailedLimiter, async (req, res) => {
     }
 
     // iptv-org check
-    const { lastRefreshed } = require('./iptvOrgRef');
+    const { lastRefreshed } = require('./src/iptvOrgRef');
     if (lastRefreshed) {
         checks.iptvOrg = {
             status: 'ok',
@@ -804,7 +802,7 @@ async function verifyTurnstileToken(token, expectedAction, req) {
             return { success: true, disabled: false };
         return { success: false, disabled: false, reason: 'hostname-mismatch', hostname: data.hostname };
     } catch (e) {
-        console.error('[Turnstile] siteverify call failed:', sanitizeForLog(e.message));
+        log.error('siteverify call failed:', e.message);
         return { success: false, disabled: false, reason: 'siteverify-error' };
     }
 }
@@ -834,8 +832,8 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 8 characters' });
         }
 
-        const { createUser } = require('./db');
-        const existing = await require('./db').getUserByUsername(username);
+        const { createUser } = require('./src/db');
+        const existing = await require('./src/db').getUserByUsername(username);
         if (existing) {
             return res.status(409).json({ error: 'Username already exists' });
         }
@@ -854,10 +852,10 @@ app.post('/api/auth/register', async (req, res) => {
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days
         });
 
-        console.log(`[Auth] User registered: ${sanitizeForLog(username)} (${user.user_id})`);
+        log.info(`User registered: ${username} (${user.user_id})`);
         res.json({ success: true, username, userId: user.user_id, token });
     } catch (e) {
-        console.error('[Auth] Register error:', sanitizeForLog(e.message));
+        log.error('Register error:', e.message);
         res.status(500).json({ error: 'Registration failed' });
     }
 });
@@ -873,7 +871,7 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(400).json({ error: 'Username and password are required' });
         }
 
-        const user = await require('./db').getUserByUsername(username);
+        const user = await require('./src/db').getUserByUsername(username);
         if (!user) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
@@ -897,7 +895,7 @@ app.post('/api/auth/login', async (req, res) => {
             expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
         });
 
-        console.log(`[Auth] User logged in: ${sanitizeForLog(username)} (${user.user_id})`);
+        log.info(`User logged in: ${username} (${user.user_id})`);
         // Redact sensitive config fields in response
         const safeConfig = { ...config };
         if (safeConfig.password) safeConfig.password = '[REDACTED]';
@@ -923,7 +921,7 @@ app.post('/api/auth/login', async (req, res) => {
         }
         res.json({ success: true, username: user.username, userId: user.user_id, token, config: safeConfig });
     } catch (e) {
-        console.error('[Auth] Login error:', sanitizeForLog(e.message));
+        log.error('Login error:', e.message);
         res.status(500).json({ error: 'Login failed' });
     }
 });
@@ -1018,7 +1016,7 @@ app.put('/api/auth/config', async (req, res) => {
             return res.status(400).json({ error: 'Config object required' });
         }
 
-        const { updateUserConfig } = require('./db');
+        const { updateUserConfig } = require('./src/db');
         // updateUserConfig reads the stored config under a row lock and preserves
         // sensitive fields the client omitted (blank or '[REDACTED]') instead of
         // overwriting them with empty strings - the server never returns real
@@ -1053,7 +1051,7 @@ app.put('/api/auth/config', async (req, res) => {
         }
         const deleted = await deleteCacheFromRedis(userId);
         if (!deleted) {
-            console.warn(`[Auth] Redis cache delete failed for ${sanitizeForLog(userId)}; old snapshot may rehydrate until it ages out (6h).`);
+            log.warn(`Redis cache delete failed for ${userId}; old snapshot may rehydrate until it ages out (6h).`);
         }
 
         // Update session config (persisted to Redis so the running worker holds the
@@ -1061,10 +1059,10 @@ app.put('/api/auth/config', async (req, res) => {
         session.config = savedConfig;
         await sessionSet(token, session);
 
-        console.log(`[Auth] Config updated for user: ${sanitizeForLog(userId)}`);
+        log.info(`Config updated for user: ${userId}`);
         res.json({ success: true });
     } catch (e) {
-        console.error('[Auth] Config update error:', sanitizeForLog(e.message));
+        log.error('Config update error:', e.message);
         res.status(500).json({ error: 'Config update failed' });
     }
 });
@@ -1102,7 +1100,7 @@ app.get('/api/unmatched-channels', requireAuth, async (req, res) => {
         }
         res.json({ channels });
     } catch (e) {
-        console.error('[Community Match] unmatched-channels error:', sanitizeForLog(e.message));
+        log.error('Community Match unmatched-channels error:', e.message);
         res.status(500).json({ error: 'Failed to list unmatched channels' });
     }
 });
@@ -1120,8 +1118,8 @@ app.get('/api/community-search', requireAuth, dashboardLimiter, async (req, res)
         if (!q || q.length < 2) {
             return res.status(400).json({ error: 'Query must be at least 2 characters' });
         }
-        const { searchCommunityChannels } = require('./db');
-        const { lookupChannelSmart, lookupChannel } = require('./iptvOrgRef');
+        const { searchCommunityChannels } = require('./src/db');
+        const { lookupChannelSmart, lookupChannel } = require('./src/iptvOrgRef');
 
         const community = await searchCommunityChannels(q, scope);
         const cleaned = q.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1139,7 +1137,7 @@ app.get('/api/community-search', requireAuth, dashboardLimiter, async (req, res)
             } : null,
         });
     } catch (e) {
-        console.error('[Community Match] community-search error:', sanitizeForLog(e.message));
+        log.error('Community Match community-search error:', e.message);
         res.status(500).json({ error: 'Search failed' });
     }
 });
@@ -1156,7 +1154,7 @@ app.post('/api/community-match', requireAuth, dashboardLimiter, async (req, res)
             return res.status(400).json({ error: 'rawName is required' });
         }
         const effectiveScope = (scope || 'global').toString().toLowerCase();
-        const { setOverride, createCommunityChannel, voteCommunityChannel } = require('./db');
+        const { setOverride, createCommunityChannel, voteCommunityChannel } = require('./src/db');
 
         let result;
         if (iptvOrgOfficialId) {
@@ -1202,7 +1200,7 @@ app.post('/api/community-match', requireAuth, dashboardLimiter, async (req, res)
 
         res.json({ success: true, ...result });
     } catch (e) {
-        console.error('[Community Match] community-match error:', sanitizeForLog(e.message));
+        log.error('Community Match community-match error:', e.message);
         res.status(500).json({ error: 'Match failed' });
     }
 });
@@ -1229,8 +1227,8 @@ app.put('/api/auth/password', async (req, res) => {
             return res.status(400).json({ error: 'New password must be at least 8 characters' });
         }
 
-        const { getUserById } = require('./db');
-        const { hashPassword } = require('./cryptoUtils');
+        const { getUserById } = require('./src/db');
+        const { hashPassword } = require('./src/cryptoUtils');
 
         const user = await getUserById(session.userId);
         if (!user) {
@@ -1243,15 +1241,15 @@ app.put('/api/auth/password', async (req, res) => {
         }
 
         const newHash = await hashPassword(newPassword);
-        const pool = require('./db').pool;
+        const pool = require('./src/db').pool;
         if (pool) {
             await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE user_id = $2', [newHash, session.userId]);
         }
 
-        console.log(`[Auth] Password changed for user: ${sanitizeForLog(session.userId)}`);
+        log.info(`Password changed for user: ${session.userId}`);
         res.json({ success: true });
     } catch (e) {
-        console.error('[Auth] Password change error:', sanitizeForLog(e.message));
+        log.error('Password change error:', e.message);
         res.status(500).json({ error: 'Password change failed' });
     }
 });
@@ -1275,7 +1273,7 @@ app.delete('/api/auth/account', async (req, res) => {
             return res.status(400).json({ error: 'Password required for confirmation' });
         }
 
-        const { getUserById } = require('./db');
+        const { getUserById } = require('./src/db');
         const user = await getUserById(session.userId);
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
@@ -1286,16 +1284,16 @@ app.delete('/api/auth/account', async (req, res) => {
             return res.status(401).json({ error: 'Password is incorrect' });
         }
 
-        const pool = require('./db').pool;
+        const pool = require('./src/db').pool;
         if (pool) {
             await pool.query('DELETE FROM users WHERE user_id = $1', [session.userId]);
         }
         await sessionDelete(token);
 
-        console.log(`[Auth] Account deleted for user: ${sanitizeForLog(session.userId)}`);
+        log.info(`Account deleted for user: ${session.userId}`);
         res.json({ success: true });
     } catch (e) {
-        console.error('[Auth] Account deletion error:', sanitizeForLog(e.message));
+        log.error('Account deletion error:', e.message);
         res.status(500).json({ error: 'Account deletion failed' });
     }
 });
@@ -1378,7 +1376,7 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
     const posterRoot = config.posterRoot;
-    console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extraValue(extra, 'genre'))}, search=${sanitizeForLog(extraValue(extra, 'search'))}`);
+    log.info(`request received, configObj parsed=${!!configObj}, genre=${extraValue(extra, 'genre')}, search=${extraValue(extra, 'search')}`);
     if (!configObj) return { metas: [] };
 
     const ud = await ensureCache(configKey, configObj);
@@ -1463,7 +1461,7 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
         if (catalogPageCache.size > 2000) catalogPageCache.clear();
         catalogPageCache.set(cacheKey, { metas, at: Date.now() });
     }
-    console.log(`[Catalog] responding with ${sanitizeForLog(metas.length)} metas (skip=${skip})${catalogPageCache.has(cacheKey) ? ' [cached]' : ''}`);
+    log.info(`responding with ${metas.length} metas (skip=${skip})${catalogPageCache.has(cacheKey) ? ' [cached]' : ''}`);
     return result;
 });
 
@@ -1555,7 +1553,7 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
                 catchupEntries = await getCatchupStreams(id, catchupSource.url, hoursBack);
             }
         } catch (e) {
-            console.error('[Catchup] Failed to build catchup streams:', sanitizeForLog(e.message));
+            log.error('Failed to build catchup streams:', e.message);
         }
     }
 
@@ -1596,7 +1594,7 @@ async function genreOptionsFor(req) {
     try {
         // Try lightweight Redis key for uniqueGroups only (avoid full cache deserialization)
         const groupsKey = `${configKey}:groups`;
-        const redis = require('./redisCache');
+        const redis = require('./src/redisCache');
         if (redis.hasRedis) {
             const groupsJson = await redis.redisClient?.get(groupsKey);
             if (groupsJson) {
@@ -1657,7 +1655,7 @@ async function manifestFor(req) {
             }
         }
     } catch (e) {
-        console.error('[Manifest] genre options skipped:', sanitizeForLog(e.message));
+        log.error('Manifest genre options skipped:', e.message);
     }
     return m;
 }
@@ -1795,7 +1793,7 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
         }
         res.sendFile(resolvedPath);
     } catch (error) {
-        console.error("[Poster Generation Error]", sanitizeForLog(error.message));
+        log.error('Poster Generation Error (user):', error.message);
         res.status(500).send("Error compiling image layer context");
     }
 });
@@ -1914,15 +1912,15 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
         }
         res.sendFile(resolvedPath);
     } catch (error) {
-        console.error("[Poster Generation Error]", sanitizeForLog(error.message));
+        log.error('Poster Generation Error (legacy):', error.message);
         res.status(500).send("Error compiling image layer context");
     }
 });
 
-const { startAutoRefresh: startIptvOrgRefresh } = require('./iptvOrgRef');
-const { startAutoRefresh: startTvLogosRefresh } = require('./tvLogosRef');
-const { backgroundLogoRefresh } = require('./iptvParser');
-const { prewarm } = require('./prewarm');
+const { startAutoRefresh: startIptvOrgRefresh } = require('./src/iptvOrgRef');
+const { startAutoRefresh: startTvLogosRefresh } = require('./src/tvLogosRef');
+const { backgroundLogoRefresh } = require('./src/iptvParser');
+const { prewarm } = require('./src/prewarm');
 const PORT = process.env.PORT || 3000;
 
 // ---- Cluster mode (horizontal scaling on one box) ---------------------------
@@ -1947,7 +1945,7 @@ try { clusterObj = require('node:cluster'); } catch { /* cluster unavailable */ 
 if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     clusterObj.setupPrimary({ workers: workercount, schedulingPolicy: clusterObj.SCHED_RR });
     for (let i = 0; i < workercount; i++) clusterObj.fork();
-    console.log(`[Cluster] Forked ${workercount} workers (reserving cores for other services).`);
+    log.info(`Forked ${workercount} workers (reserving cores for other services).`);
     require('process').on('SIGTERM', () => process.exit(0));
     return; // primary: don't run the app directly
 }
@@ -1957,7 +1955,7 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     try {
         await initSchema();
     } catch (e) {
-        console.error('[DB Init] Failed:', sanitizeForLog(e.message));
+        log.error('DB Init Failed:', e.message);
     }
 
     startIptvOrgRefresh();
@@ -1965,11 +1963,11 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
 
     // Background logo refresh - only refreshes logos with changed URLs (runs every 6 hours)
     setInterval(() => {
-        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Cycle failed:', sanitizeForLog(e.message)));
+        backgroundLogoRefresh().catch(e => log.error('LogoRefresh Cycle failed:', e.message));
     }, 6 * 60 * 60 * 1000); // 6 hours
     // Also run once on startup after a delay
     setTimeout(() => {
-        backgroundLogoRefresh().catch(e => console.error('[LogoRefresh] Initial run failed:', sanitizeForLog(e.message)));
+        backgroundLogoRefresh().catch(e => log.error('LogoRefresh Initial run failed:', e.message));
     }, 5 * 60 * 1000); // 5 min after startup
 
     // Full iptv-org poster/logo prewarm: renders every channel's poster to disk
@@ -1980,15 +1978,15 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
     // cluster mode it must run once cluster-wide, not once per worker. The
     // daily lock (30 min TTL, well above the longest actual run) deduplicates.
     setInterval(() => {
-        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => console.error('[Prewarm] Cycle failed:', sanitizeForLog(e.message)));
+        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => log.error('Prewarm Cycle failed:', e.message));
     }, 24 * 60 * 60 * 1000); // daily
     setTimeout(() => {
-        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => console.error('[Prewarm] Initial run failed:', sanitizeForLog(e.message)));
+        withOnceLock('prewarm', 30 * 60, () => prewarm()).catch(e => log.error('Prewarm Initial run failed:', e.message));
     }, 15 * 60 * 1000); // 15 min after startup, after logo refresh's first pass
 
     // Periodically snapshot EPG data into persistent history for catch-up (XMLTV feeds are forward-looking only)
     setInterval(() => {
-        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Snapshot cycle failed:', sanitizeForLog(e.message)));
+        snapshotAllEpgToHistory(userCaches).catch(e => log.error('Catchup Snapshot cycle failed:', e.message));
     }, 30 * 60 * 1000);
 
     // Decoupled EPG-only refresh (task #42): re-fetch EPG schedules for entries
@@ -2009,30 +2007,30 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
                 cur.epgNextRefreshAt = next.epgNextRefreshAt;
                 cur.epgCoverageMs = next.epgCoverageMs;
                 cur.epgLastUpdated = Date.now();
-            }).catch(e => console.error('[EPG][Refresh] failed:', sanitizeForLog(e.message)));
+            }).catch(e => log.error('EPG Refresh failed:', e.message));
         }
     }, 15 * 60 * 1000);
 
     // Daily retention prune: epg_history grows without bound otherwise (only a
     // 48h read window is used; keep 7 days).
     setInterval(() => {
-        withOnceLock('epgHistoryPrune', 30 * 60, pruneEpgHistory).catch(e => console.error('[EPG][Prune] cycle failed:', sanitizeForLog(e.message)));
+        withOnceLock('epgHistoryPrune', 30 * 60, pruneEpgHistory).catch(e => log.error('EPG Prune cycle failed:', e.message));
     }, 24 * 60 * 60 * 1000);
     setTimeout(() => {
-        snapshotAllEpgToHistory(userCaches).catch(e => console.error('[Catchup] Initial snapshot failed:', sanitizeForLog(e.message)));
+        snapshotAllEpgToHistory(userCaches).catch(e => log.error('Catchup Initial snapshot failed:', e.message));
     }, 2 * 60 * 1000);
 
     // Central multi-source EPG (epgHub): seed the source registry, then fetch +
     // merge + warm the generation-stamped cache on a periodic cadence. A broken
     // source is isolated and only increments its own error_count.
-    seedEpgHub().catch(e => console.error('[epgHub] seed failed:', sanitizeForLog(e.message)));
+    seedEpgHub().catch(e => log.error('epgHub seed failed:', e.message));
     // runEpgHub re-fetches + merges the central DB, so it must run once
     // cluster-wide. 45-min lock exceeds the longest realistic fetch/merge.
     setInterval(() => {
-        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] cycle failed:', sanitizeForLog(e.message)));
+        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => log.error('epgHub cycle failed:', e.message));
     }, 30 * 60 * 1000);
     setTimeout(() => {
-        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => console.error('[epgHub] initial run failed:', sanitizeForLog(e.message)));
+        withOnceLock('epgHub', 45 * 60, runEpgHub).catch(e => log.error('epgHub initial run failed:', e.message));
     }, 10 * 60 * 1000); // 10 min after startup, after DB/iptv-org are up
 
     // Copy existing raw source-id EPG rows into their canonical iptv-org keys
@@ -2044,7 +2042,7 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
             const markerKey = 'epgAliasBackfill:completed';
             const marker = await sessionGet(markerKey);
             if (marker && marker.timestamp && (Date.now() - marker.timestamp < 24 * 60 * 60 * 1000)) {
-                console.log('[epgHub] backfill skipped: already completed today');
+                log.info('epgHub backfill skipped: already completed today');
                 return;
             }
 
@@ -2054,14 +2052,14 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
             // Only set completion marker if backfill actually completed (status === 'done')
             if (result && result.status === 'done') {
                 await sessionSet(markerKey, { timestamp: Date.now() });
-                console.log('[epgHub] backfill completed, marker set');
+                log.info('epgHub backfill completed, marker set');
             } else if (result && result.status === 'skipped') {
-                console.log('[epgHub] backfill skipped (not ready), marker not set - will retry');
+                log.info('epgHub backfill skipped (not ready), marker not set - will retry');
             } else if (result && result.status === 'error') {
-                console.log('[epgHub] backfill encountered error, marker not set - will retry');
+                log.info('epgHub backfill encountered error, marker not set - will retry');
             }
         } catch (e) {
-            console.error('[epgHub] backfill failed:', sanitizeForLog(e.message));
+            log.error('epgHub backfill failed:', e.message);
         }
     }, 2 * 60 * 1000); // 2 min after startup, once iptv-org reference is loaded
 
@@ -2075,12 +2073,12 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
                 try {
                     const configObj = extractConfig({ params: { config: configKey }, query: {} });
                     if (configObj) {
-                        console.log(`[ProactiveRefresh] configObj keys: ${sanitizeForLog(Object.keys(configObj).join(', '))}, openrouterKey present: ${!!configObj.openrouterKey}, ai: ${sanitizeForLog(configObj.ai)}`);
-                        console.log(`[ProactiveRefresh] refreshing stale config=${configKeyFingerprint(configKey)}...`);
-                        streamFetchIPTV(configKey, configObj).catch(e => console.error('[ProactiveRefresh] failed:', sanitizeForLog(e.message)));
+                        log.info(`configObj keys: ${Object.keys(configObj).join(', ')}, openrouterKey present: ${!!configObj.openrouterKey}, aiEnabled: ${configObj.aiEnabled}`);
+                        log.info(`refreshing stale config=${configKeyFingerprint(configKey)}...`);
+                        streamFetchIPTV(configKey, configObj).catch(e => log.error('ProactiveRefresh failed:', e.message));
                     }
                 } catch (e) {
-                    console.error(`[ProactiveRefresh] Failed to extract config for ${sanitizeForLog(configKey)}:`, sanitizeForLog(e.message));
+                    log.error(`Failed to extract config for ${configKey}:`, e.message);
                 }
             }
         }
@@ -2099,11 +2097,11 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
                 for (const [, channel] of cached.channelMap.entries()) {
                     if (channel.meta.__iptvOrgMatch) iptvOrgMatchCount++;
                 }
-                console.log(`[Boot] Pre-warmed config=${sanitizeForLog(key.substring(0,12))}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
+                log.info(`Pre-warmed config=${key.substring(0,12)}... channels=${cached.channelMap.size}, iptv-org matched=${iptvOrgMatchCount}/${cached.channelMap.size} (${cached.channelMap.size > 0 ? Math.round(iptvOrgMatchCount * 100 / cached.channelMap.size) : 0}%)`);
             }
         }
-        console.log(`[Boot] Pre-warmed ${keys.length} config(s) from Redis.`);
+        log.info(`Pre-warmed ${keys.length} config(s) from Redis.`);
     })();
 
-    app.listen(PORT, () => console.log(`IPTVo Premium Backend operational on port ${PORT}`));
+    app.listen(PORT, () => log.info(`IPTVo Premium Backend operational on port ${PORT}`));
 })();

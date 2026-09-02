@@ -256,6 +256,17 @@
         padding: 0 var(--space-3);
     }
 
+    /* Comfortable touch targets on small screens */
+    .user-menu-btn,
+    .dropdown-item {
+        min-height: 44px;
+    }
+
+    .group-item {
+        padding-top: var(--space-3);
+        padding-bottom: var(--space-3);
+    }
+
     .app-subtitle {
         display: none;
     }
@@ -1022,6 +1033,13 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* Prevent the "Match" action button from being squeezed off the row on
+   narrow screens; the name ellipsizes but the action always stays tappable. */
+.match-item [data-action="open-match"] {
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 .match-item-scope {

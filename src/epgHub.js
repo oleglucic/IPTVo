@@ -24,6 +24,7 @@ const {
 const {
     saveEpgCache, getHubGeneration, bumpGeneration, setHubState
 } = require('./redisCache');
+const log = require('./logger').for('epgHub');
 
 // The XMLTV sources key programmes by their own channel ids (e.g.
 // "sky.sports.news.uk"), but users look up programmes by their provider
@@ -155,13 +156,9 @@ async function seedSources() {
         try {
             await upsertEpgSource(s);
         } catch (e) {
-            console.error(`[epgHub] failed to seed source ${s.source}:`, sanitizeForLog(e.message));
+            log.error(`failed to seed source ${s.source}:`, e.message);
         }
     }
-}
-
-function sanitizeForLog(msg) {
-    return typeof msg === 'string' ? msg.replace(/:\/\/[^@\s]*@/, '://[REDACTED]@') : msg;
 }
 
 /**
@@ -318,7 +315,7 @@ async function run() {
     try {
         const sources = await listEpgSources();
         const enabled = sources.filter(s => s.enabled !== false);
-        if (enabled.length === 0) { console.log('[epgHub] No enabled sources.'); return { status: 'no-sources' }; }
+        if (enabled.length === 0) { log.info('No enabled sources.'); return { status: 'no-sources' }; }
         const channelBuckets = new Map(); // officialId -> [{source, programs}]
         let fetched = 0, failed = 0;
         let i = 0;
@@ -338,7 +335,7 @@ async function run() {
                     await setEpgSourceStatus(s.source, { last_fetch: Date.now(), last_success: Date.now(), error_count: 0 });
                 } catch (e) {
                     failed++;
-                    console.error(`[epgHub] source ${s.source} failed: ${e.message}`);
+                    log.error(`source ${s.source} failed: ${e.message}`);
                     await setEpgSourceStatus(s.source, { last_fetch: Date.now(), error_count: (s.error_count || 0) + 1 });
                 }
             }
@@ -392,7 +389,7 @@ async function run() {
         }
         setHubState(mergedPrograms).catch(() => {}); // publish final coverage (no re-advance)
         await pruneEpgPrograms();
-        console.log(`[epgHub] cycle: fetched=${fetched} failed=${failed} mergedChannels=${mergedChannels} mergedPrograms=${mergedPrograms}`);
+        log.info(`cycle: fetched=${fetched} failed=${failed} mergedChannels=${mergedChannels} mergedPrograms=${mergedPrograms}`);
         return { status: 'done', fetched, failed, mergedChannels, mergedPrograms, generation: await getHubGeneration() };
     } finally {
         running = false;
@@ -415,7 +412,7 @@ async function backfillCanonicalAliases() {
     }
     // If reference still not ready after all attempts, return distinct not-ready status
     if (!getIptvOrgReady()) {
-        console.warn('[epgHub] backfill skipped: reference not ready after 20 attempts');
+        log.warn('backfill skipped: reference not ready after 20 attempts');
         return { status: 'skipped', reason: 'reference-not-ready' };
     }
     let changed = 0;
@@ -457,13 +454,13 @@ async function backfillCanonicalAliases() {
                     changed += (result && result.rowCount) || 0;
                 }
             }
-            console.log(`[epgHub] backfill aliases cursor=${cursor} written=${changed}...`);
+            log.info(`backfill aliases cursor=${cursor} written=${changed}...`);
         }
     } catch (e) {
-        console.error(`[epgHub] backfill failed: ${e.message}`);
+        log.error(`backfill failed: ${e.message}`);
         return { status: 'error', error: e.message };
     }
-    console.log(`[epgHub] backfill complete: canonical aliases written=${changed}`);
+    log.info(`backfill complete: canonical aliases written=${changed}`);
     return { status: 'done', changed };
 }
 

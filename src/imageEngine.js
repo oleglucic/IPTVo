@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const dns = require('dns').promises;
 const net = require('net');
 const { loadLogoBuffer, saveLogoBuffer, hasRedis } = require('./redisCache');
+const log = require('./logger').for('imageEngine');
 
 const cacheDir = path.join(__dirname, 'cache');
 if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
@@ -291,7 +292,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         try {
             return await generatePosterFromBuffer(cachedBuffer, cachePath, sourceLog);
         } catch (sharpErr) {
-            console.error(`[imageEngine] Sharp processing failed for cId=${cId} (cached logo): ${sharpErr.message}`);
+            log.error(`Sharp processing failed for cId=${cId} (cached logo): ${sharpErr.message}`);
         }
     }
 
@@ -301,14 +302,14 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         if (redisBuffer) {
             // Skip SVG placeholders that may have been cached - Sharp can't process them for background blur
             if (isSvgBuffer(redisBuffer)) {
-                console.log(`[imageEngine] Skipping SVG placeholder in Redis for ${cId}`);
+                log.info(`Skipping SVG placeholder in Redis for ${cId}`);
             } else {
                 sourceLog.push('redis');
                 setLogoCache(logoUrl, redisBuffer); // promote to memory cache
                 try {
                     return await generatePosterFromBuffer(redisBuffer, cachePath, sourceLog);
                 } catch (sharpErr) {
-                    console.error(`[imageEngine] Sharp processing failed for cId=${cId} (Redis logo): ${sharpErr.message}`);
+                    log.error(`Sharp processing failed for cId=${cId} (Redis logo): ${sharpErr.message}`);
                 }
             }
         }
@@ -350,7 +351,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
             }
 
         } catch (err) {
-            console.error(`[imageEngine] Worker proxy fetch failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
+            log.error(`Worker proxy fetch failed for cId=${cId}, logoUrl=${logoUrl}: ${err.message}`);
             sourceLog.push('worker:error');
             // Quota exhaustion returns HTTP 429 (or an edge error page). Either
             // way the next N minutes should skip the worker and use the server's
@@ -376,7 +377,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         markDeadUrl(logoUrl, true);
         return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
     } catch (directErr) {
-        console.warn(`[imageEngine] Direct fetch failed for ${logoUrl}: ${directErr.message}`);
+        log.warn(`Direct fetch failed for ${logoUrl}: ${directErr.message}`);
         sourceLog.push('direct:error');
 
         // Try fallback URL with the same caching, persistence, and poster flow
@@ -392,7 +393,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
                 markDeadUrl(logoUrl, true); // primary URL succeeded via fallback
                 return await generatePosterFromBuffer(buffer, cachePath, sourceLog, contentType);
             } catch (fallbackErr) {
-                console.warn(`[imageEngine] Fallback direct fetch also failed for ${fallbackUrl}: ${fallbackErr.message}`);
+                log.warn(`Fallback direct fetch also failed for ${fallbackUrl}: ${fallbackErr.message}`);
                 sourceLog.push('fallback-direct:error');
                 // Mark primary URL dead since both primary and fallback failed
                 markDeadUrl(logoUrl, false);
@@ -421,7 +422,7 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
         // Last resort truly failed (bad name text, disk issue, etc). Log it
         // loudly instead of letting it bubble up as an uncaught 500 for the
         // whole poster request — the route handler has no further fallback.
-        console.error(`[imageEngine] Fallback SVG generation failed for cId=${cId}: ${fallbackErr.message}`);
+        log.error(`Fallback SVG generation failed for cId=${cId}: ${fallbackErr.message}`);
         throw fallbackErr;
     }
 }
@@ -476,7 +477,7 @@ async function generatePosterFromBuffer(logoBuffer, cachePath, sourceLog, _conte
         ])
         .toFile(cachePath);
 
-    console.log(`[imageEngine] Poster generated for ${cachePath} (sources: ${sourceLog.join(' → ')})`);
+    log.info(`Poster generated for ${cachePath} (sources: ${sourceLog.join(' → ')})`);
     return cachePath;
 }
 
@@ -517,7 +518,7 @@ async function generateFallback(cachePath, fallbackName, sourceLog = []) {
         .resize(POSTER_SIZE, POSTER_SIZE, { fit: 'fill' })
         .toFile(cachePath);
 
-    console.log(`[imageEngine] Fallback poster generated for ${cachePath} (sources: ${sourceLog.join(' → ')})`);
+    log.info(`Fallback poster generated for ${cachePath} (sources: ${sourceLog.join(' → ')})`);
     return cachePath;
 }
 
@@ -534,10 +535,10 @@ function evictOldestIfOverCap() {
         const toRemove = withStats.slice(0, files.length - MAX_CACHE_FILES);
         for (const f of toRemove) fs.unlinkSync(f.full);
         if (toRemove.length > 0) {
-            console.log(`[imageEngine] Evicted ${toRemove.length} oldest cached posters (cap=${MAX_CACHE_FILES})`);
+            log.info(`Evicted ${toRemove.length} oldest cached posters (cap=${MAX_CACHE_FILES})`);
         }
     } catch (e) {
-        console.error('[imageEngine] Cache eviction check failed:', e.message);
+        log.error('Cache eviction check failed:', e.message);
     }
 }
 

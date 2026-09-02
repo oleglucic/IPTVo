@@ -279,9 +279,9 @@ IPTVo ships three Cloudflare Workers, all served coherently under `assets.oleglu
 
 | Worker | Code | Route | Purpose |
 | ------ | ---- | ----- | ------- |
-| `iptvo-root` | `logo-proxy.worker.js` | owns `assets.oleglucic.com` | domain anchor; serves `/logo` directly at the root |
-| `iptvo-fetch` | `logo-proxy.worker.js` | `/iptvo/fetcher/*` | logo fetch via Cloudflare edge (avoids logo-host rate limits) |
-| `iptvo-assets` | `iptvo-assets.worker.js` | `/iptvo/assets/*` | edge cache for posters, catalog/meta JSON, logos |
+| `iptvo-root` | `workers/logo-proxy.worker.js` | owns `assets.oleglucic.com` | domain anchor; serves `/logo` directly at the root |
+| `iptvo-fetch` | `workers/logo-proxy.worker.js` | `/iptvo/fetcher/*` | logo fetch via Cloudflare edge (avoids logo-host rate limits) |
+| `iptvo-assets` | `workers/iptvo-assets.worker.js` | `/iptvo/assets/*` | edge cache for posters, catalog/meta JSON, logos |
 
 ### One-time Setup (via Cloudflare dashboard)
 
@@ -340,6 +340,10 @@ IPTVo includes a complete user authentication system with encrypted configuratio
 | - ai_overrides   |  | - logo buffers   |  | - iptvo-fetch (logos) |
 | - epg_history    |  | - logo URLs      |  | - iptvo-assets (edge) |
 | - logo_urls      |  |                  |  |  (edge cache + tiered)|
+| - community_     |  |                  |  |                       |
+|   channels       |  |                  |  |                       |
+| - community_     |  |                  |  |                       |
+|   channel_votes  |  |                  |  |                       |
 +------------------+  +------------------+  +-----------------------+
 ```
 
@@ -446,11 +450,12 @@ Where `:config` is the base64-encoded JSON config. The dashboard at `/` generate
 
 The web dashboard at `/` provides an **Apple HIG / Liquid Glass** (iOS 26/macOS 26) design:
 
-- **Guided setup wizard**: 5 steps (Provider → Groups → Matching & AI → Backup → Save & Install) with a top-weekend sidebar/top bar
+- **Guided setup wizard**: 5 steps (Provider → Groups → Matching & AI → Backup → Save & Install) with a top-widget sidebar/top bar
+- **Channel Matching panel**: A separate always-accessible step (Step 6) for community-assisted matching — review unresolved channels, assign iptv-org/community/custom matches manually, and upvote existing community matches (vote-based consensus)
 - **Mobile-first responsive**: Segmented control (<430px), tab bar (430-768px), sidebar (>768px)
 - **Glassmorphism**: `backdrop-filter: saturate(180%) blur(20px)` with semantic color tokens
 - **Authentication**: Login/register modal in the header (Cloudflare Turnstile bot protection)
-- **Config management**: Save to DB, import/export JSON, change password, delete account
+- **Config management**: Save to DB, import/export JSON, change password, delete account (all via in-app modals, not native `prompt()`)
 - **Group management**: Searchable list with include/exclude toggles, channel counts (auto-loaded once provider is set)
 - **Sticky action bar**: Save & Install, Import, Export, Status (safe-area aware)
 
@@ -463,6 +468,7 @@ The web dashboard at `/` provides an **Apple HIG / Liquid Glass** (iOS 26/macOS 
 | **Matching & AI** | iptv-org toggle, confidence slider, AI toggle + OpenRouter key |
 | **Backup** | Export config JSON / import a saved one |
 | **Save & Install** | Save config, view your private addon URL, copy to Stremio deep link |
+| **Channel Matching** | Always-accessible panel (not part of the linear wizard): review unresolved channels, manual iptv-org/community/custom assignment, upvote community matches |
 
 ## Configuration
 
@@ -481,7 +487,7 @@ The addon accepts configuration via the dashboard UI or direct URL parameters (l
   "timezoneOffset": 0,
   "fallbackPreference": "custom",
   "iptvOrg": true,
-  "ai": true,
+  "aiEnabled": true,
   "openrouterKey": "sk-or-v1-..."
 }
 ```
@@ -545,21 +551,22 @@ getPremiumPoster(cId, logoUrl, fallbackUrl, channelName)
 | File | Purpose |
 | ------ | --------- |
 | `server.js` | Express routes, auth, Stremio addon, health endpoints, cold-start pre-warm |
-| `iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline, country extraction, XMLTV/EPG mapping, AI queue |
-| `iptvOrgRef.js` | iptv-org data fetch + exact/fuzzy lookup (daily refresh) |
-| `aiCurator.js` | AI deduplication queue, OpenRouter integration, batching |
-| `imageEngine.js` | Poster generation (Sharp), logo cache, Worker proxy, SVG fallbacks |
-| `db.js` | Postgres pool, user CRUD, override CRUD, EPG history, logo URL tracking |
-| `dbInit.js` | Auto-initialize database schema on startup |
-| `redisCache.js` | Playlist cache read/write, logo buffer persist/get, pre-warm job |
-| `catchup.js` | Catch-up metadata extraction (M3U `catchup`/`catchup-days`, Xtream) |
-| `cryptoUtils.js` | AES-GCM encryption/decryption, PBKDF2 password hashing, session tokens |
-| `logo-proxy.worker.js` | Cloudflare Worker logo fetcher with KV dead URL tracking |
-| `iptvo-assets.worker.js` | Cloudflare edge asset cache (posters, catalog/meta JSON) |
+| `src/iptvParser.js` | Core M3U/Xtream parsing, channel ID pipeline, country extraction, XMLTV/EPG mapping, AI queue |
+| `src/iptvOrgRef.js` | iptv-org data fetch + exact/fuzzy lookup (daily refresh) |
+| `src/aiCurator.js` | AI deduplication queue, OpenRouter integration, batching |
+| `src/imageEngine.js` | Poster generation (Sharp), logo cache, Worker proxy, SVG fallbacks |
+| `src/db.js` | Postgres pool, user CRUD, override CRUD, EPG history, logo URL tracking, community channel matching & votes |
+| `src/dbInit.js` | Auto-initialize database schema on startup |
+| `src/redisCache.js` | Playlist cache read/write, logo buffer persist/get, pre-warm job |
+| `src/catchup.js` | Catch-up metadata extraction (M3U `catchup`/`catchup-days`, Xtream) |
+| `src/cryptoUtils.js` | AES-GCM encryption/decryption, PBKDF2 password hashing, session tokens |
+| `workers/logo-proxy.worker.js` | Cloudflare Worker logo fetcher with KV dead URL tracking |
+| `workers/iptvo-assets.worker.js` | Cloudflare edge asset cache (posters, catalog/meta JSON) |
 | `wrangler.toml` | Worker config for `iptvo-root` (KV bindings, compatibility date) |
 | `wrangler.iptvo-fetch.toml` | Worker config for `iptvo-fetch` (logo fetcher) |
 | `wrangler.iptvo-assets.toml` | Worker config for `iptvo-assets` (edge asset cache) |
-| `dashboard/index.html` | Apple HIG/Liquid Glass tabbed UI, auth integration |
+| `dashboard/index.html` | Apple HIG/Liquid Glass tabbed UI, auth integration, guided wizard + Channel Matching panel |
+| `dashboard/js/matching.js` | Community channel matching UI: review, manual assignment, vote-based consensus |
 | `docker-compose.yml` | Container orchestration |
 
 ## Docker
@@ -616,6 +623,8 @@ Font packages are required for Sharp text rendering (poster initials badge).
 | `REDIS_URL` | Yes | Redis connection string |
 | `LOGO_PROXY_URL` | Yes* | Cloudflare Worker logo proxy URL (required for production) |
 | `PORT` | No | Server port (default: 3000) |
+| `LOG_LEVEL` | No | Log verbosity: `debug` \| `info` (default) \| `warn` \| `error`. Lower-priority lines are suppressed. |
+| `LOG_FORMAT` | No | Output format: `text` (default, `[tag] message`) \| `json` (newline-delimited structured lines for machine parsing). |
 | `CLUSTER_WORKERS` | No | Horizontal scaling: `0` = single process (default), `auto` = half the CPU cores, or an explicit worker count. Requires the cluster build. |
 | `ASSET_BASE_URL` | No | Base URL for posters/logos/catalog links when served via the Cloudflare assets Worker+edge instead of the request host. Default: empty (use request origin). |
 | `ADDON_CACHE_URL` | No | Addon-cache Worker URL (e.g. `https://addon-cache.worker.dev`) used by the `/api/_edge-purge` endpoint to drop stale edge pages after a re-parse. |

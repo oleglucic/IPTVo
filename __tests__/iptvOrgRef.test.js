@@ -1,7 +1,7 @@
 jest.mock('axios');
 
 const axios = require('axios');
-const iptvOrgRef = require('../iptvOrgRef');
+const iptvOrgRef = require('../src/iptvOrgRef');
 
 describe('iptv-org alias matching', () => {
     beforeAll(async () => {

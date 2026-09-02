@@ -1,13 +1,13 @@
 // Tests for catchup.js's snapshotAllEpgToHistory, updated in this PR to use
 // an underscore-prefixed (unused) loop variable for the cache Map key.
 
-jest.mock('../db', () => ({
+jest.mock('../src/db', () => ({
     saveEpgSnapshot: jest.fn(),
     getEpgHistory: jest.fn()
 }));
 
-const { saveEpgSnapshot } = require('../db');
-const { snapshotAllEpgToHistory } = require('../catchup');
+const { saveEpgSnapshot } = require('../src/db');
+const { snapshotAllEpgToHistory } = require('../src/catchup');
 
 describe('snapshotAllEpgToHistory', () => {
     let logSpy;

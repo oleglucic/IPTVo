@@ -32,7 +32,7 @@ describe('voteCommunityChannel transaction', () => {
   });
 
   test('commits the vote, override, and alias promotion together', async () => {
-    const { voteCommunityChannel } = require('../db');
+const { voteCommunityChannel } = require('../src/db');
 
     await expect(voteCommunityChannel({
       communityChannelId: 7,
@@ -64,7 +64,7 @@ describe('voteCommunityChannel transaction', () => {
       return { rows: [] };
     });
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    const { voteCommunityChannel } = require('../db');
+const { voteCommunityChannel } = require('../src/db');
 
     await expect(voteCommunityChannel({
       communityChannelId: 7,

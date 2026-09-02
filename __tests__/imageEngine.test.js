@@ -21,7 +21,7 @@ const path = require('path');
 const sharp = require('sharp');
 const axios = require('axios');
 
-const IMAGE_ENGINE = require('../imageEngine');
+const IMAGE_ENGINE = require('../src/imageEngine');
 const { getPremiumPoster } = IMAGE_ENGINE;
 
 // Caller in production reaches only getPremiumPoster(); the module is loaded
@@ -92,7 +92,7 @@ describe('imageEngine square posters', () => {
         process.env.LOGO_PROXY_URL = 'https://logo.proxy.example/logo'; // proxy "configured"
         try {
             const freshAxios = require('axios');
-            const quotaEngine = require('../imageEngine');
+            const quotaEngine = require('../src/imageEngine');
             const { getPremiumPoster: quotaPoster } = quotaEngine;
             // Worker returns HTTP 429 (quota exceeded) → axios rejects in fetchLogoViaProxy
             freshAxios.get
@@ -129,7 +129,7 @@ describe('imageEngine square posters', () => {
 
         // Reset module-level logo cache so second request re-fetches
         jest.resetModules();
-        const freshImageEngine = require('../imageEngine');
+        const freshImageEngine = require('../src/imageEngine');
         const { getPremiumPoster: freshGetPoster } = freshImageEngine;
 
         // Now every fetch fails (dead upstream) — the previous real poster must survive
@@ -157,7 +157,7 @@ describe('imageEngine square posters', () => {
         process.env.LOGO_PROXY_URL = 'https://logo.proxy.example/logo';
         try {
             const freshAxios = require('axios');
-            const quotaEngine = require('../imageEngine');
+            const quotaEngine = require('../src/imageEngine');
             const { getPremiumPoster: threadPoster } = quotaEngine;
             // Worker returns an HTTP 200 with x-logo-source: placeholder (SVG body)
             freshAxios.get
@@ -175,7 +175,7 @@ describe('imageEngine square posters', () => {
             jest.resetModules();
             process.env.LOGO_PROXY_URL = 'https://logo.proxy.example/logo';
             const freshAxios2 = require('axios');
-            const quotaEngine2 = require('../imageEngine');
+            const quotaEngine2 = require('../src/imageEngine');
             const { getPremiumPoster: threadPoster2 } = quotaEngine2;
             freshAxios2.get
                 .mockReset()

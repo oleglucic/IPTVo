@@ -35,11 +35,11 @@ describe('dashboard/js/api.js - APIClient', () => {
             fetchMock.mockResolvedValue(mockJsonResponse({ ok: true }));
 
             api.setToken('abc123');
-            await api.getHealth();
+            await api.getReleases();
             expect(fetchMock.mock.calls[0][1].headers['Authorization']).toBe('Bearer abc123');
 
             api.clearToken();
-            await api.getHealth();
+            await api.getReleases();
             expect(fetchMock.mock.calls[1][1].headers['Authorization']).toBeUndefined();
         });
     });
@@ -171,32 +171,11 @@ describe('dashboard/js/api.js - APIClient', () => {
             expect(JSON.parse(config.body)).toEqual({ type: 'm3u', m3uUrl: 'http://x' });
         });
 
-        test('getLogoProxyURL() issues a GET to /api/logo-proxy-url', async () => {
-            await api.getLogoProxyURL();
-            const [url, config] = fetchMock.mock.calls[0];
-            expect(url).toBe('/api/logo-proxy-url');
-            expect(config.method).toBe('GET');
-        });
-
         test('testConfig() posts config to /api/test-config', async () => {
             await api.testConfig({ type: 'xtream' });
             const [url, config] = fetchMock.mock.calls[0];
             expect(url).toBe('/api/test-config');
             expect(config.method).toBe('POST');
-        });
-
-        test('getHealth() issues a GET to /health', async () => {
-            await api.getHealth();
-            const [url, config] = fetchMock.mock.calls[0];
-            expect(url).toBe('/health');
-            expect(config.method).toBe('GET');
-        });
-
-        test('getDetailedHealth() issues a GET to /health/detailed', async () => {
-            await api.getDetailedHealth();
-            const [url, config] = fetchMock.mock.calls[0];
-            expect(url).toBe('/health/detailed');
-            expect(config.method).toBe('GET');
         });
     });
 });

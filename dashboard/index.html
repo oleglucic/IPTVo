@@ -642,6 +642,60 @@
             </footer>
         </div>
 
+        <!-- ============ Change Password Modal ============ -->
+        <div id="passwordModal" class="modal" role="dialog" aria-labelledby="passwordTitle" aria-modal="true" hidden>
+            <div class="modal-backdrop" data-action="close-password"></div>
+            <div class="modal-content">
+                <button type="button" class="modal-close" data-action="close-password" aria-label="Close password dialog">&times;</button>
+                <div class="auth-head">
+                    <h2 id="passwordTitle">Change password</h2>
+                    <p class="form-hint">Use a strong password — it's the only key to your encrypted config.</p>
+                </div>
+                <form id="passwordForm" novalidate>
+                    <div class="form-group">
+                        <label for="pwCurrent">Current password</label>
+                        <input type="password" id="pwCurrent" name="currentPassword" required autocomplete="current-password" placeholder="Your current password">
+                    </div>
+                    <div class="form-group">
+                        <label for="pwNew">New password <span class="required">*</span></label>
+                        <input type="password" id="pwNew" name="newPassword" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
+                        <small class="form-hint">Minimum 8 characters. Hashed, never stored in plain text.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="pwConfirm">Confirm new password</label>
+                        <input type="password" id="pwConfirm" name="newPasswordConfirm" required autocomplete="new-password" placeholder="One more time">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Update Password</button>
+                    <p class="form-error" id="passwordError" hidden></p>
+                </form>
+            </div>
+        </div>
+
+        <!-- ============ Delete Account Modal ============ -->
+        <div id="deleteModal" class="modal" role="dialog" aria-labelledby="deleteTitle" aria-modal="true" hidden>
+            <div class="modal-backdrop" data-action="close-delete"></div>
+            <div class="modal-content">
+                <button type="button" class="modal-close" data-action="close-delete" aria-label="Close delete dialog">&times;</button>
+                <div class="auth-head">
+                    <h2 id="deleteTitle">Delete your account</h2>
+                    <p class="form-hint">This permanently removes your account, encrypted config, and all saved data. There is no undo.</p>
+                </div>
+                <form id="deleteForm" novalidate>
+                    <div class="form-group">
+                        <label for="deletePassword">Enter password to confirm</label>
+                        <input type="password" id="deletePassword" name="password" required autocomplete="current-password" placeholder="Your password">
+                    </div>
+                    <div class="form-group">
+                        <label for="deleteConfirm">Type <code>DELETE</code> to confirm <span class="required">*</span></label>
+                        <input type="text" id="deleteConfirm" name="confirm" required autocomplete="off" placeholder="DELETE">
+                        <small class="form-hint">This action cannot be undone.</small>
+                    </div>
+                    <button type="submit" class="btn btn-danger btn-block">Delete my account</button>
+                    <p class="form-error" id="deleteError" hidden></p>
+                </form>
+            </div>
+        </div>
+
         <!-- ============ Changelog Modal ============ -->
         <div id="changelogModal" class="modal" role="dialog" aria-labelledby="changelogTitle" aria-modal="true" hidden>
             <div class="modal-backdrop" data-action="close-changelog"></div>
