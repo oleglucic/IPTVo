@@ -41,6 +41,10 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 │ - ai_overrides│  │ - logo buffers│  │ - edge cache  │
 │ - epg_history │  │ - logo URLs   │  │ - rate limit  │
 │ - logo_urls   │  │               │  │ - fallback    │
+│ - community_  │  │               │  │               │
+│   channels    │  │               │  │               │
+│ - community_  │  │               │  │               │
+│   votes       │  │               │  │               │
 └───────────────┘  └───────────────┘  └───────────────┘
 ```
 
@@ -57,7 +61,8 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 | `cryptoUtils.js` | AES-GCM encryption, password hashing |
 | `iptvOrgRef.js` | iptv-org reference data (daily refresh) |
 | `aiCurator.js` | OpenRouter AI batching for unmatched channels |
-| `dashboard.html` | Web UI for config management |
+| `dashboard/js/matching.js` + `server.js`/`db.js` | Community channel matching: manual iptv-org/community/custom assignment, vote-based consensus (community_channels / community_channel_votes) |
+| `dashboard/index.html` | Web UI for config management |
 | `docker-compose.yml` | Container orchestration |
 
 ## Code Style

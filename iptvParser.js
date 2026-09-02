@@ -1068,11 +1068,11 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             // No 'iptv:' prefix - colons in IDs can break client URL parsing.
             // Same unified iptv-org-style scheme as the M3U parsing path above.
             let cId = `${IPTVO_ID_PREFIX}${synthesizeIptvOrgStyleId(cName, countryScopeKey)}${timeshiftSuffix}`;
-                // Tracks which of the three resolution paths actually produced
-                // cId, so the community-matching API can tell a genuinely
-                // still-unmatched channel (still on this synthesized fallback)
-                // apart from one already resolved via a confident override.
-                let matchSource = 'synthesized';
+            // Tracks which of the three resolution paths actually produced
+            // cId, so the community-matching API can tell a genuinely
+            // still-unmatched channel (still on this synthesized fallback)
+            // apart from one already resolved via a confident override.
+            let matchSource = 'synthesized';
 
             // 1. Check iptv-org reference data first (authoritative source) using cleaned name
             // Only run iptv-org matching if explicitly enabled in config

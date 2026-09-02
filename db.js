@@ -43,7 +43,10 @@ async function getOverride(rawName, scope = 'global') {
  * @param {string} canonicalId
  * @param {number} [confidence=0.85]
  * @param {string} [scope='global']
- * @param {{query: Function}} [client] - Optional transaction client.
+ * @param {{query: Function}} [client] - Optional transaction client. When
+ *   provided, a DB failure is logged AND re-thrown so the caller's enclosing
+ *   transaction can roll back. Without a client the error is logged and
+ *   swallowed (legacy callers keep the historical best-effort behaviour).
  */
 async function setOverride(rawName, canonicalId, confidence = 0.85, scope = 'global', client = null) {
     const queryable = client || pool;

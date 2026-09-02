@@ -293,7 +293,11 @@ async function submitMatch(payload) {
         closeModal();
         resolveChannelLocally(channel.id);
         if (result.voteCount && !result.promoted) {
-            toast.success('Matched!', `Applied for you now. ${3 - result.voteCount} more agreeing vote${3 - result.voteCount === 1 ? '' : 's'} will make it the default for everyone.`);
+            // Clamp so an already-at-consensus count can never render a
+            // negative "more agreeing votes" number if the server is a step
+            // behind (e.g. a race between count and promotion).
+            const remaining = Math.max(0, 3 - result.voteCount);
+            toast.success('Matched!', `Applied for you now. ${remaining} more agreeing vote${remaining === 1 ? '' : 's'} will make it the default for everyone.`);
         } else {
             toast.success('Matched!', 'This channel now has a logo and schedule.');
         }
