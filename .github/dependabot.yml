@@ -9,6 +9,8 @@ updates:
       timezone: "Europe/Zagreb"
     open-pull-requests-limit: 10
     versioning-strategy: increase
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
     commit-message:
@@ -23,6 +25,8 @@ updates:
       time: "06:00"
       timezone: "Europe/Zagreb"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
     commit-message:
@@ -37,6 +41,8 @@ updates:
       time: "06:00"
       timezone: "Europe/Zagreb"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     labels:
       - dependencies
     commit-message:
