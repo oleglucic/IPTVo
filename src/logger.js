@@ -29,6 +29,45 @@
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 
+// Single-char whitespace test for the linear URL redactor. Mirrors `\s` for the
+// characters that can end a URL authority segment in practice (space + common
+// control whitespace). Intentionally kept to char tests (not a per-char regex)
+// so the redactor stays linear and ReDoS-free.
+function isWs(ch) {
+    return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v';
+}
+
+/**
+ * Linear redactor that rewrites every credential-bearing URL in `str`, not just
+ * the first one. After each `://` it scans forward to the first `@` before any
+ * whitespace and collapses the userinfo segment to `[REDACTED]@`. Runs in a
+ * single left-to-right pass (each indexOf advances monotonically), so it avoids
+ * the polynomial backtracking CodeQL flags on `/[^@\s]*@/` over uncontrolled
+ * input.
+ * @param {string} str
+ * @returns {string}
+ */
+function redactUrlCredentials(str) {
+    let out = '';
+    let i = 0;
+    const n = str.length;
+    while (i < n) {
+        const k = str.indexOf('://', i);
+        if (k === -1) return out + str.slice(i);
+        out += str.slice(i, k + 3);
+        let j = k + 3;
+        while (j < n && str[j] !== '@' && !isWs(str[j])) j++;
+        if (j < n && str[j] === '@') {
+            out += '[REDACTED]@';
+            i = j + 1;
+        } else {
+            out += str.slice(k + 3, j);
+            i = j;
+        }
+    }
+    return out;
+}
+
 /**
  * Canonical sanitizer. Keeps only printable ASCII, collapses control
  * characters, escapes structured-logging format chars (`%{}`), and caps the
@@ -55,8 +94,7 @@ function sanitizeForLog(value) {
     } else {
         str = String(value);
     }
-    return str
-        .replace(/:\/\/[^@\s]*@/, '://[REDACTED]@')  // Redact URL credentials
+    return redactUrlCredentials(str)
         .replace(/[\r\n\t]/g, '?')
         .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
         .replace(/[%{}]/g, '?')  // Escape structured logging format chars

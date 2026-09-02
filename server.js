@@ -391,8 +391,12 @@ function extractConfig(req) {
             rawB64 = rawB64.replace(/-/g, '+').replace(/_/g, '/');
             while (rawB64.length % 4 !== 0) rawB64 += '=';
             const decoded = Buffer.from(rawB64, 'base64').toString('utf8');
-            try { return JSON.parse(decodeURIComponent(escape(decoded))); } catch {}
-            const parsed = JSON.parse(decoded);
+            let parsed;
+            try {
+                parsed = JSON.parse(decodeURIComponent(escape(decoded)));
+            } catch {
+                parsed = JSON.parse(decoded);
+            }
             // Legacy configs shipped with `iptvOrgEnabled` (dashboard alias) but
             // the parser gates on `iptvOrg`. Normalize so both shapes enable it.
             if (parsed && typeof parsed.iptvOrgEnabled !== 'undefined' && typeof parsed.iptvOrg === 'undefined') {

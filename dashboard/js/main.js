@@ -331,6 +331,8 @@ async function handleDeleteAccountSubmit(e) {
         await api.deleteAccount(password);
         closeAccountModal(elements.deleteModal);
         mutations.clearAuth();
+        mutations.resetConfig();
+        state.hasSavedConfig = false;
         showAuthState(false);
         toast.success('Account deleted', 'Your account has been permanently deleted');
     } catch (error) {
@@ -1236,7 +1238,7 @@ function bindEvents() {
 
     // Warn before leaving the page when there are unsaved config edits.
     window.addEventListener('beforeunload', (e) => {
-        if (!state.isDirty || state.isSaving) return;
+        if (!state.isDirty) return;
         e.preventDefault();
         e.returnValue = '';
     });

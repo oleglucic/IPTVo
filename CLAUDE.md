@@ -44,7 +44,7 @@ IPTVo is a premium IPTV backend for Stremio/Nuvio that provides:
 │ - community_  │  │               │  │               │
 │   channels    │  │               │  │               │
 │ - community_  │  │               │  │               │
-│   votes       │  │               │  │               │
+│  channel_votes│  │               │  │               │
 └───────────────┘  └───────────────┘  └───────────────┘
 ```
 

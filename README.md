@@ -343,7 +343,7 @@ IPTVo includes a complete user authentication system with encrypted configuratio
 | - community_     |  |                  |  |                       |
 |   channels       |  |                  |  |                       |
 | - community_     |  |                  |  |                       |
-|   votes          |  |                  |  |                       |
+|   channel_votes  |  |                  |  |                       |
 +------------------+  +------------------+  +-----------------------+
 ```
 
