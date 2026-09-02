@@ -1377,7 +1377,6 @@ function extraValue(extra, key) {
 builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
-    const rootUrl = config.rootUrl;
     const posterRoot = config.posterRoot;
     console.log(`[Catalog] request received, configObj parsed=${!!configObj}, genre=${sanitizeForLog(extraValue(extra, 'genre'))}, search=${sanitizeForLog(extraValue(extra, 'search'))}`);
     if (!configObj) return { metas: [] };
@@ -1472,7 +1471,6 @@ builder.defineCatalogHandler(async ({ _type, _id, extra, config }) => {
 builder.defineMetaHandler(async ({ _type, id, _extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
-    const rootUrl = config.rootUrl;
     const posterRoot = config.posterRoot;
 
     await ensureCache(configKey, configObj);

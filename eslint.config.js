@@ -2,6 +2,9 @@ const globals = require('globals');
 
 module.exports = [
   {
+    ignores: ['coverage/**', 'node_modules/**']
+  },
+  {
     files: ['*.js'],
     languageOptions: {
       ecmaVersion: 'latest',
