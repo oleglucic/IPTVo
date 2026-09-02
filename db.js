@@ -164,13 +164,15 @@ const COMMUNITY_CONSENSUS_THRESHOLD = 3;
 async function searchCommunityChannels(query, scope) {
     if (!pool || !query) return [];
     try {
+        const safeQuery = query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
         const { rows } = await pool.query(
             `SELECT id, canonical_id, display_name, country, categories, aliases
              FROM community_channels
-             WHERE display_name ILIKE $1 OR $2 ILIKE ANY(aliases)
+             WHERE display_name ILIKE '%' || $1 || '%' ESCAPE '\\'
+                OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE a ILIKE '%' || $2 || '%' ESCAPE '\\')
              ORDER BY (country = $3) DESC, display_name ASC
              LIMIT 25`,
-            [`%${query}%`, query, scope || 'global']
+            [safeQuery, safeQuery, scope || 'global']
         );
         return rows || [];
     } catch (e) {
@@ -246,7 +248,7 @@ async function voteCommunityChannel({ communityChannelId, rawName, scope = 'glob
         if (!leader) throw new Error('Community vote leader could not be resolved');
 
         const { rows: chRows } = await client.query(
-            'SELECT canonical_id FROM community_channels WHERE id = $1 FOR SHARE',
+            'SELECT canonical_id FROM community_channels WHERE id = $1 FOR UPDATE',
             [leader.community_channel_id]
         );
         const canonicalId = chRows[0] && chRows[0].canonical_id;

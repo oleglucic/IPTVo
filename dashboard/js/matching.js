@@ -282,15 +282,16 @@ function resolveChannelLocally(channelId) {
 }
 
 async function submitMatch(payload) {
-    if (!activeChannel) return;
+    const channel = activeChannel;
+    if (!channel) return;
     try {
         const result = await api.submitCommunityMatch({
-            rawName: activeChannel.rawName,
-            scope: activeChannel.scope,
+            rawName: channel.rawName,
+            scope: channel.scope,
             ...payload
         });
         closeModal();
-        resolveChannelLocally(activeChannel.id);
+        resolveChannelLocally(channel.id);
         if (result.voteCount && !result.promoted) {
             toast.success('Matched!', `Applied for you now. ${3 - result.voteCount} more agreeing vote${3 - result.voteCount === 1 ? '' : 's'} will make it the default for everyone.`);
         } else {

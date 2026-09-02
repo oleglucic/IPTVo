@@ -60,6 +60,8 @@ async function initSchema() {
         // next statement then tries to ADD a second primary key alongside it,
         // which Postgres rejects outright: "multiple primary keys ... are not
         // allowed"). Looking it up dynamically works regardless of its name.
+        // Wrapped in a single DO block so DROP+ADD is atomic — no window
+        // where the table has no primary key.
         `DO $$
          DECLARE pk_name text;
          BEGIN
@@ -69,8 +71,8 @@ async function initSchema() {
              IF pk_name IS NOT NULL THEN
                  EXECUTE format('ALTER TABLE ai_overrides DROP CONSTRAINT %I', pk_name);
              END IF;
+             EXECUTE 'ALTER TABLE ai_overrides ADD CONSTRAINT ai_overrides_pkey PRIMARY KEY (raw_name, scope)';
          END $$;`,
-        `ALTER TABLE ai_overrides ADD CONSTRAINT ai_overrides_pkey PRIMARY KEY (raw_name, scope)`,
 
         // community_channels / community_channel_votes: user-driven manual
         // matching for channels iptv-org has no entry for at all (so AI
