@@ -1,0 +1,83 @@
+# Semgrep OSS SAST (free alternative to Fortify)
+#
+# Replaces the previous Fortify-on-Demand step. Semgrep's open-source engine
+# and community rulesets are fully free — no account, license or tokens required.
+# It complements the existing CodeQL workflow (which provides deep taint
+# analysis); Semgrep adds fast, PR-friendly, high-signal coverage.
+#
+# Behavour:
+#   - On PRs: scan the whole tree, produce SARIF, upload to the GitHub Code
+#     Scanning tab (free on this public repo), and FAIL the check on any
+#     ERROR-severity finding that is not explicitly suppressed via `# nosemgrep`.
+#   - On push to main / weekly schedule: full-tree scan and SARIF baseline.
+#
+# No GitHub secrets or variables are required to enable this.
+
+name: Semgrep SAST
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '20 17 * * 1'   # weekly full scan (rule-update catch)
+
+permissions:
+  contents: read
+  security-events: write   # upload SARIF to Code Scanning
+
+jobs:
+  semgrep:
+    name: Semgrep scan (OSS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      # Official Semgrep image with the engine pre-installed.
+      image: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history only on scheduled/mainline scans (ignored-by-default
+          # history rules work); shallow is enough for PR diff scanning anyway.
+          fetch-depth: ${{ github.event_name == 'schedule' && 0 || 1 }}
+
+      - name: Run Semgrep (p/default + JS + security packs)
+        # `semgrep scan --error` (rather than `semgrep ci`, which needs a token)
+        # exits non-zero only on UNSUPPRESSED findings, so `# nosemgrep` inline
+        # comments work as the intended suppression mechanism for the CI gate.
+        # p/secrets is a cheap cross-check on top of gitleaks/CodeQL secrets.
+        run: |
+          semgrep scan \
+            --config=p/default \
+            --config=p/javascript \
+            --config=p/owasp-top-ten \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --error \
+            --metrics=off \
+            --sarif \
+            --output=semgrep.sarif \
+            --exclude node_modules \
+            --exclude coverage \
+            --exclude dist \
+            --exclude "src/cache"
+
+      - name: Upload Semgrep SARIF to Code Scanning
+        # Best-effort: uploads to the Security tab. On a private repo without
+        # GitHub Advanced Security this would be skipped gracefully.
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Upload SARIF as artifact (evidence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          if-no-files-found: ignore
+          retention-days: 90
