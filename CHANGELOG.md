@@ -1,3 +1,19 @@
+## 2.1.0 (2026-09-02)
+
+* ci: pin GitHub Actions to committed SHAs (supply-chain) ([a771a41](https://github.com/oleglucic/IPTVo/commit/a771a41))
+* ci: add free gitleaks secret scan, actionlint, and dependabot config ([6f7560c](https://github.com/oleglucic/IPTVo/commit/6f7560c))
+* ci: run Semgrep as informational (non-blocking) until findings triaged ([e1d9c16](https://github.com/oleglucic/IPTVo/commit/e1d9c16))
+* ci: replace Fortify/JScrambler with free Semgrep SAST + integrity manifest ([da37f37](https://github.com/oleglucic/IPTVo/commit/da37f37))
+* ci(actionlint): disable shellcheck integration to gate only workflow errors ([d14b5e0](https://github.com/oleglucic/IPTVo/commit/d14b5e0))
+* ci(dependabot): add 7-day cooldown to wait out new/malicious package releases ([dc0f2f0](https://github.com/oleglucic/IPTVo/commit/dc0f2f0))
+* fix: pass xtream creds as query params to satisfy CodeQL SSRF check ([7efe55a](https://github.com/oleglucic/IPTVo/commit/7efe55a))
+* feat: dashboard fixes, redis logo corruption fix, SAST & code integrity CI ([01060b5](https://github.com/oleglucic/IPTVo/commit/01060b5))
+* chore(deps-dev): bump fast-uri ([26726a1](https://github.com/oleglucic/IPTVo/commit/26726a1))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## 2.0.0 (2026-09-02)
 
 * Merge pull request #55 from oleglucic/chore/dashboard-overhaul ([324b740](https://github.com/oleglucic/IPTVo/commit/324b740)), closes [#55](https://github.com/oleglucic/IPTVo/issues/55)
