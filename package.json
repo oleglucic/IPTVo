@@ -65,6 +65,7 @@
     "@semantic-release/github": "^10.0.0",
     "@semantic-release/npm": "13.1.5",
     "commitlint": "^19.0.0",
+    "conventional-changelog-conventionalcommits": "^7.0.2",
     "eslint": "^10.8.1",
     "eslint-plugin-html": "^8.0.0",
     "globals": "^17.11.0",
