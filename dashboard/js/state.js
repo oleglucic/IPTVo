@@ -43,6 +43,10 @@ const state = {
     isTestingConnection: false,
     groupsLoaded: false,
 
+    // True when the user has edits that haven't been saved to the server yet.
+    // Set on config/group edits, cleared on save and on loading the saved config.
+    isDirty: false,
+
     // Version
     version: '0.0.1'
 };
@@ -131,10 +135,16 @@ export const mutations = {
             delete next.iptvOrg;
         }
         state.config = { ...state.config, ...next };
+        state.isDirty = false;
     },
 
     setConfigField(field, value) {
         state.config[field] = value;
+        state.isDirty = true;
+    },
+
+    markSaved() {
+        state.isDirty = false;
     },
 
     setCurrentStep(step) {
@@ -161,14 +171,17 @@ export const mutations = {
         } else {
             state.config.selectedGroups.splice(idx, 1);
         }
+        state.isDirty = true;
     },
 
     selectAllGroups() {
         state.config.selectedGroups = state.filteredGroups.map(g => g.name);
+        state.isDirty = true;
     },
 
     deselectAllGroups() {
         state.config.selectedGroups = [];
+        state.isDirty = true;
     },
 
     setConnectionTestResult(result) {
@@ -210,6 +223,7 @@ export const mutations = {
         state.filteredGroups = [];
         state.connectionTestResult = null;
         state.groupsLoaded = false;
+        state.isDirty = false;
     },
 
     loadPersistedAuth() {

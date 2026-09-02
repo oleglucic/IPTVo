@@ -25,6 +25,14 @@ function cacheElements() {
     elements.loginError = document.getElementById('loginError');
     elements.registerError = document.getElementById('registerError');
 
+    // Account modals
+    elements.passwordModal = document.getElementById('passwordModal');
+    elements.passwordForm = document.getElementById('passwordForm');
+    elements.passwordError = document.getElementById('passwordError');
+    elements.deleteModal = document.getElementById('deleteModal');
+    elements.deleteForm = document.getElementById('deleteForm');
+    elements.deleteError = document.getElementById('deleteError');
+
     // Changelog
     elements.changelogModal = document.getElementById('changelogModal');
     elements.changelogList = document.getElementById('changelogList');
@@ -236,48 +244,98 @@ async function handleLogout() {
 }
 
 /**
- * Changes the authenticated user's password after validating the new password length.
+ * Opens a non-modal-blocking account dialog (change password / delete account)
+ * and focuses its first focusable control.
+ * @param {HTMLElement} modal - The dialog element to show.
+ * @param {HTMLFormElement} form - The form to reset and focus first.
  */
-async function handleChangePassword() {
+function openAccountModal(modal, form) {
     closeUserDropdown();
-    const currentPassword = prompt('Enter your current password:');
-    if (!currentPassword) return;
+    modal.hidden = false;
+    document.body.style.overflow = 'hidden';
+    form.reset();
+    form.querySelector('.form-error').hidden = true;
+    const firstFocusable = form.querySelector('input, select, textarea, button');
+    if (firstFocusable) firstFocusable.focus();
+}
 
-    const newPassword = prompt('Enter your new password (min 8 characters):');
-    if (!newPassword || newPassword.length < 8) {
-        toast.error('Invalid password', 'New password must be at least 8 characters');
+/**
+ * Closes an open account dialog and restores page scrolling. Container styles
+ * the body overflow so other dialogs (e.g. auth) aren't unpinned while visible.
+ */
+function closeAccountModal(modal) {
+    modal.hidden = true;
+    const anyOpen = [elements.authModal, elements.passwordModal, elements.deleteModal, elements.changelogModal]
+        .some(m => m && !m.hidden);
+    if (!anyOpen) document.body.style.overflow = '';
+}
+
+/**
+ * Changes the authenticated user's password from the in-app dialog.
+ */
+async function handleChangePasswordSubmit(e) {
+    e.preventDefault();
+    const formData = new FormData(elements.passwordForm);
+    const currentPassword = formData.get('currentPassword');
+    const newPassword = formData.get('newPassword');
+    const confirmPassword = formData.get('newPasswordConfirm');
+
+    elements.passwordError.hidden = true;
+    elements.passwordError.textContent = '';
+
+    if (newPassword.length < 8) {
+        elements.passwordError.textContent = 'New password must be at least 8 characters';
+        elements.passwordError.hidden = false;
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        elements.passwordError.textContent = 'Passwords do not match';
+        elements.passwordError.hidden = false;
         return;
     }
 
     try {
         await api.changePassword(currentPassword, newPassword);
+        closeAccountModal(elements.passwordModal);
         toast.success('Password changed', 'Your password has been updated');
     } catch (error) {
-        toast.error('Failed to change password', error.message);
+        elements.passwordError.textContent = error.message;
+        elements.passwordError.hidden = false;
     }
 }
 
 /**
- * Permanently deletes the authenticated user's account after explicit confirmation.
+ * Permanently deletes the authenticated user's account after typed confirmation.
  */
-async function handleDeleteAccount() {
-    closeUserDropdown();
-    const confirm = prompt('This will permanently delete your account and all data. Type "DELETE" to confirm:');
-    if (confirm !== 'DELETE') {
-        toast.info('Cancelled', 'Account deletion cancelled');
+async function handleDeleteAccountSubmit(e) {
+    e.preventDefault();
+    const formData = new FormData(elements.deleteForm);
+    const password = formData.get('password');
+    const confirmation = (formData.get('confirm') || '').trim();
+
+    elements.deleteError.hidden = true;
+    elements.deleteError.textContent = '';
+
+    if (confirmation !== 'DELETE') {
+        elements.deleteError.textContent = 'Type "DELETE" to confirm this permanent action';
+        elements.deleteError.hidden = false;
+        return;
+    }
+    if (!password) {
+        elements.deleteError.textContent = 'Enter your password to confirm deletion';
+        elements.deleteError.hidden = false;
         return;
     }
 
-    const password = prompt('Enter your password to confirm deletion:');
-    if (!password) return;
-
     try {
         await api.deleteAccount(password);
+        closeAccountModal(elements.deleteModal);
         mutations.clearAuth();
         showAuthState(false);
         toast.success('Account deleted', 'Your account has been permanently deleted');
     } catch (error) {
-        toast.error('Failed to delete account', error.message);
+        elements.deleteError.textContent = error.message;
+        elements.deleteError.hidden = false;
     }
 }
 
@@ -701,6 +759,9 @@ async function handleImportFile(e) {
         });
 
         mutations.setConfig(imported);
+        // An import creates unpersisted edits — mark the wizard dirty so an
+        // accidental close warns before the user has saved.
+        state.isDirty = true;
         // Reset provider identity tracking so updateProviderFields will detect the change
         state.lastProviderIdentity = null;
         updateProviderFields();
@@ -737,6 +798,7 @@ async function handleSaveConfig() {
         // `iptvOrgEnabled`) — sending the raw state.config silently turned off
         // group filtering and iptv-org matching.
         await api.updateConfig(getters.getConfigForAPI());
+        mutations.markSaved();
 
         // Build addon URL
         const protocol = window.location.protocol;
@@ -968,7 +1030,9 @@ function openChangelog(triggerElement) {
  */
 function closeChangelog() {
     elements.changelogModal.hidden = true;
-    if (elements.authModal.hidden) {
+    const anyOpen = [elements.authModal, elements.passwordModal, elements.deleteModal]
+        .some(m => m && !m.hidden);
+    if (!anyOpen) {
         document.body.style.overflow = '';
     }
 
@@ -1026,8 +1090,14 @@ function bindEvents() {
     // User Menu
     elements.userMenuBtn.addEventListener('click', toggleUserDropdown);
     elements.logoutBtn.addEventListener('click', handleLogout);
-    elements.changePasswordBtn.addEventListener('click', handleChangePassword);
-    elements.deleteAccountBtn.addEventListener('click', handleDeleteAccount);
+    elements.changePasswordBtn.addEventListener('click', () => openAccountModal(elements.passwordModal, elements.passwordForm));
+    elements.deleteAccountBtn.addEventListener('click', () => openAccountModal(elements.deleteModal, elements.deleteForm));
+    elements.passwordForm.addEventListener('submit', handleChangePasswordSubmit);
+    elements.deleteForm.addEventListener('submit', handleDeleteAccountSubmit);
+    document.querySelectorAll('[data-action="close-password"]').forEach(el =>
+        el.addEventListener('click', () => closeAccountModal(elements.passwordModal)));
+    document.querySelectorAll('[data-action="close-delete"]').forEach(el =>
+        el.addEventListener('click', () => closeAccountModal(elements.deleteModal)));
 
     // Close dropdown on outside click
     document.addEventListener('click', (e) => {
@@ -1153,6 +1223,8 @@ function bindEvents() {
             closeAuthModal();
             closeUserDropdown();
             closeChangelog();
+            if (elements.passwordModal) closeAccountModal(elements.passwordModal);
+            if (elements.deleteModal) closeAccountModal(elements.deleteModal);
         }
         if (e.ctrlKey || e.metaKey) {
             if (e.key === 's') {
@@ -1160,6 +1232,13 @@ function bindEvents() {
                 if (!elements.mainApp.hidden) handleSaveConfig();
             }
         }
+    });
+
+    // Warn before leaving the page when there are unsaved config edits.
+    window.addEventListener('beforeunload', (e) => {
+        if (!state.isDirty || state.isSaving) return;
+        e.preventDefault();
+        e.returnValue = '';
     });
 }
 
