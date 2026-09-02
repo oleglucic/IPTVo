@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const net = require('net');
-const { loadLogoBuffer, saveLogoBuffer, hasRedis } = require('./redisCache');
+const { loadLogoBuffer, saveLogoBuffer, deleteLogoBuffer, hasRedis } = require('./redisCache');
 const log = require('./logger').for('imageEngine');
 
 const cacheDir = path.join(__dirname, 'cache');
@@ -122,6 +122,10 @@ function setLogoCache(url, buffer) {
         }
     }
     logoCache.set(url, {buffer, timestamp: Date.now()});
+}
+
+function clearLogoCache(url) {
+    logoCache.delete(url);
 }
 
 function base64urlEncode(str) {
@@ -310,6 +314,12 @@ async function renderPoster(cId, logoUrl, fallbackUrl, fallbackName, cachePath) 
                     return await generatePosterFromBuffer(redisBuffer, cachePath, sourceLog);
                 } catch (sharpErr) {
                     log.error(`Sharp processing failed for cId=${cId} (Redis logo): ${sharpErr.message}`);
+                    // The Redis blob is unusable (corrupt/wrong format). Evict it
+                    // and drop our memory copy so the next request treats this as a
+                    // genuine cache miss and re-fetches a good image, instead of
+                    // re-failing on the same poison bytes every render.
+                    await deleteLogoBuffer(logoUrl);
+                    clearLogoCache(logoUrl);
                 }
             }
         }

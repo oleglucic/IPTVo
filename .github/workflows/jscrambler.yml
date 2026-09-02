@@ -1,0 +1,87 @@
+# JScrambler Code Integrity (dashboard client JS)
+#
+# Protects the browser-facing dashboard modules against reverse engineering /
+# tampering. Two layers, both of which require the FTL (Free/Lite) or paid
+# JScrambler credentials to be useful — but the free integrity manifest runs
+# unconditionally so there is always a tamper-evidence baseline:
+#
+#   1. JScrambler obfuscation (when secrets present) — transforms the ES-module
+#      dashboard files in-place into dist/dashboard/js/ (ESM-preserving params
+#      are defined in jscrambler.json and must keep the import/export graph
+#      intact, because the dashboard loads them as native <script type=module>).
+#   2. Integrity manifest (always) — hashes whichever artifacts will be served
+#      (obfuscated output when present, plain sources otherwise) into
+#      dist/integrity.json so a deploy step can detect tampering.
+#
+# The obfuscate job is fail-soft: if the JSCRAMBLER_* secrets are absent it is
+# skipped and reports success, so it never blocks a merge until you provision
+# JScrambler. To enable, add Actions secrets:
+#   JSCRAMBLER_ACCESS_TOKEN
+#   JSCRAMBLER_SECRET_KEY
+#   JSCRAMBLER_APP_ID
+#
+# NOTE: the build must then serve dist/dashboard/js/ instead of the plain
+# dashboard/js/ sources, and start serving the obfuscated entry-point module.
+# Until that wiring is done in server.js's static file handling, the obfuscated
+# artifacts are produced and hashed for integrity but not yet the runtime path.
+name: JScrambler Code Integrity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  integrity:
+    name: Integrity manifest (free)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Generate integrity manifest
+        run: npm run integrity
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-manifest
+          path: dist/integrity.json
+          if-no-files-found: error
+
+  jscrambler:
+    name: Obfuscate dashboard JS
+    runs-on: ubuntu-latest
+    # Secrets cannot be referenced in `if:`, so expose the access token to the
+    # job env and gate the obfuscation step on its presence.
+    env:
+      JSCRAMBLER_ACCESS_TOKEN: ${{ secrets.JSCRAMBLER_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install
+      - name: JScrambler obfuscation (secrets present)
+        if: env.JSCRAMBLER_ACCESS_TOKEN != ''
+        run: npm run jscrambler
+        env:
+          JSCRAMBLER_ACCESS_TOKEN: ${{ secrets.JSCRAMBLER_ACCESS_TOKEN }}
+          JSCRAMBLER_SECRET_KEY: ${{ secrets.JSCRAMBLER_SECRET_KEY }}
+          # jscrambler.json applicationId reads the app id from env
+          JSCRAMBLER_APP_ID: ${{ secrets.JSCRAMBLER_APP_ID }}
+      - name: Integrity manifest over obfuscated output
+        if: always()
+        run: npm run integrity
+      - name: Upload obfuscated dashboard
+        if: env.JSCRAMBLER_ACCESS_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-obfuscated
+          path: dist/dashboard/js/
+          if-no-files-found: ignore

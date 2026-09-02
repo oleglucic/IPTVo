@@ -785,6 +785,48 @@
     line-height: var(--leading-relaxed);
 }
 
+.changelog-entry ul {
+    margin: var(--space-2) 0;
+    padding-left: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    list-style: disc;
+}
+
+.changelog-entry li {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-relaxed);
+}
+
+.changelog-entry a {
+    color: var(--color-brand);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.changelog-entry a:hover {
+    color: var(--color-brand-strong, var(--color-brand));
+}
+
+.changelog-entry code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--color-surface-inset, var(--color-border));
+    border-radius: var(--radius-sm, 4px);
+    padding: 0 4px;
+}
+
+.changelog-entry strong {
+    color: var(--color-text-primary);
+    font-weight: var(--font-semibold, 600);
+}
+
+.changelog-entry em {
+    font-style: italic;
+}
+
 /* ==================== Groups empty state with CTA ==================== */
 .groups-empty {
     display: flex;
