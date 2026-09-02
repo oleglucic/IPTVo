@@ -204,7 +204,7 @@ async function createCommunityChannel({ canonicalId, displayName, country = 'glo
         );
         return rows[0] || null;
     } catch (e) {
-        log.error('createCommunityChannel:', e.message);
+log.error('createCommunityChannel:', e.message);
         return null;
     }
 }

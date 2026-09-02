@@ -1,3 +1,21 @@
+## 1.1.0 (2026-09-02)
+
+* fix: harden community matching and untrack coverage output ([7cd97cb](https://github.com/oleglucic/IPTVo/commit/7cd97cb))
+* fix(deps): bump npm to 11.19.1 to resolve dev-dependency vulnerabilities ([3924d0b](https://github.com/oleglucic/IPTVo/commit/3924d0b))
+* fix(release): repair generated release notes & contributor handles ([6212aae](https://github.com/oleglucic/IPTVo/commit/6212aae))
+* chore: untrack generated coverage output ([135393e](https://github.com/oleglucic/IPTVo/commit/135393e))
+* Tidy lint config and catalog handlers ([be69602](https://github.com/oleglucic/IPTVo/commit/be69602))
+* Fix CodeRabbit issues in PR #54 ([4c6515c](https://github.com/oleglucic/IPTVo/commit/4c6515c)), closes [#54](https://github.com/oleglucic/IPTVo/issues/54)
+* Add files via upload ([1c567fa](https://github.com/oleglucic/IPTVo/commit/1c567fa))
+* Fix CodeRabbit issues in PR #53 ([96df04d](https://github.com/oleglucic/IPTVo/commit/96df04d)), closes [#53](https://github.com/oleglucic/IPTVo/issues/53)
+* various epg enrichment fixes ([a0592d7](https://github.com/oleglucic/IPTVo/commit/a0592d7))
+* feat: community matching backend ([dbfd91d](https://github.com/oleglucic/IPTVo/commit/dbfd91d))
+* feat: add community channel matching UI and API ([e223375](https://github.com/oleglucic/IPTVo/commit/e223375))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 # [0.10.0](https://github.com/oleglucic/IPTVo/compare/v0.9.2...v0.10.0) (2026-08-21)
 
 

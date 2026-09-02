@@ -48,7 +48,7 @@ describe('iptvParser', () => {
 });
 
 describe('iptvParser match-source merging', () => {
-  const { getAllOverrides } = require('../src/db');
+const { getAllOverrides } = require('../src/db');
   const { saveCacheToRedis, saveLogoUrl } = require('../src/redisCache');
 
   beforeEach(() => {
@@ -68,7 +68,7 @@ describe('iptvParser match-source merging', () => {
     getAllOverrides.mockResolvedValue([
       { raw_name: 'Second', scope: 'global', canonical_id: 'iptvo_First', confidence: 0.8 }
     ]);
-    const iptvParser = require('../src/iptvParser');
+const iptvParser = require('../src/iptvParser');
 
     await iptvParser.streamFetchIPTV('m3u-merge', {
       type: 'm3u',
@@ -100,7 +100,7 @@ describe('iptvParser match-source merging', () => {
     getAllOverrides.mockResolvedValue([
       { raw_name: 'Second', scope: 'global', canonical_id: 'iptvo_First', confidence: 0.8 }
     ]);
-    const iptvParser = require('../src/iptvParser');
+const iptvParser = require('../src/iptvParser');
 
     await iptvParser.streamFetchIPTV('xtream-merge', {
       type: 'xtream',
