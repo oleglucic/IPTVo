@@ -297,10 +297,10 @@ app.post('/api/get-groups', requireAuth, getGroupsLimiter, async (req, res) => {
             if (!isSafeUrl(cleanUrl)) {
                 return res.status(400).json({ error: "Invalid Xtream URL: private/internal addresses not allowed" });
             }
-            const apiBase = `${cleanUrl}/player_api.php?username=${username}&password=${password}`;
+            const apiBase = `${cleanUrl}/player_api.php`;
             const [catRes, streamRes] = await Promise.all([
-                axios.get(`${apiBase}&action=get_live_categories`, { timeout: 10000, maxRedirects: 0 }),
-                axios.get(`${apiBase}&action=get_live_streams`, { timeout: 10000, maxRedirects: 0 })
+                axios.get(apiBase, { params: { username, password, action: 'get_live_categories' }, timeout: 10000, maxRedirects: 0 }),
+                axios.get(apiBase, { params: { username, password, action: 'get_live_streams' }, timeout: 10000, maxRedirects: 0 })
             ]);
             if (!Array.isArray(catRes.data)) {
                 return res.status(400).json({ error: "Invalid provider structure response" });
