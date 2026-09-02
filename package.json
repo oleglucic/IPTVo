@@ -11,8 +11,7 @@
     "lint": "eslint .",
     "type-check": "node --check server.js",
     "test": "jest",
-    "integrity": "node scripts/integrity-manifest.js",
-    "jscrambler": "jscrambler && npm run integrity"
+    "integrity": "node scripts/integrity-manifest.js"
   },
   "jest": {
     "testEnvironment": "node",
@@ -73,7 +72,6 @@
     "globals": "^17.11.0",
     "husky": "^9.0.0",
     "jest": "^30.4.2",
-    "jscrambler": "^8.22.0",
     "npm": "^11.19.1",
     "semantic-release": "^25.0.9"
   },
