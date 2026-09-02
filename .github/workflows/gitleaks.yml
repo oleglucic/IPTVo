@@ -1,0 +1,41 @@
+name: Gitleaks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  GITLEAKS_VERSION: v8.24.2
+
+jobs:
+  scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        shell: bash
+        run: |
+          # Free MIT-licensed gitleaks CLI - no GITLEAKS_LICENSE required on personal repos.
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+          # Scan full git history (catches secrets in past commits).
+          ./gitleaks git --log-opts="--all" --redact --report-path=report.sarif --report-format=sarif --exit-code=0
+
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: report.sarif
+          category: gitleaks
