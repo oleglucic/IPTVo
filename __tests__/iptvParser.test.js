@@ -59,6 +59,7 @@ describe('iptvParser match-source merging', () => {
 
   afterEach(() => {
     delete process.env.IPTVO_ALLOW_INLINE_M3U;
+    delete require('axios').get;
     require('../iptvParser').userCaches.clear();
   });
 
