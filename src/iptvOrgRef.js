@@ -1,5 +1,6 @@
 const axios = require('axios');
 const Fuse = require('fuse.js');
+const log = require('./logger').for('iptvOrgRef');
 
 const CHANNELS_URL = 'https://iptv-org.github.io/api/channels.json';
 const LOGOS_URL = 'https://iptv-org.github.io/api/logos.json';
@@ -439,9 +440,9 @@ async function refresh() {
         leadingTokens = new Set(newTokenByFirst.keys());
         lastRefreshed = Date.now();
 
-        console.log(`[iptv-org] Refreshed: ${exactMatchMap.size} exact entries, ${channelIdToLogo.size} logos, ${validCountryCodes.size} countries, ${fuseList.length} fuse entries, ${tokenIndex.size} token entries.`);
+        log.info(`Refreshed: ${exactMatchMap.size} exact entries, ${channelIdToLogo.size} logos, ${validCountryCodes.size} countries, ${fuseList.length} fuse entries, ${tokenIndex.size} token entries.`);
     } catch (e) {
-        console.error('[iptv-org] Refresh failed, keeping previous data:', e.message);
+        log.error('Refresh failed, keeping previous data:', e.message);
     }
 }
 

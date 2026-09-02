@@ -6,6 +6,7 @@
 
 const Redis = require('ioredis');
 const crypto = require('crypto');
+const log = require('./logger').for('redisCache');
 
 const redisUrl = process.env.REDIS_URL;
 let redis = null;
@@ -16,10 +17,10 @@ if (redisUrl) {
         retryStrategy: (times) => Math.min(times * 200, 2000),
         protocol: 2  // ioredis v6 defaults to RESP3; use RESP2 for compatibility
     });
-    redis.on('error', (e) => console.error('[Redis Error]', e.message));
-    redis.on('connect', () => console.log('[Redis] Connected.'));
+    redis.on('error', (e) => log.error('Redis connection error:', e.message));
+    redis.on('connect', () => log.info('Connected.'));
 } else {
-    console.warn('[Redis] REDIS_URL not set - cache persistence disabled, running memory-only.');
+    log.warn('REDIS_URL not set - cache persistence disabled, running memory-only.');
 }
 
 const KEY_PREFIX = 'nuvio:cache:';
@@ -87,7 +88,7 @@ async function saveCacheToRedis(configKey, cacheData) {
     try {
         await redis.set(KEY_PREFIX + configKey, serializeCache(cacheData), 'EX', CACHE_TTL_SECONDS);
     } catch (e) {
-        console.error('[Redis Error] saveCacheToRedis:', e.message);
+        log.error('saveCacheToRedis:', e.message);
     }
 }
 
@@ -108,7 +109,7 @@ async function deleteCacheFromRedis(configKey) {
         // Do not throw: a Redis outage must not fail a config save that already
         // committed. Report the failure so the caller can warn that the old
         // snapshot may be rehydrated until it ages out.
-        console.error('[Redis Error] deleteCacheFromRedis:', e.message);
+        log.error('deleteCacheFromRedis:', e.message);
         return false;
     }
 }
@@ -125,7 +126,7 @@ async function loadCacheFromRedis(configKey) {
         if (!raw) return null;
         return deserializeCache(raw);
     } catch (e) {
-        console.error('[Redis Error] loadCacheFromRedis:', e.message);
+        log.error('loadCacheFromRedis:', e.message);
         return null;
     }
 }
@@ -141,7 +142,7 @@ async function saveLogoBuffer(logoUrl, buffer) {
         const key = LOGO_PREFIX + crypto.createHash('sha256').update(logoUrl).digest('hex');
         await redis.set(key, buffer, 'EX', LOGO_TTL_SECONDS);
     } catch (e) {
-        console.error('[Redis Error] saveLogoBuffer:', e.message);
+        log.error('saveLogoBuffer:', e.message);
     }
 }
 
@@ -167,7 +168,7 @@ async function loadLogoBuffer(logoUrl) {
         }
         return buf;
     } catch (e) {
-        console.error('[Redis Error] loadLogoBuffer:', e.message);
+        log.error('loadLogoBuffer:', e.message);
         return null;
     }
 }
@@ -186,7 +187,7 @@ async function saveLogoUrl(channelId, logoUrl, source = 'unknown') {
         const data = JSON.stringify({ url: logoUrl, source, updatedAt: Date.now() });
         await redis.set(key, data, 'EX', LOGO_URL_TTL_SECONDS);
     } catch (e) {
-        console.error('[Redis Error] saveLogoUrl:', e.message);
+        log.error('saveLogoUrl:', e.message);
     }
 }
 
@@ -203,7 +204,7 @@ async function loadLogoUrl(channelId) {
         if (!data) return null;
         return JSON.parse(data);
     } catch (e) {
-        console.error('[Redis Error] loadLogoUrl:', e.message);
+        log.error('loadLogoUrl:', e.message);
         return null;
     }
 }
@@ -218,7 +219,7 @@ async function listCachedConfigKeys() {
         const keys = await redis.keys(KEY_PREFIX + '*');
         return keys.map(k => k.substring(KEY_PREFIX.length));
     } catch (e) {
-        console.error('[Redis Error] listCachedConfigKeys:', e.message);
+        log.error('listCachedConfigKeys:', e.message);
         return [];
     }
 }
@@ -248,7 +249,7 @@ async function saveEpgCache(channelKey, programs, generation) {
     try {
         await redis.set(EPG_CACHE_PREFIX + channelKey, JSON.stringify({ generation, programs, savedAt: Date.now() }), 'EX', EPG_CACHE_TTL_SECONDS);
     } catch (e) {
-        console.error('[Redis Error] saveEpgCache:', e.message);
+        log.error('saveEpgCache:', e.message);
     }
 }
 
@@ -288,7 +289,7 @@ async function mgetEpgCaches(channelKeys) {
             } catch { out.set(channelKeys[i], null); }
         }
     } catch (e) {
-        console.error('[Redis Error] mgetEpgCaches:', e.message);
+        log.error('mgetEpgCaches:', e.message);
     }
     return out;
 }
@@ -325,7 +326,7 @@ async function bumpGeneration(coverage) {
         await redis.set(EPG_STATE_KEY, JSON.stringify({ last_update: Date.now(), coverage: coverage || 0 }));
         return gen;
     } catch (e) {
-        console.error('[Redis Error] bumpGeneration:', e.message);
+        log.error('bumpGeneration:', e.message);
         return 0;
     }
 }
@@ -344,7 +345,7 @@ async function setHubState(coverage) {
         await redis.set(EPG_STATE_KEY, JSON.stringify({ last_update: Date.now(), coverage: coverage || 0 }));
         return gen;
     } catch (e) {
-        console.error('[Redis Error] setHubState:', e.message);
+        log.error('setHubState:', e.message);
         return 0;
     }
 }
@@ -377,14 +378,14 @@ async function withOnceLock(lockName, ttlSeconds, fn) {
         if (!acquired) return false;
     } catch (e) {
         // Lock infra unavailable: don't drop the job, run it unguarded.
-        console.error(`[Lock] ${lockName} acquire failed, running unguarded:`, e.message);
+        log.error(`${lockName} acquire failed, running unguarded:`, e.message);
         return fn();
     }
     try {
         return await fn();
     } finally {
         const lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
-        try { await redis.eval(lua, 1, key, token); } catch (e) { console.error(`[Lock] ${lockName} release failed:`, e.message); }
+        try { await redis.eval(lua, 1, key, token); } catch (e) { log.error(`${lockName} release failed:`, e.message); }
     }
 }
 
@@ -419,7 +420,7 @@ async function sessionSet(token, session) {
     if (!redis || !token) return;
     try {
         await redis.set(SESSION_PREFIX + token, JSON.stringify(session), 'EX', SESSION_TTL_SECONDS);
-    } catch (e) { console.error('[Redis Error] sessionSet:', e.message); }
+    } catch (e) { log.error('sessionSet:', e.message); }
 }
 
 /**
@@ -456,7 +457,7 @@ async function sessionPruneExpired() {
                 if (toDel.length) { await redis.del(toDel); cleared += toDel.length; }
             }
         } while (cursor !== '0');
-    } catch (e) { console.error('[Redis Error] sessionPrune:', e.message); }
+    } catch (e) { log.error('sessionPrune:', e.message); }
     return cleared;
 }
 

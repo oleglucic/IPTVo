@@ -18,6 +18,7 @@ const fs = require('fs');
 const iptvOrgRef = require('./iptvOrgRef');
 const { getPremiumPoster, posterPath } = require('./imageEngine');
 const { getLogoUrl, setLogoUrl } = require('./db');
+const log = require('./logger').for('prewarm');
 
 const CONCURRENCY = parseInt(process.env.PREWARM_CONCURRENCY || '8', 10);
 const CHUNK_PROGRESS = Math.max(500, Math.floor(CONCURRENCY * 60));
@@ -92,15 +93,15 @@ async function prewarm() {
                 else if (result === 'skipped') counts.skipped++;
                 else { counts.error++; errors.push(`${officialId}: ${result}`); }
                 if (idx % CHUNK_PROGRESS === 0) {
-                    console.log(`[Prewarm] ${idx}/${entries.length} rendered=${counts.rendered} cached=${counts.cached} errors=${counts.error}`);
+                    log.info(`${idx}/${entries.length} rendered=${counts.rendered} cached=${counts.cached} errors=${counts.error}`);
                 }
             }
         });
 
         await Promise.all(workers);
-        console.log(`[Prewarm] done: ${counts.rendered} rendered, ${counts.cached} cached, ${counts.skipped} no-logo, ${counts.error} errors in ${Date.now() - t0}ms`);
+        log.info(`done: ${counts.rendered} rendered, ${counts.cached} cached, ${counts.skipped} no-logo, ${counts.error} errors in ${Date.now() - t0}ms`);
         if (errors.length) {
-            console.log(`[Prewarm] first errors: ${errors.slice(0, 5).map(e => e.substring(0, 120)).join(' | ')}`);
+            log.info(`first errors: ${errors.slice(0, 5).map(e => e.substring(0, 120)).join(' | ')}`);
         }
         return { status: 'done', ...counts };
     } finally {

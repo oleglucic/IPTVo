@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const log = require('./logger').for('db');
 
 const connectionString = process.env.DATABASE_URL;
 const hasSupabase = !!connectionString; // kept name for compatibility with existing call-sites
@@ -6,10 +7,10 @@ let pool = null;
 
 if (connectionString) {
     pool = new Pool({ connectionString });
-    pool.on('error', (e) => console.error('[DB Error] Unexpected Postgres pool error:', e.message));
-    console.log('[DB] Postgres pool initialised.');
+    pool.on('error', (e) => log.error('Unexpected Postgres pool error:', e.message));
+    log.info('Postgres pool initialised.');
 } else {
-    console.warn('[DB] DATABASE_URL not set - AI overrides and EPG history disabled.');
+    log.warn('DATABASE_URL not set - AI overrides and EPG history disabled.');
 }
 
 // -- getOverride --------------------------------------------------------------
@@ -29,7 +30,7 @@ async function getOverride(rawName, scope = 'global') {
         if (!rows[0]) return null;
         return { canonical_id: rows[0].canonical_id, confidence: parseFloat(rows[0].confidence) };
     } catch (e) {
-        console.error('[DB Error] getOverride:', e.message);
+        log.error('getOverride:', e.message);
         return null;
     }
 }
@@ -60,7 +61,7 @@ async function setOverride(rawName, canonicalId, confidence = 0.85, scope = 'glo
             [rawName, scope, canonicalId, confidence]
         );
     } catch (e) {
-        console.error('[DB Error] setOverride:', e.message);
+        log.error('setOverride:', e.message);
         if (client) throw e;
     }
 }
@@ -82,7 +83,7 @@ async function incrementConfidence(rawName, delta = 0.01, scope = 'global') {
             [rawName, delta, scope]
         );
     } catch (e) {
-        console.error('[DB Error] incrementConfidence:', e.message);
+        log.error('incrementConfidence:', e.message);
     }
 }
 
@@ -103,7 +104,7 @@ async function decrementConfidence(rawName, delta = 0.1, scope = 'global') {
             [rawName, delta, scope]
         );
     } catch (e) {
-        console.error('[DB Error] decrementConfidence:', e.message);
+        log.error('decrementConfidence:', e.message);
     }
 }
 
@@ -121,7 +122,7 @@ async function incrementUsage(rawName, scope = 'global') {
             [rawName, scope]
         );
     } catch (e) {
-        console.error('[DB Error] incrementUsage:', e.message);
+        log.error('incrementUsage:', e.message);
     }
 }
 
@@ -138,7 +139,7 @@ async function getAllOverrides() {
         );
         return rows || [];
     } catch (e) {
-        console.error('[DB Error] getAllOverrides:', e.message);
+        log.error('getAllOverrides:', e.message);
         return [];
     }
 }
@@ -179,7 +180,7 @@ async function searchCommunityChannels(query, scope) {
         );
         return rows || [];
     } catch (e) {
-        console.error('[DB Error] searchCommunityChannels:', e.message);
+        log.error('searchCommunityChannels:', e.message);
         return [];
     }
 }
@@ -203,7 +204,7 @@ async function createCommunityChannel({ canonicalId, displayName, country = 'glo
         );
         return rows[0] || null;
     } catch (e) {
-        console.error('[DB Error] createCommunityChannel:', e.message);
+        log.error('createCommunityChannel:', e.message);
         return null;
     }
 }
@@ -276,9 +277,9 @@ async function voteCommunityChannel({ communityChannelId, rawName, scope = 'glob
         try {
             await client.query('ROLLBACK');
         } catch (rollbackError) {
-            console.error('[DB Error] voteCommunityChannel rollback:', rollbackError.message);
+            log.error('voteCommunityChannel rollback:', rollbackError.message);
         }
-        console.error('[DB Error] voteCommunityChannel:', e.message);
+        log.error('voteCommunityChannel:', e.message);
         throw e;
     } finally {
         client.release();
@@ -318,7 +319,7 @@ async function saveEpgSnapshot(channelKey, programs) {
             client.release();
         }
     } catch (e) {
-        console.error('[DB Error] saveEpgSnapshot:', e.message);
+        log.error('saveEpgSnapshot:', e.message);
     }
 }
 
@@ -341,7 +342,7 @@ async function getEpgHistory(channelKey, hoursBack = 48) {
         );
         return rows || [];
     } catch (e) {
-        console.error('[DB Error] getEpgHistory:', e.message);
+        log.error('getEpgHistory:', e.message);
         return [];
     }
 }
@@ -358,11 +359,11 @@ async function pruneEpgHistory(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
     try {
         const res = await pool.query('DELETE FROM epg_history WHERE start_time < $1', [cutoff]);
         if (res && res.rowCount > 0) {
-            console.log(`[EPG][Prune] Deleted ${res.rowCount} old rows (cutoff=${new Date(cutoff).toISOString()})`);
+            log.info(`Deleted ${res.rowCount} old rows (cutoff=${new Date(cutoff).toISOString()})`);
         }
         return res ? res.rowCount : 0;
     } catch (e) {
-        console.error('[DB Error] pruneEpgHistory:', e.message);
+        log.error('pruneEpgHistory:', e.message);
         return 0;
     }
 }
@@ -408,7 +409,7 @@ async function saveEpgPrograms(channelKey, source, programs) {
             client.release();
         }
     } catch (e) {
-        console.error('[DB Error] saveEpgPrograms:', e.message);
+        log.error('saveEpgPrograms:', e.message);
     }
 }
 
@@ -431,7 +432,7 @@ async function getEpgPrograms(channelKey, from, to) {
         );
         return rows || [];
     } catch (e) {
-        console.error('[DB Error] getEpgPrograms:', e.message);
+        log.error('getEpgPrograms:', e.message);
         return [];
     }
 }
@@ -460,7 +461,7 @@ async function getEpgProgramsMany(channelKeys, from, to) {
         }
         return out;
     } catch (e) {
-        console.error('[DB Error] getEpgProgramsMany:', e.message);
+        log.error('getEpgProgramsMany:', e.message);
         return out;
     }
 }
@@ -472,7 +473,7 @@ async function listEpgSources() {
         const { rows } = await pool.query('SELECT * FROM epg_sources');
         return rows || [];
     } catch (e) {
-        console.error('[DB Error] listEpgSources:', e.message);
+        log.error('listEpgSources:', e.message);
         return [];
     }
 }
@@ -490,7 +491,7 @@ async function setEpgSourceStatus(source, { last_fetch, last_success, error_coun
             [source, last_fetch || 0, last_success || 0, error_count == null ? null : error_count]
         );
     } catch (e) {
-        console.error('[DB Error] setEpgSourceStatus:', e.message);
+        log.error('setEpgSourceStatus:', e.message);
     }
 }
 
@@ -512,7 +513,7 @@ async function upsertEpgSource(src) {
             [src.source, src.enabled !== false, src.kind || 'general', src.url || '', src.region || 'global', src.notes || null]
         );
     } catch (e) {
-        console.error('[DB Error] upsertEpgSource:', e.message);
+        log.error('upsertEpgSource:', e.message);
     }
 }
 
@@ -528,7 +529,7 @@ async function pruneEpgPrograms(maxAgeMs = 14 * 24 * 60 * 60 * 1000) {
         const res = await pool.query('DELETE FROM epg_programs WHERE start_time < $1', [cutoff]);
         return res ? res.rowCount : 0;
     } catch (e) {
-        console.error('[DB Error] pruneEpgPrograms:', e.message);
+        log.error('pruneEpgPrograms:', e.message);
         return 0;
     }
 }
@@ -557,7 +558,7 @@ async function createUser(username, passwordHash, config, encryptionKey) {
         );
         return rows[0] || null;
     } catch (e) {
-        console.error('[DB Error] createUser:', e.message);
+        log.error('createUser:', e.message);
         return null;
     }
 }
@@ -576,7 +577,7 @@ async function getUserByUsername(username) {
         );
         return rows[0] || null;
     } catch (e) {
-        console.error('[DB Error] getUserByUsername:', e.message);
+        log.error('getUserByUsername:', e.message);
         return null;
     }
 }
@@ -601,7 +602,7 @@ async function getUserById(userId) {
         );
         return rows[0] || null;
     } catch (e) {
-        console.error('[DB Error] getUserById:', e.message);
+        log.error('getUserById:', e.message);
         return null;
     }
 }
@@ -660,7 +661,7 @@ async function updateUserConfig(userId, config, encryptionKey) {
         return merged;
     } catch (e) {
         try { await client.query('ROLLBACK'); } catch (_) { /* connection may be broken */ }
-        console.error('[DB Error] updateUserConfig:', e.message);
+        log.error('updateUserConfig:', e.message);
         return false;
     } finally {
         client.release();
@@ -683,7 +684,7 @@ async function getLogoUrl(channelId) {
         );
         return rows[0] || null;
     } catch (e) {
-        console.error('[DB Error] getLogoUrl:', e.message);
+        log.error('getLogoUrl:', e.message);
         return null;
     }
 }
@@ -706,7 +707,7 @@ async function setLogoUrl(channelId, logoUrl, source = 'unknown') {
             [channelId, logoUrl, source]
         );
     } catch (e) {
-        console.error('[DB Error] setLogoUrl:', e.message);
+        log.error('setLogoUrl:', e.message);
     }
 }
 

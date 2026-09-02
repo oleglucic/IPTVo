@@ -123,12 +123,6 @@ class APIClient {
         });
     }
 
-    async getLogoProxyURL() {
-        return this.request('/api/logo-proxy-url', {
-            method: 'GET'
-        });
-    }
-
     async getReleases() {
         return this.request('/api/releases', {
             method: 'GET'
@@ -160,18 +154,6 @@ class APIClient {
         return this.request('/api/community-match', {
             method: 'POST',
             body: JSON.stringify(payload)
-        });
-    }
-
-    async getHealth() {
-        return this.request('/health', {
-            method: 'GET'
-        });
-    }
-
-    async getDetailedHealth() {
-        return this.request('/health/detailed', {
-            method: 'GET'
         });
     }
 }

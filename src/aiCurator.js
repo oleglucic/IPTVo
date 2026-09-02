@@ -1,19 +1,7 @@
 const axios = require('axios');
 const { setOverride, getAllOverrides } = require('./db');
 const { lookupChannel, lookupChannelFuzzy } = require('./iptvOrgRef');
-
-/**
- * Sanitizes a value for safe logging.
- * @param {string} str - The value to sanitize.
- * @return {string} A printable ASCII string limited to 200 characters.
- */
-function sanitizeForLog(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/[\r\n\t]/g, '?')
-        .replace(/[^\x20-\x7E]/g, '?')  // Keep only printable ASCII
-        .substring(0, 200);  // Limit length
-}
+const log = require('./logger').for('aiCurator');
 
 // In-memory runtime cache for AI overrides
 const globalAiCache = new Map();
@@ -50,7 +38,7 @@ Return ONLY a raw JSON object where the key is the name and the value is the cle
 Input: ${JSON.stringify(indexed)}`;
 
     try {
-        console.log(`[AI Curator] Resolving duplicates for a batch of ${sanitizeForLog(batchItems.length)} channels...`);
+        log.info(`[AI Curator] Resolving duplicates for a batch of ${batchItems.length} channels...`);
         const res = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: model || "openrouter/free",
             messages: [{ role: "user", content: prompt }]
@@ -68,7 +56,7 @@ Input: ${JSON.stringify(indexed)}`;
         // whole batch queue cycle.
         const rawContent = res.data?.choices?.[0]?.message?.content;
         if (typeof rawContent !== 'string' || !rawContent.trim()) {
-            console.error('[AI Curator] Empty or non-string content in response (refusal/finish_reason=safety).');
+            log.error('Empty or non-string content in response (refusal/finish_reason=safety).');
             return {};
         }
         let content = rawContent.trim();
@@ -79,7 +67,7 @@ Input: ${JSON.stringify(indexed)}`;
         if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
             content = content.substring(jsonStart, jsonEnd + 1);
         } else {
-            console.error(`[AI Curator] No JSON object found in response. Raw snippet: ${sanitizeForLog(content.substring(0, 300))}`);
+            log.error(`No JSON object found in response. Raw snippet: ${content.substring(0, 300)}`);
             return {};
         }
 
@@ -89,16 +77,16 @@ Input: ${JSON.stringify(indexed)}`;
             // or null would downstream be treated as (garbage) name entries.
             return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
         } catch {
-            console.error(`[AI Curator] response was not valid JSON. Raw snippet: ${sanitizeForLog(content)}`);
+            log.error(`response was not valid JSON. Raw snippet: ${content}`);
             return {};
         }
     } catch (e) {
         const status = e.response ? e.response.status : null;
         if (status === 429 || status === 402) {
-            console.error(`[AI Curator] Rate limit or payment required (status ${status}) - stopping this cycle.`);
+            log.error(`Rate limit or payment required (status ${status}) - stopping this cycle.`);
             return { __rateLimited: true };
         }
-        console.error("[AI Curator Error] Failed to process batch:", sanitizeForLog(e.message));
+        log.error("Failed to process batch:", e.message);
         return {};
     }
 }
@@ -117,7 +105,7 @@ let aiQueueRunning = false;
 async function startAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
     if (aiQueueRunning) {
-        console.log(`[AI Curator] Skipping new queue: a cycle is already running for another config.`);
+        log.info(`Skipping new queue: a cycle is already running for another config.`);
         return;
     }
     aiQueueRunning = true;
@@ -132,7 +120,7 @@ async function startAiQueue(dirtyChannels, configKey, openrouterKey, model) {
 async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     if (!openrouterKey || !dirtyChannels || dirtyChannels.length === 0) return;
 
-    console.log(`[AI Curator] Background queue triggered for ${sanitizeForLog(dirtyChannels.length)} stream evaluations...`);
+    log.info(`Background queue triggered for ${dirtyChannels.length} stream evaluations...`);
 
     // 1. Conflict & Filter Detection
     const rawNamesByBase = new Map();
@@ -224,17 +212,17 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
     }
     const uniqueToProcess = [...priorityMap.values()].sort((a, b) => b.priority - a.priority);
     if (uniqueToProcess.length === 0) {
-        console.log(`[AI Curator] No flagged channels requiring processing for ${sanitizeForLog(configKey)} (all handled by iptv-org).`);
+        log.info(`No flagged channels requiring processing for ${configKey} (all handled by iptv-org).`);
         return;
     }
 
-    console.log(`[AI Curator] Flagged ${sanitizeForLog(uniqueToProcess.length)} channels for AI verification (no iptv-org match).`);
+    log.info(`Flagged ${uniqueToProcess.length} channels for AI verification (no iptv-org match).`);
 
     for (let i = 0; i < uniqueToProcess.length; i += 100) {
         const batch = uniqueToProcess.slice(i, i + 100);
         const aiResults = await processAiBatch(batch, openrouterKey, model);
             if (aiResults.__rateLimited) {
-                console.log(`[AI Curator] Stopping early due to rate limit. Processed ${sanitizeForLog(i)} of ${sanitizeForLog(uniqueToProcess.length)} channels this cycle.`);
+                log.info(`Stopping early due to rate limit. Processed ${i} of ${uniqueToProcess.length} channels this cycle.`);
                 break;
             }
 
@@ -245,7 +233,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
             const idx = Number.parseInt(idxStr, 10);
             const item = Number.isInteger(idx) ? batch[idx] : null;
             if (!item) {
-                console.warn(`[AI Curator] Response referenced unknown index "${sanitizeForLog(idxStr)}" — skipping.`);
+                log.warn(`Response referenced unknown index "${idxStr}" — skipping.`);
                 continue;
             }
             const raw = item.name;
@@ -267,7 +255,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
                     // country as a ".cc" suffix (e.g. "SkySportsF1.uk"), so no
                     // need to re-prefix with the country again.
                     finalId = `iptvo_${iptvOrgMatch.officialId}`;
-                    console.log(`[AI Curator] AI-cleaned "${sanitizeForLog(raw)}" (${sanitizeForLog(scope)}) -> "${sanitizeForLog(sanitizedBase)}" now matches iptv-org: ${sanitizeForLog(iptvOrgMatch.officialId)} (${sanitizeForLog(iptvOrgMatch.countryScopeKey)})`);
+                    log.info(`AI-cleaned "${raw}" (${scope}) -> "${sanitizedBase}" now matches iptv-org: ${iptvOrgMatch.officialId} (${iptvOrgMatch.countryScopeKey})`);
                 } else {
                     // No iptv-org match yet. Synthesize an id in the SAME
                     // iptv-org "PascalCaseName.cc" shape (kept in sync with
@@ -289,7 +277,7 @@ async function runAiQueue(dirtyChannels, configKey, openrouterKey, model) {
             await new Promise(resolve => setTimeout(resolve, 8000));
         }
     }
-    console.log(`[AI Curator] Finished override database update. Next reload will use the new mappings.`);
+    log.info(`Finished override database update. Next reload will use the new mappings.`);
 }
 
 module.exports = { startAiQueue, globalAiCache };

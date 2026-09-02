@@ -1,21 +1,21 @@
 // Unit tests for epgHub (central multi-source EPG).
 // Mock db/redisCache/iptvOrgRef before importing epgHub so requiring it never
 // creates real database/Redis clients or loads the iptv-org reference indexes.
-jest.mock('../db', () => ({
+jest.mock('../src/db', () => ({
   saveEpgPrograms: jest.fn(),
   listEpgSources: jest.fn(async () => []),
   setEpgSourceStatus: jest.fn(),
   upsertEpgSource: jest.fn(),
   pruneEpgPrograms: jest.fn(async () => 0)
 }));
-jest.mock('../redisCache', () => ({
+jest.mock('../src/redisCache', () => ({
   saveEpgCache: jest.fn(),
   getHubGeneration: jest.fn(async () => 0),
   bumpGeneration: jest.fn(async () => 1),
   setHubState: jest.fn(async () => 1),
   hasRedis: false
 }));
-jest.mock('../iptvOrgRef', () => {
+jest.mock('../src/iptvOrgRef', () => {
   let _lastRefreshed = 1; // reference "ready" for canonical matching
   return {
     lookupChannelSmart: jest.fn(() => null),
@@ -26,7 +26,7 @@ jest.mock('../iptvOrgRef', () => {
   };
 });
 
-const { normalizeSourceId, mergeForChannel, resolveCanonicalSourceId } = require('../epgHub');
+const { normalizeSourceId, mergeForChannel, resolveCanonicalSourceId } = require('../src/epgHub');
 
 describe('epgHub normalizeSourceId', () => {
   test('passes through iptv-org-style id (name.cc)', () => {
@@ -87,7 +87,7 @@ describe('epgHub mergeForChannel', () => {
 });
 
 describe('epgHub resolveCanonicalSourceId', () => {
-  const ref = require('../iptvOrgRef');
+  const ref = require('../src/iptvOrgRef');
 
   beforeEach(() => {
     ref.lookupChannelSmart.mockClear();

@@ -3,16 +3,16 @@
 // bump invalidates it, asteroid rehydrate adoption keeps cross-worker refresh
 // consistent, and Redis delete failures are surfaced.
 
-jest.mock('../db', () => ({
+jest.mock('../src/db', () => ({
   getAllOverrides: jest.fn()
 }));
 
-jest.mock('../redisCache', () => ({
+jest.mock('../src/redisCache', () => ({
   saveCacheToRedis: jest.fn(),
   saveLogoUrl: jest.fn()
 }));
 
-jest.mock('../aiCurator', () => ({
+jest.mock('../src/aiCurator', () => ({
   startAiQueue: jest.fn()
 }));
 
@@ -22,7 +22,7 @@ describe('cache generation guard', () => {
   let P;
   beforeEach(() => {
     jest.clearAllMocks();
-    P = require('../iptvParser');
+    P = require('../src/iptvParser');
     P.userCaches.clear();
   });
 

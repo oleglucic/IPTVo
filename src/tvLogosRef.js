@@ -1,4 +1,5 @@
 const axios = require('axios');
+const log = require('./logger').for('tvLogosRef');
 
 // tv-logo/tv-logos (https://github.com/tv-logo/tv-logos) is a large,
 // hand-curated set of high-resolution channel logos, organized as
@@ -159,7 +160,7 @@ async function refresh() {
             const tree = res.data && res.data.tree;
             if (!Array.isArray(tree)) throw new Error('unexpected tree response shape');
             if (res.data.truncated) {
-                console.warn('[tv-logos] GitHub tree response was truncated — index may be incomplete');
+                log.warn('GitHub tree response was truncated — index may be incomplete');
             }
 
             const newCountryIndex = new Map();
@@ -203,9 +204,9 @@ async function refresh() {
             for (const m of countryIndex.values()) total += m.size;
             let regionTotal = 0;
             for (const m of regionIndex.values()) regionTotal += m.size;
-            console.log(`[tv-logos] Refreshed: ${countryIndex.size} countries (${total} logos), ${regionIndex.size} regions (${regionTotal} logos)`);
+            log.info(`Refreshed: ${countryIndex.size} countries (${total} logos), ${regionIndex.size} regions (${regionTotal} logos)`);
         } catch (e) {
-            console.error('[tv-logos] Refresh failed:', e.message);
+            log.error('Refresh failed:', e.message);
         } finally {
             refreshInFlight = null;
         }

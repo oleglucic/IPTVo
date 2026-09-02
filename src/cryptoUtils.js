@@ -3,6 +3,7 @@
 // or native node:crypto for compatibility
 
 const crypto = require('crypto');
+const log = require('./logger').for('cryptoUtils');
 
 // Master encryption key from environment (32 bytes for AES-256)
 // Derived from ENCRYPTION_KEY env var using PBKDF2 with per-user salt
@@ -98,7 +99,7 @@ async function decryptConfig(encryptedConfigB64, ivB64, saltB64, masterKeyB64) {
 
         return JSON.parse(plaintext.toString('utf8'));
     } catch (e) {
-        console.error('[Crypto] Decrypt failed:', e.message);
+        log.error('Decrypt failed:', e.message);
         return null;
     }
 }
@@ -155,7 +156,7 @@ async function verifyPassword(password, hash) {
             });
         });
     } catch (e) {
-        console.error('[Crypto] Verify password failed:', e.message);
+        log.error('Verify password failed:', e.message);
         return false;
     }
 }

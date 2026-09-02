@@ -5,6 +5,7 @@
 // building the catch-up stream entries served alongside live streams.
 
 const { saveEpgSnapshot, getEpgHistory } = require('./db');
+const log = require('./logger').for('catchup');
 
 /**
  * Extract catch-up eligibility from a raw M3U #EXTINF line.
@@ -120,7 +121,7 @@ async function snapshotAllEpgToHistory(userCaches) {
         }
     }
 
-    console.log(`[Catchup] EPG snapshot cycle complete - ${channelsProcessed} channels, ${totalSaved} program entries processed.`);
+    log.info(`EPG snapshot cycle complete - ${channelsProcessed} channels, ${totalSaved} program entries processed.`);
 }
 
 /**
