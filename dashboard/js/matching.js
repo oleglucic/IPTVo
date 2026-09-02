@@ -104,6 +104,16 @@ function renderError() {
         </div>`;
 }
 
+function renderSyncing() {
+    els.list.innerHTML = `
+        <div class="match-empty is-neutral">
+            <span class="match-empty-icon">${TV_ICON}</span>
+            <p class="empty-state">Still loading your channels…</p>
+            <p class="match-empty-hint">Your playlist is being parsed in the background. Re-check in a moment or open the addon in Stremio to pull it through.</p>
+            <button type="button" class="btn btn-secondary btn-sm" data-action="refresh-unmatched">Check again</button>
+        </div>`;
+}
+
 function renderList() {
     if (unmatched.length === 0) {
         renderAllMatched();
@@ -147,6 +157,11 @@ async function loadUnmatched({ silent = false } = {}) {
     try {
         const data = await api.getUnmatchedChannels();
         unmatched = data.channels || [];
+        if (data.parsed === false) {
+            renderSyncing();
+            updateBadge();
+            return;
+        }
         renderList();
         updateBadge();
     } catch (e) {

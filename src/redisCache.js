@@ -147,6 +147,23 @@ async function saveLogoBuffer(logoUrl, buffer) {
 }
 
 /**
+ * Evict a logo image buffer from Redis. Used when a stored blob turns out to
+ * be unusable (e.g. Sharp rejects it) so the poison entry does not keep being
+ * served and re-rendered as a failure on every request — the next render will
+ * be a genuine cache miss and re-fetch a good image.
+ * @param {string} logoUrl - The original logo URL (used as key)
+ */
+async function deleteLogoBuffer(logoUrl) {
+    if (!redis) return;
+    try {
+        const key = LOGO_PREFIX + crypto.createHash('sha256').update(logoUrl).digest('hex');
+        await redis.del(key);
+    } catch (e) {
+        log.error('deleteLogoBuffer:', e.message);
+    }
+}
+
+/**
  * Load a logo image buffer from Redis.
  * @param {string} logoUrl - The original logo URL (used as key)
  * @returns {Promise<Buffer|null>}
@@ -155,18 +172,22 @@ async function loadLogoBuffer(logoUrl) {
     if (!redis) return null;
     try {
         const key = LOGO_PREFIX + crypto.createHash('sha256').update(logoUrl).digest('hex');
-        const buffer = await redis.get(key);
+        // Ioredis's plain `get` decodes the reply as UTF-8 when it is text and
+        // can lossily corrupt binary image data (invalid UTF-8 sequences turn
+        // into U+FFFD), which is why Sharp used to fail with "input buffer
+        // contains unsupported image format" on logo blobs read back from Redis.
+        // `getBuffer` returns the raw bytes as-is, so the stored PNG/JPEG/WebP
+        // survives the round-trip intact.
+        const buffer = await redis.getBuffer(key);
         if (!buffer) return null;
-        // ioredis returns Buffer when using get with binary data
-        const buf = buffer instanceof Buffer ? buffer : Buffer.from(buffer);
         // Skip SVG placeholders - Sharp can't process them for background blur
         // Check for various SVG formats: <svg, <?xml ... <svg, <SVG
-        const header = buf.length > 0 ? buf.subarray(0, 20).toString().trim().toLowerCase() : '';
+        const header = buffer.length > 0 ? buffer.subarray(0, 20).toString().trim().toLowerCase() : '';
         const isSvg = header.startsWith('<svg') || header.startsWith('<?xml') && header.includes('<svg');
         if (isSvg) {
             return null; // Treat as cache miss
         }
-        return buf;
+        return buffer.length > 0 ? buffer : null;
     } catch (e) {
         log.error('loadLogoBuffer:', e.message);
         return null;
@@ -468,6 +489,7 @@ module.exports = {
     listCachedConfigKeys,
     saveLogoBuffer,
     loadLogoBuffer,
+    deleteLogoBuffer,
     saveLogoUrl,
     loadLogoUrl,
     saveEpgCache,

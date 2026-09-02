@@ -460,8 +460,11 @@ function updateProviderFields() {
     elements.m3uFields.hidden = type !== 'm3u';
     elements.xtreamFields.hidden = type !== 'xtream';
 
-    // Detect if the provider identity has changed (URL, type, username, or password)
-    // and invalidate groups if it has
+    // Detect if the provider identity has changed (URL, type, or username) and
+    // invalidate groups if it has. Password is deliberately EXCLUDED: re-entering
+    // credentials (e.g. after the token was redacted on a reload) for the same
+    // provider/account must NOT discard the groups the user already selected —
+    // only a real provider switch should reset them.
     const currentIdentity = currentProviderIdentity();
 
     if (!state.lastProviderIdentity) {
@@ -471,8 +474,7 @@ function updateProviderFields() {
             currentIdentity.type !== state.lastProviderIdentity.type ||
             currentIdentity.m3uUrl !== state.lastProviderIdentity.m3uUrl ||
             currentIdentity.xtreamUrl !== state.lastProviderIdentity.xtreamUrl ||
-            currentIdentity.username !== state.lastProviderIdentity.username ||
-            currentIdentity.password !== state.lastProviderIdentity.password
+            currentIdentity.username !== state.lastProviderIdentity.username
         );
 
         if (identityChanged) {
@@ -573,7 +575,9 @@ async function handleLoadGroups() {
             return;
         }
 
-        const groups = categories.map(name => ({ name, count: 0 }));
+        const groups = categories.map(g => typeof g === 'string'
+            ? { name: g, count: null }
+            : { name: g.name, count: (typeof g.count === 'number' ? g.count : null) });
         mutations.setAvailableGroups(groups);
         mutations.setGroupSearch('');
         mutations.setGroupsLoaded(true);
@@ -652,7 +656,13 @@ function renderGroups() {
 
         const countSpan = document.createElement('span');
         countSpan.className = 'group-count';
-        countSpan.textContent = group.count || '?';
+        if (typeof group.count === 'number') {
+            countSpan.textContent = group.count;
+        } else {
+            // No count available (e.g. xtream) — hide the chip entirely rather
+            // than show a meaningless "?" placeholder.
+            countSpan.hidden = true;
+        }
 
         label.appendChild(checkbox);
         label.appendChild(nameSpan);
@@ -951,9 +961,51 @@ let changelogTrigger = null;
 let changelogLoaded = false;
 
 /**
+ * Renders inline GFM-ish formatting (links, code, bold, italics) for a single
+ * text line, safely. The text is HTML-escaped FIRST so the only tags we emit
+ * are the ones we construct ourselves; any `href` we emit is restricted to
+ * http(s). This keeps dependency-free release-note rendering safe against
+ * arbitrary/malformed markdown (no injected markup, no javascript: links).
+ * @param {string} text - Raw (unescaped) text line.
+ * @return {string} Escaped text with safe inline HTML formatting applied.
+ */
+function inlineMarkdown(text) {
+    let s = escapeHtml(text);
+
+    // Inline code spans: `foo` -> <code>foo</code>. Backticks aren't allowed
+    // to nest, so replace innermost pairs with a placeholder to keep the
+    // subsequent link/bold passes from touching code content.
+    const codeSpans = [];
+    s = s.replace(/`([^`]+)`/g, (_, inner) => {
+        codeSpans.push(inner);
+        return `\u0000${codeSpans.length - 1}\u0000`;
+    });
+
+    // Bold **text** and italic *text* (single-asterisk), no nesting.
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // Markdown links [label](url) -> safe <a>. URL is already escaped, but we
+    // still only allow http(s): targets so javascript:/data: can't slip in.
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
+        const decoded = url;
+        if (/^https?:\/\//i.test(decoded)) {
+            return `<a href="${decoded}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+        }
+        return `[${label}](${decoded})`;
+    });
+
+    // Restore code spans as <code>.
+    s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codeSpans[Number(i)]}</code>`);
+
+    return s;
+}
+
+/**
  * Renders a GitHub release note (GFM-ish) as escaped, dependency-free HTML.
- * Splits section headers and bullets into clean blocks rather than injecting
- * a markdown renderer.
+ * Splits section headers and bullets into clean blocks, and renders inline
+ * formatting on each line (links, code, bold) rather than injecting a full
+ * markdown renderer.
  */
 function renderReleaseBody(body) {
     const lines = (body || '').split('\n');
@@ -969,13 +1021,13 @@ function renderReleaseBody(body) {
 
         if (header) {
             closeList();
-            out.push(`<h3>${escapeHtml(header[1])}</h3>`);
+            out.push(`<h3>${inlineMarkdown(header[1])}</h3>`);
         } else if (bullet) {
             if (!inList) { out.push('<ul>'); inList = true; }
-            out.push(`<li>${escapeHtml(bullet[1])}</li>`);
+            out.push(`<li>${inlineMarkdown(bullet[1])}</li>`);
         } else if (line) {
             closeList();
-            out.push(`<p>${escapeHtml(line)}</p>`);
+            out.push(`<p>${inlineMarkdown(line)}</p>`);
         }
     }
     closeList();

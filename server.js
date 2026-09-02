@@ -297,11 +297,29 @@ app.post('/api/get-groups', requireAuth, getGroupsLimiter, async (req, res) => {
             if (!isSafeUrl(cleanUrl)) {
                 return res.status(400).json({ error: "Invalid Xtream URL: private/internal addresses not allowed" });
             }
-            const apiRes = await axios.get(`${cleanUrl}/player_api.php?username=${username}&password=${password}&action=get_live_categories`, { timeout: 10000, maxRedirects: 0 });
-            if (Array.isArray(apiRes.data)) {
-                return res.json({ categories: apiRes.data.map(cat => cat.category_name).sort() });
+            const apiBase = `${cleanUrl}/player_api.php?username=${username}&password=${password}`;
+            const [catRes, streamRes] = await Promise.all([
+                axios.get(`${apiBase}&action=get_live_categories`, { timeout: 10000, maxRedirects: 0 }),
+                axios.get(`${apiBase}&action=get_live_streams`, { timeout: 10000, maxRedirects: 0 })
+            ]);
+            if (!Array.isArray(catRes.data)) {
+                return res.status(400).json({ error: "Invalid provider structure response" });
             }
-            return res.status(400).json({ error: "Invalid provider structure response" });
+            const streamsByCat = new Map();
+            if (Array.isArray(streamRes.data)) {
+                for (const s of streamRes.data) {
+                    if (!s || !s.category_id) continue;
+                    const key = String(s.category_id);
+                    streamsByCat.set(key, (streamsByCat.get(key) || 0) + 1);
+                }
+            }
+            const categories = catRes.data
+                .map(cat => ({
+                    name: cat.category_name,
+                    count: streamsByCat.get(String(cat.category_id)) || 0
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+            return res.json({ categories });
         } else {
             if (!m3uUrl) return res.status(400).json({ error: "Missing M3U Stream URL" });
             // Prevent SSRF: validate URL before fetching
@@ -310,14 +328,17 @@ app.post('/api/get-groups', requireAuth, getGroupsLimiter, async (req, res) => {
             }
             const m3uRes = await axios.get(m3uUrl, { headers: { 'Range': 'bytes=0-5242880' }, timeout: 10000, maxRedirects: 0 });
             const lines = m3uRes.data.split('\n');
-            const groups = new Set();
+            const groupCounts = new Map();
             for (const line of lines) {
                 if (line.startsWith('#EXTINF:')) {
                     const match = line.match(/group-title="([^"]+)"/);
-                    if (match && match[1]) groups.add(match[1]);
+                    const group = match && match[1] ? match[1] : 'Uncategorized';
+                    groupCounts.set(group, (groupCounts.get(group) || 0) + 1);
                 }
             }
-            return res.json({ categories: Array.from(groups).sort() });
+            const categories = Array.from(groupCounts.keys()).sort()
+                .map(name => ({ name, count: groupCounts.get(name) }));
+            return res.json({ categories });
         }
     } catch (err) {
         return res.status(500).json({ error: "Connection to provider failed: " + err.message });
@@ -1081,9 +1102,21 @@ app.put('/api/auth/config', async (req, res) => {
 app.get('/api/unmatched-channels', requireAuth, async (req, res) => {
     try {
         const userId = req.session.userId;
-        const ud = userCaches.get(userId);
-        if (!ud || !ud.channelMap) {
-            return res.json({ channels: [] });
+        const configKey = userId;
+        // Ensure the user's catalog is actually parsed before reporting on it.
+        // Previously this read userCaches directly, so a dashboard-only user who
+        // had saved a config but whose addon catalog was never requested saw an
+        // empty cache -> "every channel is matched" even when the playlist had
+        // plenty of unmatched channels. ensureCache (with the {_userId} placeholder
+        // so it resolves the real per-user config from the DB) kicks the parse and
+        // is Redis-backed, so it works across cluster workers too.
+        await ensureCache(configKey, { _userId: userId });
+        const ud = userCaches.get(configKey);
+        if (!ud || !ud.channelMap || ud.channelMap.size === 0) {
+            // Distinguish "not parsed / still loading" from a genuinely all-matched
+            // catalog so the dashboard doesn't show a false "every channel matched".
+            const stillLoading = !ud || ud.status === 'loading';
+            return res.json({ channels: [], parsed: !stillLoading });
         }
         const channels = [];
         for (const [chKey, channel] of ud.channelMap.entries()) {
@@ -1098,7 +1131,7 @@ app.get('/api/unmatched-channels', requireAuth, async (req, res) => {
                 });
             }
         }
-        res.json({ channels });
+        res.json({ channels, parsed: true });
     } catch (e) {
         log.error('Community Match unmatched-channels error:', e.message);
         res.status(500).json({ error: 'Failed to list unmatched channels' });

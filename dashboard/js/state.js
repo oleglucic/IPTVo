@@ -56,6 +56,30 @@ export function detectTimezoneOffset() {
     return -new Date().getTimezoneOffset() / 60;
 }
 
+// Session-scoped credential fields that the server cannot return (it only ever
+// sends back a "[REDACTED]" placeholder). The dashboard keeps the real xtream
+// password / OpenRouter key in sessionStorage so a page reload in the same
+// browser session doesn't force the user to re-type them just to load groups.
+// Stored client-side only, never sent back to the server, and dropped when the
+// tab/session ends.
+const SESSION_FIELDS = ['password', 'openrouterKey'];
+
+function persistSessionFields() {
+    if (typeof sessionStorage === 'undefined') return;
+    for (const field of SESSION_FIELDS) {
+        const value = state.config[field];
+        sessionStorage.setItem(`iptvo_${field}`, value || '');
+    }
+}
+
+function restoreSessionFields() {
+    if (typeof sessionStorage === 'undefined') return;
+    for (const field of SESSION_FIELDS) {
+        const value = sessionStorage.getItem(`iptvo_${field}`);
+        if (value) state.config[field] = value;
+    }
+}
+
 // Derived state getters
 export const getters = {
     getConfigForAPI() {
@@ -115,6 +139,7 @@ export const mutations = {
         api.clearToken();
         sessionStorage.removeItem('iptvo_token');
         sessionStorage.removeItem('iptvo_user');
+        for (const field of SESSION_FIELDS) sessionStorage.removeItem(`iptvo_${field}`);
     },
 
     setConfig(config) {
@@ -136,11 +161,13 @@ export const mutations = {
         }
         state.config = { ...state.config, ...next };
         state.isDirty = false;
+        persistSessionFields();
     },
 
     setConfigField(field, value) {
         state.config[field] = value;
         state.isDirty = true;
+        if (SESSION_FIELDS.includes(field)) persistSessionFields();
     },
 
     markSaved() {
@@ -224,6 +251,7 @@ export const mutations = {
         state.connectionTestResult = null;
         state.groupsLoaded = false;
         state.isDirty = false;
+        for (const field of SESSION_FIELDS) sessionStorage.removeItem(`iptvo_${field}`);
     },
 
     loadPersistedAuth() {
@@ -236,6 +264,10 @@ export const mutations = {
                 state.token = token;
                 state.isAuthenticated = true;
                 api.setToken(token);
+                // Bring back the session-scoped credentials so groups can be
+                // (re)loaded without the user re-typing the xtream password after
+                // a page reload.
+                restoreSessionFields();
             } catch {
                 this.clearAuth();
             }
