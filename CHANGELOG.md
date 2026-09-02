@@ -1,3 +1,36 @@
+## 2.0.0 (2026-09-02)
+
+* Merge pull request #55 from oleglucic/chore/dashboard-overhaul ([324b740](https://github.com/oleglucic/IPTVo/commit/324b740)), closes [#55](https://github.com/oleglucic/IPTVo/issues/55)
+* refactor!: reorg backend into src/ and rename ai config key to aiEnabled ([c13e1aa](https://github.com/oleglucic/IPTVo/commit/c13e1aa))
+* Merge remote-tracking branch 'origin/main' into chore/dashboard-overhaul ([756fdb4](https://github.com/oleglucic/IPTVo/commit/756fdb4))
+* fix(parser,dashboard): audit fixes from code review ([66e2bd8](https://github.com/oleglucic/IPTVo/commit/66e2bd8))
+* Merge branch 'main' into feat/community-matching ([ac338e7](https://github.com/oleglucic/IPTVo/commit/ac338e7))
+* Tidy lint config and catalog handlers ([095ab0e](https://github.com/oleglucic/IPTVo/commit/095ab0e))
+* Fix CodeRabbit issues in PR #54 ([0d687a5](https://github.com/oleglucic/IPTVo/commit/0d687a5)), closes [#54](https://github.com/oleglucic/IPTVo/issues/54)
+* Merge branch 'main' into feat/community-matching ([0289eac](https://github.com/oleglucic/IPTVo/commit/0289eac))
+* chore: untrack generated coverage output ([6ffb1a0](https://github.com/oleglucic/IPTVo/commit/6ffb1a0))
+* chore(deps): override qs to 6.16.0 to fix audit failure ([b4a5b47](https://github.com/oleglucic/IPTVo/commit/b4a5b47))
+* fix: resolve PR review findings (CodeRabbit + CodeQL) ([99819f9](https://github.com/oleglucic/IPTVo/commit/99819f9))
+* fix: harden community matching and untrack coverage output ([6ea882e](https://github.com/oleglucic/IPTVo/commit/6ea882e))
+* fix(deps): bump npm to 11.19.1 to resolve dev-dependency vulnerabilities ([840ef80](https://github.com/oleglucic/IPTVo/commit/840ef80))
+* fix(release): repair generated release notes & contributor handles ([0adbcae](https://github.com/oleglucic/IPTVo/commit/0adbcae))
+* refactor: reorganize repo, unify logging, honor aiEnabled ([4cc6bd0](https://github.com/oleglucic/IPTVo/commit/4cc6bd0))
+* feat: community matching backend ([9e98f9c](https://github.com/oleglucic/IPTVo/commit/9e98f9c))
+* feat(dashboard): in-app account dialogs, unsaved-changes guard, mobile polish ([e95bc4c](https://github.com/oleglucic/IPTVo/commit/e95bc4c))
+
+### BREAKING CHANGE
+
+* AI curation is now gated on aiEnabled (config key), not on
+the presence of an openrouterKey. Set aiEnabled:true to keep AI on.
+* custom integrations that require backend modules directly
+must update paths from repo-root module files to src/<module>. Users with
+legacy base64 configs that set ai:true are normalized to aiEnabled
+automatically; anything reading the config as a raw object must use aiEnabled.
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## 1.1.0 (2026-09-02)
 
 * fix: harden community matching and untrack coverage output ([7cd97cb](https://github.com/oleglucic/IPTVo/commit/7cd97cb))
