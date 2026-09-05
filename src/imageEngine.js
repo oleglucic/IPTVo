@@ -651,4 +651,4 @@ function isLogoMissPending(url) {
     return isDeadUrl(url);
 }
 
-module.exports = { getPremiumPoster, isLogoMissPending, markDeadUrl, posterPath };
+module.exports = { getPremiumPoster, isLogoMissPending, markDeadUrl, posterPath, cacheDir };
