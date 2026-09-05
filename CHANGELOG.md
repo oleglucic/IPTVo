@@ -1,3 +1,26 @@
+## [2.1.1](https://github.com/oleglucic/IPTVo/compare/v2.1.0...v2.1.1) (2026-09-05)
+
+### Bug Fixes
+
+* resolve conventional-changelog-writer override conflict ([6e7db85](https://github.com/oleglucic/IPTVo/commit/6e7db852e214a2cc0d6187d94c7cd70d81e550f3))
+* force conventional-changelog-writer v9 override for release-plugin ([cf49a26](https://github.com/oleglucic/IPTVo/commit/cf49a26f388d93a3b9ebd5a776e546e5e4da8392))
+* correct secret references in top-level env block ([306e3ae](https://github.com/oleglucic/IPTVo/commit/306e3ae9a678d871287bda6adb21c97dd4b846db))
+* replace secrets with env context in step conditions ([f639efa](https://github.com/oleglucic/IPTVo/commit/f639efa49cd3f107dced83e039ee7dad3981efd6))
+* replace secrets context with env context in workflow ([6b1bc92](https://github.com/oleglucic/IPTVo/commit/6b1bc926e1f6045ca19980ee1e2afda6a59e5fcf))
+* update actions/checkout to v7 SHA in all workflows for Node.js 24 compatibility ([0d9d752](https://github.com/oleglucic/IPTVo/commit/0d9d7526df792e1562ca364944d58d0798432835))
+* update actions/checkout to v7 SHA in all workflows for Node.js 24 compatibility ([3748647](https://github.com/oleglucic/IPTVo/commit/3748647896cf81ea240d0553d304c7afd0e498af))
+* use secrets in Release job conditions for Docker Hub/GHCR availability ([0479f05](https://github.com/oleglucic/IPTVo/commit/0479f053bd3027f2a531e2eb8283f0ed4defc788))
+* make Release job conditional on Docker Hub/GHCR secrets availability ([f9e3177](https://github.com/oleglucic/IPTVo/commit/f9e3177daede41c07a9e859d1412b5c6420cf475))
+* use client-id instead of deprecated app-id for GitHub App token ([ad66745](https://github.com/oleglucic/IPTVo/commit/ad66745c5a9be128d800ef37116338e15924d106))
+* update create-github-app-token to v3.2.0 SHA for Node.js 24 compatibility ([3f19eb4](https://github.com/oleglucic/IPTVo/commit/3f19eb40c1f29bc1b15c3e704a6b96bdf1876ca7))
+* update create-github-app-token to v3 for Node.js 24 compatibility ([5d8390c](https://github.com/oleglucic/IPTVo/commit/5d8390c96916cdd9d7a2cb4d4f981d2671de1000))
+* update github-app-token to v1 for Node.js 24 compatibility ([9b8297e](https://github.com/oleglucic/IPTVo/commit/9b8297e1344d2ff25943b9e8efb26732e4035e2c))
+* URL-encode username/password in Xtream live stream URLs ([05dd115](https://github.com/oleglucic/IPTVo/commit/05dd115448ce01d1ac471dd97a9472ee90d9a442))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## 2.1.0 (2026-09-02)
 
 * ci: pin GitHub Actions to committed SHAs (supply-chain) ([a771a41](https://github.com/oleglucic/IPTVo/commit/a771a41))
