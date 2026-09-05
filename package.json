@@ -89,7 +89,8 @@
     "path-to-regexp": "^6.2.0",
     "tmp": "^0.2.6",
     "inquirer": "^9.3.7",
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "conventional-changelog-writer": "^9.0.0"
   },
   "release": {
     "branches": [
