@@ -1140,7 +1140,7 @@ let cName = cleanNameStr.replace(/\b(hd|fhd|uhd|4k|8k|sd|raw|hevc|1080p|1080i|72
             }
 
             const sInfo = parseStreamInfo(rawName);
-            const liveStreamUrl = `${baseUrl}/live/${user}/${pass}/${stream.stream_id}.ts`;
+            const liveStreamUrl = `${baseUrl}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${stream.stream_id}.ts`;
             
             tMap.get(cId).streams.push({ name: sInfo.name, title: sInfo.title, url: liveStreamUrl, score: sInfo.score, groupTags: groupTags });
         }
