@@ -583,6 +583,29 @@ async function getUserByUsername(username) {
 }
 
 /**
+ * Lists every user with a saved config, for the daily background refresh
+ * sweep (server.js) — deliberately comprehensive (reads straight from the
+ * users table), unlike userCaches/Redis which only ever reflect whichever
+ * configs happened to be recently active. Only the columns the refresh job
+ * needs to decrypt+refetch a config, nothing sensitive beyond that.
+ * @returns {Promise<Array<{user_id: string, encrypted_config: string, config_iv: string, config_salt: string}>>}
+ */
+async function getAllUsersWithConfig() {
+    if (!pool) return [];
+    try {
+        const { rows } = await pool.query(
+            `SELECT user_id, encrypted_config, config_iv, config_salt
+             FROM users
+             WHERE encrypted_config IS NOT NULL AND config_iv IS NOT NULL AND config_salt IS NOT NULL`
+        );
+        return rows || [];
+    } catch (e) {
+        log.error('getAllUsersWithConfig:', e.message);
+        return [];
+    }
+}
+
+/**
  * Retrieves a user by UUID.
  * @param {string} userId - The user's UUID.
  * @returns {Promise<object|null>} The matching user record, or `null` if the UUID is invalid, the user is not found, or the database is unavailable.
@@ -746,6 +769,7 @@ module.exports = {
     createUser,
     getUserByUsername,
     getUserById,
+    getAllUsersWithConfig,
     updateUserConfig,
     // Legacy aliases
     getMapping,
