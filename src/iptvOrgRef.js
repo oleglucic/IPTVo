@@ -12,6 +12,14 @@ const REFRESH_INTERVAL = 24 * 60 * 60 * 1000;
 let exactMatchMap = new Map();
 let channelIdToLogo = new Map();
 let validCountryCodes = new Set();
+// Full set of real iptv-org official channel ids (lowercased), independent
+// of logo coverage — channelIdToLogo only has entries for channels that
+// happen to have a logo in iptv-org's separate logos.json feed, so it can't
+// be used to check "does this officialId exist at all" (false negatives for
+// real, logo-less channels). Used to validate an officialId a client claims
+// is a real iptv-org entry before trusting it with high confidence — see
+// isValidOfficialId below and its use in server.js's community-match route.
+let validOfficialIds = new Set();
 let fuseIndex = null;
 let fuseList = null;
 let lastRefreshed = 0;
@@ -283,8 +291,10 @@ async function refresh() {
         // channel happened to load first, which is wrong far more often than
         // it's right for popular acronym-style names.
         const nameCountryCounts = new Map(); // normalizedName -> Set<country>
+        const newValidOfficialIds = new Set();
 
         for (const ch of channelsRes.data) {
+            newValidOfficialIds.add(String(ch.id).toLowerCase());
             if (ch.closed) continue;
             const names = [ch.name, ...(ch.alt_names || [])];
             const countryLower = (ch.country || '').toLowerCase();
@@ -412,6 +422,7 @@ async function refresh() {
         exactMatchMap = newExactMap;
         channelIdToLogo = newLogoMap;
         validCountryCodes = newCountrySet;
+        validOfficialIds = newValidOfficialIds;
         countryNameToCode = newCountryNameToCode;
         fuseIndex = newFuseIndex;
         fuseList = newFuseList;
@@ -647,6 +658,19 @@ function isValidCountryCode(code) {
     return validCountryCodes.has(code.toLowerCase());
 }
 
+/**
+ * Checks whether a string is a real iptv-org official channel id (e.g.
+ * "SkySportsF1.uk"), independent of logo coverage. Used to validate an
+ * officialId a client claims is a real iptv-org entry before trusting it —
+ * see server.js's /api/community-match "direct iptv-org match" branch.
+ * @param {string} officialId
+ * @return {boolean}
+ */
+function isValidOfficialId(officialId) {
+    if (!officialId) return false;
+    return validOfficialIds.has(String(officialId).toLowerCase());
+}
+
 // --- Region/group scope resolution -------------------------------------------
 // Provider playlists often nest countries under a region container
 // ("EURO | GREECE", "LAME | MEXICO", "NAME | USA"). The bare-prefix matcher in
@@ -849,6 +873,7 @@ module.exports = {
     lookupChannelFuzzy,
     lookupChannelSmart,
     isValidCountryCode,
+    isValidOfficialId,
     resolveGroupScope,
     startAutoRefresh,
     get lastRefreshed() { return lastRefreshed; },
