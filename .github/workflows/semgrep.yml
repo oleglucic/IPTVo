@@ -36,7 +36,7 @@ jobs:
       # Official Semgrep image with the engine pre-installed.
       image: semgrep/semgrep:latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           # Full history only on scheduled/mainline scans (ignored-by-default
           # history rules work); shallow is enough for PR diff scanning anyway.
