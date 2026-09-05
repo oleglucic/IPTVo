@@ -1,5 +1,10 @@
 name: CI/CD Pipeline
 
+env:
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
 on:
   push:
     branches: [main]
