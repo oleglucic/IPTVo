@@ -2132,6 +2132,62 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
         }
     }, 15 * 60 * 1000);
 
+    // Guarantees every REGISTERED user's playlist gets pulled fresh from their
+    // provider at least once every 24 hours, independent of activity level.
+    // The 15-minute sweep just above only ever touches whatever's already warm
+    // in userCaches (in-memory) — a user who hasn't been active recently, or a
+    // cold restart with an empty Redis, gets no refresh at all from that sweep
+    // alone. This reads the actual users table instead, so coverage doesn't
+    // depend on what happens to be cached. streamFetchIPTV has its own
+    // skip-if-still-fresh guard (see iptvParser.js), so this is cheap for any
+    // user the 15-minute sweep already covers — it only does real work for the
+    // ones that sweep couldn't reach.
+    const DAILY_REFRESH_CONCURRENCY = parseInt(process.env.DAILY_REFRESH_CONCURRENCY || '5', 10);
+    async function dailyRefreshAllUsers() {
+        const { getAllUsersWithConfig } = require('./src/db');
+        const { decryptConfig } = require('./src/cryptoUtils');
+        let users;
+        try {
+            users = await getAllUsersWithConfig();
+        } catch (e) {
+            log.error('[DailyRefresh] Could not list users:', e.message);
+            return;
+        }
+        log.info(`[DailyRefresh] Starting sweep for ${users.length} registered user(s).`);
+
+        let idx = 0, refreshed = 0, failed = 0;
+        async function worker() {
+            while (idx < users.length) {
+                const user = users[idx++];
+                try {
+                    const configObj = await decryptConfig(user.encrypted_config, user.config_iv, user.config_salt, process.env.ENCRYPTION_KEY);
+                    if (configObj) {
+                        await streamFetchIPTV(user.user_id, configObj);
+                        refreshed++;
+                    }
+                } catch (e) {
+                    failed++;
+                    log.error(`[DailyRefresh] Failed for user ${String(user.user_id).substring(0, 8)}...:`, e.message);
+                }
+            }
+        }
+        await Promise.all(Array.from({ length: Math.min(DAILY_REFRESH_CONCURRENCY, users.length) || 1 }, worker));
+        log.info(`[DailyRefresh] Sweep complete: ${refreshed} refreshed, ${failed} failed, out of ${users.length}.`);
+    }
+
+    // Run once shortly after boot — staggered 5 minutes past the other startup
+    // jobs (Redis prewarm, epgHub backfill) so it isn't competing with them for
+    // startup resources — then every 24h. 24h in ms is safely under Node's
+    // 32-bit setTimeout/setInterval limit (~24.8 days), so a plain setInterval
+    // is fine here; no chunking needed (contrast tvLogosRef.js's monthly
+    // refresh, where that limit actually matters).
+    setTimeout(() => {
+        dailyRefreshAllUsers().catch(e => log.error('[DailyRefresh] Sweep failed:', e.message));
+    }, 5 * 60 * 1000);
+    setInterval(() => {
+        dailyRefreshAllUsers().catch(e => log.error('[DailyRefresh] Sweep failed:', e.message));
+    }, 24 * 60 * 60 * 1000);
+
     // Pre-warm the in-memory cache from Redis on boot, so the very first request
     // after a container restart is instant instead of needing a full re-parse.
     (async () => {
