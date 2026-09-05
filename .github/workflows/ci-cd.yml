@@ -1,8 +1,8 @@
 name: CI/CD Pipeline
 
 env:
-  DOCKERHUB_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
-  GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
 on:
@@ -100,7 +100,7 @@ jobs:
           # @semantic-release/git can push the version-bump commit to the
           # protected branch. github-actions[bot] cannot bypass protection.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          DOCKERHUB_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GHCR_TOKEN: ${{ env.GITHUB_TOKEN }}
         run: npx semantic-release
       - name: Setup Docker Buildx
