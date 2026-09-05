@@ -73,6 +73,9 @@ jobs:
           # (an unscoped multi-installation token is not granted bypass).
           owner: oleglucic
           repositories: IPTVo
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
       # git authenticates the raw `git push` that @semantic-release/git runs from
       # its own http.extraheader config, not from the GITHUB_TOKEN env. Register
       # the App installation token there so the push is authenticated as the
