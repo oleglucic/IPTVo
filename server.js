@@ -9,7 +9,14 @@ const { run: runEpgHub, seedSources: seedEpgHub, backfillCanonicalAliases } = re
 const { loadCacheFromRedis, deleteCacheFromRedis, listCachedConfigKeys, saveEpgCache, mgetEpgCaches, getHubGeneration, hasRedis, sessionGet, sessionSet, sessionDelete, sessionPruneExpired, withOnceLock } = require('./src/redisCache');
 const { isValidCountryCode } = require('./src/iptvOrgRef');
 const { getCatchupStreams, isCatchupCapableUrl, snapshotAllEpgToHistory } = require('./src/catchup');
-const { getPremiumPoster } = require('./src/imageEngine');
+// posterCacheDir: imported directly from imageEngine.js rather than
+// independently recomputed via path.join(__dirname, 'cache') here, which is
+// exactly what caused posters to 500 after imageEngine.js moved into src/ —
+// its own __dirname-relative cacheDir became <repo>/src/cache while this
+// file (still at repo root) kept computing <repo>/cache, so the path-safety
+// check below always failed. Importing the real directory means the two can
+// never independently drift apart again, regardless of future moves.
+const { getPremiumPoster, cacheDir: posterCacheDir } = require('./src/imageEngine');
 const { initSchema } = require('./src/dbInit');
 const { pruneEpgHistory } = require('./src/db');
 const { hashPassword, verifyPassword, generateSessionToken, decryptConfig, configKeyFingerprint } = require('./src/cryptoUtils');
@@ -1818,10 +1825,14 @@ app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
 
     try {
         const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
-        // Resolve path to prevent path injection - ensure it's within cache dir
+        // Resolve path to prevent path injection - ensure it's within cache dir.
+        // Uses the SAME cacheDir imageEngine.js actually writes to (imported
+        // above) rather than an independently recomputed path.join(__dirname,
+        // 'cache') — that independent computation is what silently broke
+        // every poster after imageEngine.js moved into src/ (see the import
+        // comment above for the full explanation).
         const resolvedPath = path.resolve(cachedPosterPath);
-        const cacheDir = path.join(__dirname, 'cache');
-        if (!resolvedPath.startsWith(cacheDir)) {
+        if (!resolvedPath.startsWith(posterCacheDir)) {
             return res.status(500).send("Invalid poster path");
         }
         res.sendFile(resolvedPath);
@@ -1937,10 +1948,14 @@ app.get('/:config/poster/:id.png', posterLimiter, async (req, res) => {
 
     try {
         const cachedPosterPath = await getPremiumPoster(id, logoUrl, channelName);
-        // Resolve path to prevent path injection - ensure it's within cache dir
+        // Resolve path to prevent path injection - ensure it's within cache dir.
+        // Uses the SAME cacheDir imageEngine.js actually writes to (imported
+        // above) rather than an independently recomputed path.join(__dirname,
+        // 'cache') — that independent computation is what silently broke
+        // every poster after imageEngine.js moved into src/ (see the import
+        // comment above for the full explanation).
         const resolvedPath = path.resolve(cachedPosterPath);
-        const cacheDir = path.join(__dirname, 'cache');
-        if (!resolvedPath.startsWith(cacheDir)) {
+        if (!resolvedPath.startsWith(posterCacheDir)) {
             return res.status(500).send("Invalid poster path");
         }
         res.sendFile(resolvedPath);
