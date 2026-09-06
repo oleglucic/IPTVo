@@ -1,3 +1,13 @@
+## [2.2.0](https://github.com/oleglucic/IPTVo/compare/v2.1.1...v2.2.0) (2026-09-06)
+
+### Features
+
+* add deployment docs for Render + Neon + Upstash free tier ([4b50dd7](https://github.com/oleglucic/IPTVo/commit/4b50dd73720c21001a06c2bd81333d9a817f680c))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.1.1](https://github.com/oleglucic/IPTVo/compare/v2.1.0...v2.1.1) (2026-09-05)
 
 ### Bug Fixes
