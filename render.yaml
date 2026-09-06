@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: iptvo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ASSET_BASE_URL
+        value: ""
+      - key: POSTER_HOST_ALLOWLIST
+        value: ""
+      - key: CLUSTER_WORKERS
+        value: "0"
+      - key: LOG_LEVEL
+        value: "info"
+      - key: LOG_FORMAT
+        value: ""
+      - key: TURNSTILE_HOSTNAMES
+        value: ""
+      - key: EPG_HUB_CONCURRENCY
+        value: "3"
+      - key: PREWARM_CONCURRENCY
+        value: "8"
+      - key: LOGO_PROXY_URL
+        value: "https://logo-proxy.your-worker.workers.dev/logo"
+      - key: DAILY_REFRESH_CONCURRENCY
+        value: "5"
+      - key: ADDON_CACHE_URL
+        value: ""
