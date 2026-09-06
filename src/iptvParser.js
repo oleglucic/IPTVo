@@ -31,6 +31,10 @@ function normalizeConfig(config) {
     if (typeof out.include === 'undefined' && Array.isArray(out.selectedGroups)) {
         out.include = out.selectedGroups.filter(Boolean);
     }
+    // Preserve providerConcurrencyLimit as-is (0 = unlimited)
+    if (typeof out.providerConcurrencyLimit === 'undefined') {
+        out.providerConcurrencyLimit = 0;
+    }
     return out;
 }
 

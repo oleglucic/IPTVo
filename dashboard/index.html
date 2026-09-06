@@ -365,6 +365,11 @@
                                 <input type="number" id="timezoneOffset" name="timezoneOffset" value="0" min="-12" max="14" step="0.5">
                                 <small class="form-hint">Filled in for you already — it makes sure the TV guide shows the right local times.</small>
                             </div>
+                            <div class="form-group">
+                                <label for="providerConcurrencyLimit">Max concurrent streams your provider allows</label>
+                                <input type="number" id="providerConcurrencyLimit" name="providerConcurrencyLimit" min="0" value="0" placeholder="0 = unlimited">
+                                <small class="form-hint">0 means unlimited. If set, the server will limit how many streams this user can have open simultaneously.</small>
+                            </div>
 
                             <button type="submit" class="btn btn-primary btn-test" data-action="test-connection">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
