@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-inter \
     fonts-dejavu-core \
+    ffmpeg \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 

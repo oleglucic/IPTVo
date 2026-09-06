@@ -1,5 +1,6 @@
 const querystring = require('querystring');
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -1547,16 +1548,155 @@ builder.defineMetaHandler(async ({ _type, id, _extra, config }) => {
     };
 });
 
-// Stream handler
+// Stream handler with concurrency limiting
 builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
     const configKey = config.configKey;
     const configObj = config.configObj;
+    const rootUrl = config.rootUrl;
 
     await ensureCache(configKey, configObj);
     const ud = userCaches.get(configKey);
     if (!ud || !ud.channelMap?.has(id)) return { streams: [] };
     const channel = ud.channelMap.get(id);
 
+    // --- Concurrency limiting (Phase 1) ---
+    // When the feature flag is off, behave exactly as before — completely unchanged.
+    if (!CONCURRENCY_LIMIT_ENABLED) {
+        // Original behavior, no changes
+    } else {
+        // New behavior: check per-user providerConcurrencyLimit
+        // configKey is the userId for user-system routes (validated UUID)
+        const userId = configKey;
+
+        // Get the user's config to find providerConcurrencyLimit
+        // For user-ID based flow, the resolved config was stashed on the cache
+        // entry as _configObj during auth/config update. For legacy base64 config
+        // flow, configObj is the real config.
+        const resolvedConfig = (ud && ud._configObj) || configObj;
+
+        const providerConcurrencyLimit = Number(resolvedConfig?.providerConcurrencyLimit || 0);
+
+        // Count active sessions for this user
+        let activeCount = 0;
+        if (userId) {
+            try {
+                const { countActiveSessions } = require('./src/streamSessions');
+                activeCount = await countActiveSessions(userId);
+            } catch (e) {
+                log.error('countActiveSessions error:', e.message);
+                activeCount = 0;
+            }
+        }
+
+        // Determine the best stream URL from the channel
+        const bestStream = channel.streams.length > 0 ? channel.streams[0] : null;
+        const upstreamUrl = bestStream ? bestStream.url : null;
+
+        if (providerConcurrencyLimit === 0 || activeCount < providerConcurrencyLimit) {
+            // Below limit: create a new session and start the real stream immediately
+            try {
+                const { createSession } = require('./src/streamSessions');
+                const { startRealStream } = require('./src/streamRelay');
+
+                const sessionId = await createSession(userId, id);
+                await startRealStream(sessionId, upstreamUrl);
+
+                // Build the stream object pointing to the relay endpoint
+                const streamsToReturn = channel.streams
+                    .sort((a, b) => b.score - a.score)
+                    .map(stream => ({
+                        name: stream.name,
+                        title: (() => {
+                            const t = new Set();
+                            if (stream.title && stream.title !== 'Direct Stream') stream.title.split(' • ').forEach(x => t.add(x));
+                            if (stream.groupTags) stream.groupTags.split(' • ').forEach(x => t.add(x));
+                            return t.size > 0 ? [...t].join(' • ') : 'Direct Stream';
+                        })(),
+                        url: `${rootUrl}/${userId}/relay/${sessionId}/playlist.m3u8`
+                    }));
+
+                let catchupEntries = [];
+                if (channel.meta.hasCatchup && channel.streams.length > 0) {
+                    try {
+                        const catchupSource = channel.streams.find(s => isCatchupCapableUrl(s.url));
+                        if (catchupSource) {
+                            const declaredDays = Number(channel.meta.catchupDays);
+                            const hoursBack = Number.isFinite(declaredDays) && declaredDays > 0
+                                ? Math.min(Math.max(declaredDays * 24, 48), 7 * 24)
+                                : 48;
+                            catchupEntries = await getCatchupStreams(id, catchupSource.url, hoursBack);
+                        }
+                    } catch (e) {
+                        log.error('Failed to build catchup streams:', e.message);
+                    }
+                }
+
+                return { streams: [...streamsToReturn, ...catchupEntries] };
+            } catch (e) {
+                log.error('Concurrency stream creation error:', e.message);
+                // Fall through to original behavior on error
+            }
+        } else {
+            // At or over the limit: create a new session (which now counts toward total),
+            // find the least-recently-active session to evict, start countdown
+            try {
+                const { createSession, getLeastRecentlyActiveSession, markCountdown } = require('./src/streamSessions');
+                const { startCountdownStream } = require('./src/streamRelay');
+
+                const newSessionId = await createSession(userId, id);
+
+                // Get least recently active session to evict, excluding the new session itself
+                const victimSessionId = await getLeastRecentlyActiveSession(userId, newSessionId);
+                if (victimSessionId) {
+                    // Start countdown on the new session, targeting the victim
+                    await markCountdown(newSessionId, victimSessionId);
+                    await startCountdownStream(newSessionId, CONCURRENCY_EVICTION_COUNTDOWN_MS / 1000);
+                } else {
+                    // Edge case: nothing else to evict, just start the real stream
+                    const { startRealStream } = require('./src/streamRelay');
+                    await startRealStream(newSessionId, upstreamUrl);
+                }
+
+                // Build the stream object pointing to the relay endpoint
+                const streamsToReturn = channel.streams
+                    .sort((a, b) => b.score - a.score)
+                    .map(stream => ({
+                        name: stream.name,
+                        title: (() => {
+                            const t = new Set();
+                            if (stream.title && stream.title !== 'Direct Stream') stream.title.split(' • ').forEach(x => t.add(x));
+                            if (stream.groupTags) stream.groupTags.split(' • ').forEach(x => t.add(x));
+                            return t.size > 0 ? [...t].join(' • ') : 'Direct Stream';
+                        })(),
+                        url: `${rootUrl}/${userId}/relay/${newSessionId}/playlist.m3u8`
+                    }));
+
+                let catchupEntries = [];
+                if (channel.meta.hasCatchup && channel.streams.length > 0) {
+                    try {
+                        const catchupSource = channel.streams.find(s => isCatchupCapableUrl(s.url));
+                        if (catchupSource) {
+                            const declaredDays = Number(channel.meta.catchupDays);
+                            const hoursBack = Number.isFinite(declaredDays) && declaredDays > 0
+                                ? Math.min(Math.max(declaredDays * 24, 48), 7 * 24)
+                                : 48;
+                            catchupEntries = await getCatchupStreams(id, catchupSource.url, hoursBack);
+                        }
+                    } catch (e) {
+                        log.error('Failed to build catchup streams:', e.message);
+                    }
+                }
+
+                return { streams: [...streamsToReturn, ...catchupEntries] };
+            } catch (e) {
+                log.error('Concurrency limit eviction error:', e.message);
+                // Fall through to original behavior on error
+            }
+        }
+    }
+
+    // Original stream mapping (unchanged when CONCURRENCY_LIMIT_ENABLED is false,
+    // or when the above block returns early)
     const streamsToReturn = channel.streams
         .sort((a, b) => b.score - a.score)
         .map(stream => ({
@@ -1799,6 +1939,131 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
     }
 });
 
+// --- Concurrency-limited streaming proxy routes ---
+// These serve HLS playlist and segments generated by the ffmpeg relay
+app.get('/:userId/relay/:sessionId/playlist.m3u8', async (req, res) => {
+    const { configKey: userId, configObj } = await getConfigFromReq(req);
+    const sessionId = req.params.sessionId;
+
+    // Only available when feature is enabled
+    if (!CONCURRENCY_LIMIT_ENABLED) {
+        return res.status(404).send('Not found');
+    }
+
+    try {
+        const { getSession, touchSession } = require('./src/streamSessions');
+        const { getSessionDir, stopFfmpegForSession } = require('./src/streamRelay');
+
+        const session = await getSession(sessionId);
+        if (!session || session.userId !== userId) {
+            return res.status(404).send('Session not found');
+        }
+
+        await touchSession(sessionId, userId);
+
+        // Check if this is a countdown session that has reached its eviction time
+        const startedAt = parseInt(session.startedAt, 10);
+        const status = session.status;
+
+        if (status === 'countdown' && Date.now() - startedAt >= CONCURRENCY_EVICTION_COUNTDOWN_MS) {
+            // Guard against double-handling
+            if (session.status !== 'countdown') {
+                // Already handled by another request
+            } else {
+                const evictionTargetSessionId = session.evictionTargetSessionId;
+                if (evictionTargetSessionId) {
+                    // 1. Stop ffmpeg for the eviction target
+                    await stopFfmpegForSession(evictionTargetSessionId);
+                    // 2. Destroy the eviction target session
+                    const { destroySession } = require('./src/streamSessions');
+                    await destroySession(evictionTargetSessionId, userId);
+                }
+                // 3. Mark this session as active
+                const { markActive } = require('./src/streamSessions');
+                await markActive(sessionId);
+                // 4. Start the real stream for this session's channel
+                await ensureCache(userId, configObj);
+                const ud = userCaches.get(userId);
+                if (ud && ud.channelMap?.has(session.channelId)) {
+                    const channel = ud.channelMap.get(session.channelId);
+                    const bestStream = channel.streams.length > 0 ? channel.streams[0] : null;
+                    const upstreamUrl = bestStream ? bestStream.url : null;
+                    if (upstreamUrl) {
+                        const { startRealStream } = require('./src/streamRelay');
+                        await startRealStream(sessionId, upstreamUrl);
+                    }
+                }
+            }
+        }
+
+        // Serve the playlist.m3u8 file with retries
+        const sessionDir = getSessionDir(sessionId);
+        const playlistPath = path.join(sessionDir, 'playlist.m3u8');
+
+        let retries = 10;
+        let playlistContent = null;
+
+        while (retries > 0) {
+            try {
+                if (fs.existsSync(playlistPath)) {
+                    playlistContent = fs.readFileSync(playlistPath, 'utf8');
+                    break;
+                }
+            } catch (e) {
+                // File might be temporarily unavailable
+            }
+            await new Promise(r => setTimeout(r, 200));
+            retries--;
+        }
+
+        if (!playlistContent) {
+            return res.status(503).send('Playlist not ready');
+        }
+
+        res.set('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(playlistContent);
+    } catch (e) {
+        log.error('Relay playlist error:', e.message);
+        res.status(500).send('Internal server error');
+    }
+});
+
+app.get('/:userId/relay/:sessionId/seg_:num.ts', async (req, res) => {
+    const { configKey: userId, configObj } = await getConfigFromReq(req);
+    const sessionId = req.params.sessionId;
+    const num = req.params.num;
+
+    // Only available when feature is enabled
+    if (!CONCURRENCY_LIMIT_ENABLED) {
+        return res.status(404).send('Not found');
+    }
+
+    try {
+        const { getSession, touchSession } = require('./src/streamSessions');
+        const { getSessionDir } = require('./src/streamRelay');
+
+        const session = await getSession(sessionId);
+        if (!session || session.userId !== userId) {
+            return res.status(404).send('Session not found');
+        }
+
+        await touchSession(sessionId, userId);
+
+        const sessionDir = getSessionDir(sessionId);
+        const segmentPath = path.join(sessionDir, `seg_${num}.ts`);
+
+        if (!fs.existsSync(segmentPath)) {
+            return res.status(404).send('Segment not found');
+        }
+
+        res.set('Content-Type', 'video/mp2t');
+        res.sendFile(segmentPath);
+    } catch (e) {
+        log.error('Relay segment error:', e.message);
+        res.status(500).send('Internal server error');
+    }
+});
+
 // Poster route - user system (with rate limiting)
 app.get('/:userId/poster/:id.png', posterLimiter, async (req, res) => {
     const { configKey, configObj } = await getConfigFromReq(req);
@@ -1981,6 +2246,9 @@ const PORT = process.env.PORT || 3000;
 // CLUSTER_WORKERS. Zero/1 = single-process (cluster disabled).
 const os = require('os');
 const CLUSTER_WORKERS = process.env.CLUSTER_WORKERS ? parseInt(process.env.CLUSTER_WORKERS, 10) : 0;
+const CONCURRENCY_LIMIT_ENABLED = process.env.CONCURRENCY_LIMIT_ENABLED === 'true';
+const CONCURRENCY_EVICTION_COUNTDOWN_MS = parseInt(process.env.CONCURRENCY_EVICTION_COUNTDOWN_MS || '15000', 10);
+const CONCURRENCY_SESSION_IDLE_TIMEOUT_MS = parseInt(process.env.CONCURRENCY_SESSION_IDLE_TIMEOUT_MS || '45000', 10);
 const workercount = CLUSTER_WORKERS > 1
     ? CLUSTER_WORKERS
     : (process.env.CLUSTER_WORKERS === 'auto' ? Math.max(1, Math.floor(os.cpus().length / 2)) : 1);
@@ -2131,6 +2399,14 @@ if (clusterObj && clusterObj.isWorker === false && workercount > 1) {
             }
         }
     }, 15 * 60 * 1000);
+
+    // Concurrency limiting: reap idle sessions every 15 seconds
+    if (CONCURRENCY_LIMIT_ENABLED) {
+        setInterval(() => {
+            const { reapIdleSessions } = require('./src/streamSessions');
+            reapIdleSessions(CONCURRENCY_SESSION_IDLE_TIMEOUT_MS).catch(e => log.error('[ConcurrencyReaper] failed:', e.message));
+        }, 15000);
+    }
 
     // Guarantees every REGISTERED user's playlist gets pulled fresh from their
     // provider at least once every 24 hours, independent of activity level.

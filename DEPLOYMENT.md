@@ -53,3 +53,61 @@ Render's cheapest paid tier removes the sleep behavior. Neon/Upstash paid tiers 
 - `.env.example` — environment variable templates grouped by category
 - `render.yaml` — Render Blueprint configuration
 - `DEPLOYMENT.md` — this file
+
+---
+
+## Concurrency limiting (optional)
+
+IPTVo can sit in the middle of every channel stream to track how many streams a user has open and enforce their IPTV provider's concurrency limit. This is **opt-in** and **disabled by default**.
+
+### What it does
+
+When enabled, instead of handing Stremio a raw provider URL, the server creates an HLS relay for each stream. This lets the server:
+
+1. **Track active streams per user** — counts how many streams each user currently has open.
+2. **Enforce provider limits** — each user configures `providerConcurrencyLimit` in the dashboard (0 = unlimited, which is the default).
+3. **Show a countdown instead of an error** — when a user at their limit opens a new channel, they see a live countdown video ("Closing oldest stream in Ns") instead of a playback error.
+4. **Seamless splice** — if they stay past the countdown, the server kills their least-recently-active stream and continues playing the new channel in the **exact same video stream** — no reload, no new URL.
+5. **Cancel on leave** — if they leave the countdown screen before it finishes, the eviction is cancelled and the original stream keeps playing untouched.
+
+### Requirements
+
+- **ffmpeg must be installed** — the Dockerfile includes it. If running outside Docker, install ffmpeg on the host.
+- **Redis required** — session tracking uses Redis (already a required dependency).
+- **Bandwidth consideration** — enabling this means ALL streams (including ones that wouldn't otherwise need processing) are relayed through your server rather than played directly from the provider. This increases your server's bandwidth usage.
+
+### Configuration
+
+**Environment variables** (add to `.env`):
+
+```bash
+# Enable the feature (default: false)
+CONCURRENCY_LIMIT_ENABLED=true
+
+# Countdown duration in milliseconds (default: 15000 = 15 seconds)
+CONCURRENCY_EVICTION_COUNTDOWN_MS=15000
+
+# Idle timeout for active sessions in milliseconds (default: 45000 = 45 seconds)
+CONCURRENCY_SESSION_IDLE_TIMEOUT_MS=45000
+```
+
+**Per-user setting** (in the dashboard, Step 1 — Provider):
+- **Max concurrent streams your provider allows** — numeric input, default 0 (unlimited)
+- Set this to whatever your IPTV provider allows (e.g., 1, 2, 3...). If 0, no limit is enforced.
+
+### How it works
+
+1. When Stremio requests a stream, the server checks the user's `providerConcurrencyLimit` and current active session count.
+2. If under the limit (or limit is 0): creates a relay session, starts ffmpeg remuxing the upstream URL to HLS, returns the relay URL.
+3. If at/over the limit: creates a relay session, starts a countdown video (black screen with live countdown text), returns the same relay URL shape.
+4. The Stremio player polls the relay's `playlist.m3u8` and segment files. On each request, the server updates the session's "last activity" timestamp.
+5. If the countdown finishes: server stops the ffmpeg for the evicted session, marks the new session as active, starts the real stream remux (appending to the existing playlist for seamless splice).
+6. If the viewer leaves during countdown: the countdown session goes idle, the reaper (runs every 15s) detects it after a short grace period (4s), cleans up only the countdown session, and leaves the eviction target untouched.
+7. Background reaper (every 15s) also cleans up any sessions idle for longer than `CONCURRENCY_SESSION_IDLE_TIMEOUT_MS` (default 45s for active, 4s for countdown).
+
+### Notes
+
+- The feature is completely opt-in. When `CONCURRENCY_LIMIT_ENABLED=false` (default), streaming behaves exactly as before — no changes to existing behavior.
+- The countdown video is generated on-the-fly by ffmpeg using a black background with drawtext overlay.
+- Real streams are remuxed (not transcoded) with `-c copy` — no quality loss, minimal CPU.
+- Session state is stored in Redis with a 4-hour TTL safety net.
