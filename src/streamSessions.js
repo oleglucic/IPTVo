@@ -3,22 +3,12 @@
 // Uses the existing Redis connection pattern from redisCache.js — same
 // REDIS_URL, same ioredis configuration, shared client across modules.
 
-const Redis = require('ioredis');
-const { hasRedis } = require('./redisCache');
+const crypto = require('crypto');
+const { hasRedis, redisClient } = require('./redisCache');
 const log = require('./logger').for('streamSessions');
 
-const redisUrl = process.env.REDIS_URL;
-let redis = null;
-
-if (hasRedis && redisUrl) {
-    redis = new Redis(redisUrl, {
-        maxRetriesPerRequest: 2,
-        retryStrategy: (times) => Math.min(times * 200, 2000),
-        protocol: 2,
-    });
-    redis.on('error', (e) => log.error('Redis connection error:', e.message));
-    redis.on('connect', () => log.info('Redis connected for session tracking.'));
-} else {
+const redis = hasRedis ? redisClient : null;
+if (!redis) {
     log.warn('Redis not available for session tracking - concurrency limiting disabled.');
 }
 
@@ -41,11 +31,7 @@ const SESSION_TTL_SECONDS = 4 * 60 * 60; // 4 hours
  * @returns {string}
  */
 function v4Uuid() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        const r = (Math.random() * 16) | 0;
-        const v = c === 'x' ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-    });
+    return crypto.randomUUID();
 }
 
 /**
@@ -93,45 +79,13 @@ async function removeFromSortedSet(userId, sessionId) {
 }
 
 /**
- * Scans all session sorted sets using SCAN (non-blocking).
- * @param {Function} callback - Called for each found session {userId, sessionId, score}
- * @param {number} cursor - SCAN cursor, start at '0'
- * @returns {Promise<{cursor: string, finished: boolean}>}
- */
-async function scanSessions(cursor, callback) {
-    if (!redis) return { cursor: '0', finished: true };
-    try {
-        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', SESSION_SORTED_SET_PREFIX + '*', 'COUNT', 50);
-        if (keys && keys.length) {
-            for (const key of keys) {
-                // key format: sessions:<userId>
-                const userId = key.substring(SESSION_SORTED_SET_PREFIX.length);
-                for (const sessionId of keys) {
-                    // Wait, this is wrong - keys is an array, but I'm iterating over key values
-                    // Actually, scan returns keys like "sessions:user123"
-                    // But we need the userId from the key, and then we need to ZRANGE the sorted set
-                    // Let me reconsider the approach
-                }
-            }
-        }
-        return { cursor: String(nextCursor), finished: nextCursor === '0' };
-    } catch (e) {
-        log.error('scanSessions error:', e.message);
-        return { cursor: '0', finished: true };
-    }
-}
-
-// Actually, let me rethink the reapIdleSessions approach.
-// Instead of scanning sessions with SCAN, I'll use a different approach.
-// Since we need to find ALL sessions across ALL users, and check their lastActivityAt scores,
-
-/**
  * Creates a new session for a user channel.
  * @param {string} userId
  * @param {string} channelId
- * @returns {Promise<string>} The new sessionId.
+ * @returns {Promise<string|null>} The new sessionId, or null without Redis.
  */
 async function createSession(userId, channelId) {
+    if (!redis) return null;
     const sessionId = v4Uuid();
     const now = Date.now();
 
@@ -147,6 +101,59 @@ async function createSession(userId, channelId) {
     await addToSortedSet(userId, sessionId, now);
 
     log.info(`Created session ${sessionId} for user ${userId}, channel ${channelId}`);
+    return sessionId;
+}
+
+/**
+ * Atomically reserves an active provider slot and creates its session.
+ * Returns null when the user's limit has already been reached.
+ * @param {string} userId
+ * @param {string} channelId
+ * @param {number} limit
+ * @returns {Promise<string|null>}
+ */
+async function reserveSessionSlot(userId, channelId, limit) {
+    if (!redis) return null;
+    // Defensive: the Lua script below rejects with `ZCARD >= limit`, which
+    // would reject EVERY reservation if limit were 0 or negative (0 was
+    // never meant to reach this function at all — the caller in server.js
+    // treats 0 as "unlimited" and calls createSession() directly instead —
+    // but that's a call-site convention, not something this function can
+    // assume forever. Falling through to createSession() here means this
+    // function is correct on its own terms regardless of what any caller
+    // does, rather than silently locking out every "unlimited" user if a
+    // future caller ever invokes this directly with limit=0.
+    if (!Number.isFinite(limit) || limit <= 0) {
+        return createSession(userId, channelId);
+    }
+
+    const sessionId = v4Uuid();
+    const now = Date.now();
+    const reserved = await redis.eval(
+        `if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
+            return 0
+        end
+        redis.call('HSET', KEYS[2],
+            'userId', ARGV[2],
+            'channelId', ARGV[3],
+            'startedAt', ARGV[4],
+            'status', 'active')
+        redis.call('EXPIRE', KEYS[2], ARGV[5])
+        redis.call('ZADD', KEYS[1], ARGV[4], ARGV[6])
+        return 1`,
+        2,
+        SESSION_SORTED_SET_PREFIX + userId,
+        SESSION_HASH_PREFIX + sessionId,
+        limit,
+        userId,
+        channelId,
+        now,
+        SESSION_TTL_SECONDS,
+        sessionId
+    );
+
+    if (reserved !== 1) return null;
+    log.info(`Reserved session ${sessionId} for user ${userId}, channel ${channelId}`);
     return sessionId;
 }
 
@@ -242,14 +249,22 @@ async function markCountdown(sessionId, evictionTargetSessionId) {
 async function markActive(sessionId) {
     if (!redis) return;
     try {
-        await writeSessionHash(sessionId, {
-            status: 'active',
-            evictionTargetSessionId: null,
-        });
+        await writeSessionHash(sessionId, { status: 'active' });
+        await redis.hdel(SESSION_HASH_PREFIX + sessionId, 'evictionTargetSessionId');
         log.info(`Session ${sessionId} marked as active`);
     } catch (e) {
         log.error('markActive error:', e.message);
     }
+}
+
+/**
+ * Claims countdown eviction handling for one request across all workers.
+ * @param {string} sessionId
+ * @returns {Promise<boolean>}
+ */
+async function claimEviction(sessionId) {
+    if (!redis) return false;
+    return (await redis.hsetnx(SESSION_HASH_PREFIX + sessionId, 'evictionHandled', '1')) === 1;
 }
 
 /**
@@ -336,7 +351,10 @@ async function reapIdleSessions(idleTimeoutMs) {
 
                             // Get session to check its status
                             const session = await getSession(sessionId);
-                            if (!session) continue;
+                            if (!session) {
+                                await removeFromSortedSet(userId, sessionId);
+                                continue;
+                            }
 
                             const status = session.status;
                             let threshold;
@@ -354,7 +372,7 @@ async function reapIdleSessions(idleTimeoutMs) {
                                 try {
                                     // For countdown sessions, only clean up the countdown session itself
                                     // Do NOT touch the evictionTargetSessionId - the original stream keeps playing
-                                    const { stopFfmpegForSession } = require('./src/streamRelay');
+                                    const { stopFfmpegForSession } = require('./streamRelay');
                                     await stopFfmpegForSession(sessionId);
 
                                     // Destroy the session
@@ -379,11 +397,13 @@ async function reapIdleSessions(idleTimeoutMs) {
 
 module.exports = {
     createSession,
+    reserveSessionSlot,
     touchSession,
     countActiveSessions,
     getLeastRecentlyActiveSession,
     markCountdown,
     markActive,
+    claimEviction,
     getSession,
     destroySession,
     reapIdleSessions,
