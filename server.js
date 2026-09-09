@@ -1585,17 +1585,45 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
         }
     };
 
-    const buildRelayResponse = async (sessionId, userId) => ({
-        streams: [
-            {
-                name: bestStream.name,
-                title: streamTitle(bestStream),
-                url: `${rootUrl}/${userId}/relay/${sessionId}/playlist.m3u8`
-            },
-            ...await buildCatchupEntries()
-        ]
-    });
+    const buildRelayResponse = async (sessionId, userId) => {
+        // When transcoding is enabled, Stremio receives the master playlist URL
+        // instead of a single-rendition relay URL. This works independently of
+        // CONCURRENCY_LIMIT_ENABLED — the two flags are orthogonal.
+        const streamUrl = TRANSCODE_ENABLED
+            ? `${rootUrl}/${userId}/relay/master/${id}/master.m3u8`
+            : `${rootUrl}/${userId}/relay/${sessionId}/playlist.m3u8`;
 
+        return {
+            streams: [
+                {
+                    name: bestStream.name,
+                    title: streamTitle(bestStream),
+                    url: streamUrl
+                },
+                ...await buildCatchupEntries()
+            ]
+        };
+    };
+
+    // ── Transcoding (optional, opt-in) ──────────────────────────────────────
+    // If TRANSCODE_ENABLED is true, use the master playlist URL instead of a
+    // single-rendition relay URL. This is independent of CONCURRENCY_LIMIT_ENABLED.
+    if (TRANSCODE_ENABLED && upstreamUrl) {
+        const { createSession } = require('./src/streamSessions');
+        const sessionId = await createSession(configKey, id);
+
+        if (sessionId) {
+            const { startRealStream } = require('./src/streamRelay');
+            // Start with 'source' rendition — the player will lazily request
+            // other renditions, starting their ffmpeg processes on demand.
+            await startRealStream(sessionId, upstreamUrl, 'source');
+            return await buildRelayResponse(sessionId, configKey);
+        }
+    }
+
+    // ── Concurrency-limited streaming proxy (Phase 1) ──────────────────────
+    // If CONCURRENCY_LIMIT_ENABLED is true, create a relay session and start
+    // ffmpeg remuxing the upstream URL to HLS, returning the relay URL.
     if (CONCURRENCY_LIMIT_ENABLED && upstreamUrl) {
         const userId = configKey;
         const resolvedConfig = (ud && ud._configObj) || configObj;
@@ -1861,6 +1889,75 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
     }
 });
 
+// --- Transcoding master playlist route (Phase 2) ---
+// When TRANSCODE_ENABLED is true, Stremio is pointed at this master playlist
+// instead of a single-rendition relay URL. The ladder is built lazily — only
+// the requested rendition's ffmpeg process starts when its playlist.m3u8 is
+// first requested by the player. Sessions are created up front but are lightweight
+// Redis entries; they are NOT subject to CONCURRENCY_LIMIT_ENABLED's per-user limit.
+app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
+    if (!TRANSCODE_ENABLED) return res.status(404).send('Not found');
+
+    const userId = req.params.userId;
+    const channelId = req.params.channelId;
+
+    // Validate channelId using the existing UUID_RE from server.js scope
+    if (!UUID_RE.test(channelId)) return res.status(400).send('Invalid channel ID');
+
+    // Resolve the effective config for this user (same logic as the stream selection code)
+    const { configKey: resolvedUserId, configObj } = await getConfigFromReq(req);
+
+    // Look up the upstream URL for this channel from the user's channel cache
+    let ud = userCaches.get(resolvedUserId);
+    if (!ud) {
+        // Cold start — ensure a cache entry exists
+        await ensureCache(resolvedUserId, configObj);
+        ud = userCaches.get(resolvedUserId);
+    }
+    if (!ud || !ud.channelMap?.has(channelId)) return res.status(404).send('Channel not found');
+
+    const channel = ud.channelMap.get(channelId);
+    const bestStream = [...channel.streams].sort((a, b) => b.score - a.score)[0] || null;
+    const upstreamUrl = bestStream ? bestStream.url : null;
+    if (!upstreamUrl) return res.status(404).send('No upstream URL for channel');
+
+    // Build the ABR ladder: source first, then each TRANSCODE_RENDITIONS entry from highest to lowest
+    const renditions = ['source', ...TRANSCODE_RENDITIONS.sort((a, b) => b - a)];
+
+    // Create one session per (channel, rendition) pair using plain createSession
+    // (no reserveSessionSlot — these are internal ABR ladder sessions)
+    const sessionIds = [];
+    for (const rendition of renditions) {
+        const sid = await require('./src/streamSessions').createSession(resolvedUserId, channelId, rendition);
+        if (sid) sessionIds.push(sid);
+    }
+
+    // Build the master playlist text
+    const rootUrl = assetRoot(req);
+    const lines = ['#EXTM3U'];
+
+    // Source entry (first)
+    {
+        const width = 1920;
+        const height = 1080;
+        const bandwidth = 8000000;
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height}`);
+        lines.push(`${rootUrl}/${userId}/relay/master/${channelId}/playlist.m3u8`);
+    }
+
+    // Each transcoded rendition (from highest to lowest)
+    for (const rendition of TRANSCODE_RENDITIONS.sort((a, b) => b - a)) {
+        const width = Math.round(rendition * 16 / 9);
+        const height = rendition;
+        const bandwidthMap = { 1080: 5000000, 720: 3000000, 480: 1500000, 360: 800000 };
+        const bandwidth = bandwidthMap[rendition] || 5000000; // fallback
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height}`);
+        lines.push(`${rootUrl}/${userId}/relay/master/${channelId}/${sessionIds.shift()}/playlist.m3u8`);
+    }
+
+    res.type('application/vnd.apple.mpegurl').send(lines.join('\n'));
+});
+
 // --- Concurrency-limited streaming proxy routes ---
 // These serve HLS playlist and segments generated by the ffmpeg relay
 app.get('/:userId/relay/:sessionId/playlist.m3u8', async (req, res) => {
@@ -1921,7 +2018,10 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', async (req, res) => {
                     const upstreamUrl = bestStream ? bestStream.url : null;
                     if (upstreamUrl) {
                         const { startRealStream } = require('./src/streamRelay');
-                        await startRealStream(sessionId, upstreamUrl);
+                        const startResult = await startRealStream(sessionId, upstreamUrl, session.rendition);
+                        if (startResult && startResult.error === 'capacity') {
+                            return res.status(503).send('Transcode capacity reached, try a different quality');
+                        }
                     }
                 }
             }
@@ -2198,6 +2298,14 @@ const CLUSTER_WORKERS = process.env.CLUSTER_WORKERS ? parseInt(process.env.CLUST
 const CONCURRENCY_LIMIT_ENABLED = process.env.CONCURRENCY_LIMIT_ENABLED === 'true';
 const CONCURRENCY_EVICTION_COUNTDOWN_MS = parseInt(process.env.CONCURRENCY_EVICTION_COUNTDOWN_MS || '15000', 10);
 const CONCURRENCY_SESSION_IDLE_TIMEOUT_MS = parseInt(process.env.CONCURRENCY_SESSION_IDLE_TIMEOUT_MS || '45000', 10);
+const TRANSCODE_ENABLED = process.env.TRANSCODE_ENABLED === 'true';
+const TRANSCODE_RENDITIONS = (process.env.TRANSCODE_RENDITIONS || '1080,720,480,360')
+    .split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
+const TRANSCODE_CODEC = ['h264', 'hevc', 'av1'].includes(process.env.TRANSCODE_CODEC) ? process.env.TRANSCODE_CODEC : 'h264';
+const TRANSCODE_HWACCEL = ['none', 'nvenc', 'qsv', 'vaapi'].includes(process.env.TRANSCODE_HWACCEL) ? process.env.TRANSCODE_HWACCEL : 'none';
+const TRANSCODE_CRF = parseInt(process.env.TRANSCODE_CRF || '23', 10);
+const TRANSCODE_PRESET = process.env.TRANSCODE_PRESET || 'veryfast';
+const TRANSCODE_MAX_CONCURRENT_JOBS = parseInt(process.env.TRANSCODE_MAX_CONCURRENT_JOBS || '2', 10);
 const workercount = CLUSTER_WORKERS > 1
     ? CLUSTER_WORKERS
     : (process.env.CLUSTER_WORKERS === 'auto' ? Math.max(1, Math.floor(os.cpus().length / 2)) : 1);

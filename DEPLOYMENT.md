@@ -111,3 +111,86 @@ CONCURRENCY_SESSION_IDLE_TIMEOUT_MS=45000
 - The countdown video is generated on-the-fly by ffmpeg using a black background with drawtext overlay.
 - Real streams are remuxed (not transcoded) with `-c copy` — no quality loss, minimal CPU.
 - Session state is stored in Redis with a 4-hour TTL safety net.
+
+## Transcoding (optional)
+
+IPTVo can perform on-the-fly video transcoding to generate multiple ABR (Adaptive Bitrate Ladder) renditions of each stream. This is **opt-in** and **disabled by default**.
+
+### What it does
+
+When enabled, instead of handing Stremio a single raw provider URL or a single-rendition relay URL, the server generates an HLS master playlist with up to N video renditions at different target heights. The Stremio player's built-in ABR logic will automatically select the appropriate quality based on network conditions, switching between renditions seamlessly.
+
+### Requirements
+
+- **ffmpeg must be installed** — the Dockerfile includes it. If running outside Docker, install ffmpeg on the host.
+- **Redis required** — session tracking uses Redis (already a required dependency).
+- **CPU or hardware acceleration** — transcoding is computationally expensive. `h264` with `hwaccel=none` (software encoding) is the only reasonable combination on modest hardware. `hevc` or `av1` codecs require real CPU or GPU hardware acceleration (`nvenc`, `qsv`, or `vaapi`) — do not enable those on shared, weak, or free-tier hosting, as they will cause severe performance degradation or overheating.
+- **`TRANSCODE_MAX_CONCURRENT_JOBS`** caps the number of real encodes running simultaneously server-wide, regardless of how many different channels or users are involved.
+
+### Configuration
+
+**Environment variables** (add to `.env`):
+
+```bash
+# Enable configurable transcoding (opt-in, independent of
+# CONCURRENCY_LIMIT_ENABLED). Default: 'false'.
+TRANSCODE_ENABLED=true
+
+# Comma-separated list of target heights (pixels) for the ABR ladder,
+# e.g. '1080,720,480,360'. Default: '1080,720,480,360'.
+TRANSCODE_RENDITIONS=1080,720,480,360
+
+# Video codec to use for transcoding.
+#   'h264', 'hevc', or 'av1'. Default: 'h264'.
+#   hevc/av1 need real CPU or hardware acceleration (TRANSCODE_HWACCEL) — do
+#   not enable on weak/shared/free-tier hardware.
+TRANSCODE_CODEC=h264
+
+# Hardware acceleration method.
+#   'none' (software / CPU-only), 'nvenc' (NVIDIA GPU), 'qsv' (Intel Quick Sync),
+#   or 'vaapi' (AMD/Intel VAAPI). Default: 'none'.
+TRANSCODE_HWACCEL=none
+
+# Constant Rate Factor for quality control (lower = better).
+#   Valid for software encoding. Default: 23.
+TRANSCODE_CRF=23
+
+# Encoding preset (only used with hwaccel='none').
+#   x264-style: 'veryfast', 'fast', 'medium', 'slow', 'veryslow'.
+#   nvenc: maps 'veryfast'→p1, others passed through.
+#   qsv/vaapi: free-style preset names. Default: 'veryfast'.
+TRANSCODE_PRESET=veryfast
+
+# global cap across ALL users on real encodes (not remux/passthrough) —
+# protects this server's CPU regardless of how many different people are
+# streaming. Default: 2.
+TRANSCODE_MAX_CONCURRENT_JOBS=2
+```
+
+### How it works
+
+1. When a viewer opens a channel, the server returns the master playlist URL
+   (`/relay/master/:channelId/master.m3u8`) instead of a single-rendition relay URL.
+2. The Stremio player fetches the master playlist, which lists available renditions
+   (source + transcoded heights from `TRANSCODE_RENDITIONS`).
+3. When the player requests a specific rendition's `playlist.m3u8`, the server lazily
+   starts an ffmpeg process to transcode that rendition (if not already running).
+4. The global `TRANSCODE_MAX_CONCURRENT_JOBS` cap limits how many real encodes can
+   run simultaneously server-wide. If the cap is reached, the player's request for a
+   given quality gets a 503 response, and the player naturally falls back to a different
+   quality listed in the master playlist.
+5. Audio is never re-encoded (`-c:a copy`) — only video is transcoded.
+6. Renditions are generated lazily — only the qualities actually requested by viewers
+   will have active ffmpeg processes.
+
+### Notes
+
+- The feature is completely opt-in. When `TRANSCODE_ENABLED=false` (default), streaming
+  behaves exactly as before — no changes to existing behavior.
+- `h264` with `hwaccel=none` is the only combination reasonable on modest hardware.
+- `hevc`/`av1` codecs require real CPU or hardware acceleration — do not enable those
+  on shared, weak, or free-tier hosting.
+- Renditions are generated lazily (only when a viewer's player actually requests that
+  specific quality) — no ffmpeg processes are started until needed.
+- `TRANSCODE_MAX_CONCURRENT_JOBS` caps real encodes server-wide regardless of how many
+  different channels/users are involved.
