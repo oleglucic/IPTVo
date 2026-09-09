@@ -82,12 +82,14 @@ async function removeFromSortedSet(userId, sessionId) {
  * Creates a new session for a user channel.
  * @param {string} userId
  * @param {string} channelId
+ * @param {string} [rendition] - optional rendition value, defaults to 'source'
  * @returns {Promise<string|null>} The new sessionId, or null without Redis.
  */
-async function createSession(userId, channelId) {
+async function createSession(userId, channelId, rendition) {
     if (!redis) return null;
     const sessionId = v4Uuid();
     const now = Date.now();
+    const r = rendition || 'source';
 
     // Write the hash
     await writeSessionHash(sessionId, {
@@ -95,6 +97,7 @@ async function createSession(userId, channelId) {
         channelId,
         startedAt: now,
         status: 'active',
+        rendition: r,
     });
 
     // Add to sorted set
