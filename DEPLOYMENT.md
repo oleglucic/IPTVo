@@ -92,6 +92,7 @@ CONCURRENCY_SESSION_IDLE_TIMEOUT_MS=45000
 ```
 
 **Per-user setting** (in the dashboard, Step 1 — Provider):
+
 - **Max concurrent streams your provider allows** — numeric input, default 0 (unlimited)
 - Set this to whatever your IPTV provider allows (e.g., 1, 2, 3...). If 0, no limit is enforced.
 
@@ -116,18 +117,18 @@ CONCURRENCY_SESSION_IDLE_TIMEOUT_MS=45000
 
 IPTVo can perform on-the-fly video transcoding to generate multiple ABR (Adaptive Bitrate Ladder) renditions of each stream. This is **opt-in** and **disabled by default**.
 
-### What it does
+### How transcoding works
 
 When enabled, instead of handing Stremio a single raw provider URL or a single-rendition relay URL, the server generates an HLS master playlist with up to N video renditions at different target heights. The Stremio player's built-in ABR logic will automatically select the appropriate quality based on network conditions, switching between renditions seamlessly.
 
-### Requirements
+### Transcoding requirements
 
 - **ffmpeg must be installed** — the Dockerfile includes it. If running outside Docker, install ffmpeg on the host.
 - **Redis required** — session tracking uses Redis (already a required dependency).
 - **CPU or hardware acceleration** — transcoding is computationally expensive. `h264` with `hwaccel=none` (software encoding) is the only reasonable combination on modest hardware. `hevc` or `av1` codecs require real CPU or GPU hardware acceleration (`nvenc`, `qsv`, or `vaapi`) — do not enable those on shared, weak, or free-tier hosting, as they will cause severe performance degradation or overheating.
 - **`TRANSCODE_MAX_CONCURRENT_JOBS`** caps the number of real encodes running simultaneously server-wide, regardless of how many different channels or users are involved.
 
-### Configuration
+### Transcoding configuration
 
 **Environment variables** (add to `.env`):
 
@@ -167,7 +168,7 @@ TRANSCODE_PRESET=veryfast
 TRANSCODE_MAX_CONCURRENT_JOBS=2
 ```
 
-### How it works
+### How transcoding is implemented
 
 1. When a viewer opens a channel, the server returns the master playlist URL
    (`/relay/master/:channelId/master.m3u8`) instead of a single-rendition relay URL.
@@ -183,7 +184,7 @@ TRANSCODE_MAX_CONCURRENT_JOBS=2
 6. Renditions are generated lazily — only the qualities actually requested by viewers
    will have active ffmpeg processes.
 
-### Notes
+### Transcoding notes
 
 - The feature is completely opt-in. When `TRANSCODE_ENABLED=false` (default), streaming
   behaves exactly as before — no changes to existing behavior.
