@@ -72,6 +72,21 @@ const activeProcesses = new Map();
 // Global cap: only counts REAL encodes (rendition !== 'source'), never remux/passthrough
 let activeTranscodeJobCount = 0;
 
+/** Drain ffmpeg stderr without unbounded accumulation (CodeRabbit memory note). */
+function attachStderrDrain(ffmpeg, sessionId, label) {
+    let tail = '';
+    const MAX = 4096;
+    ffmpeg.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        tail = (tail + chunk).slice(-MAX);
+    });
+    ffmpeg.on('close', (code) => {
+        if (code && code !== 0 && tail) {
+            log.warn(`[Relay ${sessionId}] ${label} stderr tail: ${tail.slice(-500)}`);
+        }
+    });
+}
+
 function ensureSessionDir(sessionId) {
     const dir = safeSessionPath(sessionId);
     if (!dir) {
@@ -155,11 +170,7 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             }
         );
 
-        let stderrBuffer = '';
-        ffmpeg.stderr.on('data', (data) => {
-            stderrBuffer += data.toString();
-            // Log periodically to avoid flooding, or on exit
-        });
+        attachStderrDrain(ffmpeg, sessionId, 'transcode');
 
         ffmpeg.on('close', (code) => {
             log.info(`[Relay ${sessionId}] ffmpeg closed with code ${code}`);
@@ -207,11 +218,7 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             }
         );
 
-        let stderrBuffer = '';
-        ffmpeg.stderr.on('data', (data) => {
-            stderrBuffer += data.toString();
-            // Log periodically to avoid flooding, or on exit
-        });
+        attachStderrDrain(ffmpeg, sessionId, 'remux');
 
         ffmpeg.on('close', (code) => {
             log.info(`[Relay ${sessionId}] ffmpeg closed with code ${code}`);
@@ -264,10 +271,7 @@ function startCountdownStream(sessionId, countdownSeconds) {
         }
     );
 
-    let stderrBuffer = '';
-    ffmpeg.stderr.on('data', (data) => {
-        stderrBuffer += data.toString();
-    });
+    attachStderrDrain(ffmpeg, sessionId, 'countdown');
 
     ffmpeg.on('close', (code) => {
         log.info(`[Relay ${sessionId}] countdown ffmpeg closed with code ${code}`);
