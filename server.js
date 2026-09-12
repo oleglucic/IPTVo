@@ -2138,8 +2138,14 @@ app.get('/:userId/relay/:sessionId/seg_:num.ts', relayLimiter, async (req, res) 
         await touchSession(sessionId, userId);
 
         const sessionDir = getSessionDir(sessionId);
-        // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID above
-        const segmentPath = path.join(sessionDir, `seg_${num}.ts`);
+        if (!sessionDir) {
+            return res.status(404).send('Session not found');
+        }
+        // path.resolve + startsWith: CodeQL-recognized path sanitizer
+        const segmentPath = path.resolve(sessionDir, `seg_${num}.ts`);
+        if (!segmentPath.startsWith(sessionDir + path.sep)) {
+            return res.status(404).send('Segment not found');
+        }
 
         // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID above
         if (!fs.existsSync(segmentPath)) {
