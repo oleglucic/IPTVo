@@ -1,21 +1,63 @@
 // streamRelay.js
 // Manages one ffmpeg child process per active session.
 // One HLS subfolder per session under repo-root cache/hls/.
-// Uses child_process.spawn, fs, path.
 
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger').for('streamRelay');
+const { hasRedis, redisClient } = require('./redisCache');
+const redis = hasRedis ? redisClient : null;
 
-// --- HDR detection ---
+const TRANSCODE_JOBS_KEY = 'transcode:activeJobs';
+
+async function reserveTranscodeSlot(maxJobs) {
+    if (maxJobs === undefined || maxJobs === null) return true;
+    const limit = Number(maxJobs);
+    if (!Number.isFinite(limit) || limit <= 0) return true;
+
+    if (!redis) {
+        if (activeTranscodeJobCount >= limit) return false;
+        activeTranscodeJobCount++;
+        return true;
+    }
+    try {
+        const ok = await redis.eval(
+            `local c = tonumber(redis.call('GET', KEYS[1]) or '0')
+            if c >= tonumber(ARGV[1]) then return 0 end
+            redis.call('INCR', KEYS[1])
+            return 1`,
+            1,
+            TRANSCODE_JOBS_KEY,
+            limit
+        );
+        return ok === 1;
+    } catch (e) {
+        log.error('reserveTranscodeSlot:', e.message);
+        return false;
+    }
+}
+
+async function releaseTranscodeSlot() {
+    if (!redis) {
+        activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
+        return;
+    }
+    try {
+        await redis.eval(
+            `local c = tonumber(redis.call('GET', KEYS[1]) or '0')
+            if c <= 0 then redis.call('SET', KEYS[1], '0') return 0 end
+            return redis.call('DECR', KEYS[1])`,
+            1,
+            TRANSCODE_JOBS_KEY
+        );
+    } catch (e) {
+        log.error('releaseTranscodeSlot:', e.message);
+    }
+}
+
 /**
- * Probes a stream URL to determine if it carries HDR video (PQ/HLG transfer
- * characteristics). Times out and returns false (assume SDR) rather than
- * hanging — an HDR-detection failure should never block a stream from
- * starting, it should just fall back to treating it as SDR.
- * @param {string} upstreamUrl
- * @returns {Promise<boolean>}
+ * @returns {Promise<string|null>} smpte2084 | arib-std-b67 | null
  */
 async function detectHdr(upstreamUrl) {
     try {
@@ -31,14 +73,14 @@ async function detectHdr(upstreamUrl) {
             { timeout: 5000 }
         );
         const data = JSON.parse(result.stdout);
-        if (data.streams && data.streams[0] && data.streams[0].color_transfer) {
-            const transfer = data.streams[0].color_transfer;
-            return transfer === 'smpte2084' || transfer === 'arib-std-b67';
+        const transfer = data.streams && data.streams[0] && data.streams[0].color_transfer;
+        if (transfer === 'smpte2084' || transfer === 'arib-std-b67') {
+            return transfer;
         }
-        return false;
+        return null;
     } catch (e) {
         console.warn(`[HDR Detect] ${e.message || 'unknown error'}`);
-        return false;
+        return null;
     }
 }
 
@@ -108,9 +150,13 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
     if (rendition !== 'source') {
         const { buildVideoEncodeArgs } = require('./transcodeConfig');
 
-        const sourceIsHdr = await detectHdr(upstreamUrl);
+        const hdrTransfer = await detectHdr(upstreamUrl);
 
-        if (maxConcurrentJobs !== undefined && activeTranscodeJobCount >= maxConcurrentJobs) {
+        const maxJobs = maxConcurrentJobs !== undefined
+            ? maxConcurrentJobs
+            : parseInt(process.env.TRANSCODE_MAX_CONCURRENT_JOBS || '2', 10);
+        const reserved = await reserveTranscodeSlot(maxJobs);
+        if (!reserved) {
             activeProcesses.delete(sessionId);
             return { error: 'capacity' };
         }
@@ -121,10 +167,10 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             hwaccel: process.env.TRANSCODE_HWACCEL,
             crf: process.env.TRANSCODE_CRF,
             preset: process.env.TRANSCODE_PRESET,
-            sourceIsHdr,
+            sourceIsHdr: hdrTransfer,
+            vaapiDevice: process.env.TRANSCODE_VAAPI_DEVICE,
         });
 
-        activeTranscodeJobCount++;
         const jobRendition = rendition;
 
         const ffmpeg = spawn(
@@ -150,7 +196,8 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             const prev = activeProcesses.get(sessionId);
             activeProcesses.delete(sessionId);
             if (prev && prev.countsTowardsTranscodeCap) {
-                activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
+                prev.countsTowardsTranscodeCap = false;
+                releaseTranscodeSlot().catch(() => {});
             }
         });
 
@@ -159,7 +206,8 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             const prev = activeProcesses.get(sessionId);
             activeProcesses.delete(sessionId);
             if (prev && prev.countsTowardsTranscodeCap) {
-                activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
+                prev.countsTowardsTranscodeCap = false;
+                releaseTranscodeSlot().catch(() => {});
             }
         });
 
@@ -271,7 +319,7 @@ function stopFfmpegForSession(sessionId) {
 
     if (entry.countsTowardsTranscodeCap) {
         entry.countsTowardsTranscodeCap = false;
-        activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
+        releaseTranscodeSlot().catch(() => {});
     }
 
     const sessionDir = safeSessionPath(sessionId);
