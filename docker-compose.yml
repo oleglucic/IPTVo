@@ -64,11 +64,14 @@ services:
       - TURNSTILE_HOSTNAMES=${TURNSTILE_HOSTNAMES:-}
       # Turnstile secret for auth bot protection (optional; unset disables the check)
       - TURNSTILE_SECRET=${TURNSTILE_SECRET:-}
+    volumes:
+      # Writable cache for posters + HLS relay segments (required when concurrency limiting is on)
+      - iptvo_cache:/app/cache
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
-    read_only: true
+    # Not read_only: Node needs to write cache/hls and poster cache under /app/cache
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,3 +82,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  iptvo_cache:
