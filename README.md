@@ -18,7 +18,7 @@ Self-hosted Stremio/Nuvio addon for live IPTV (M3U / Xtream Codes). Node.js/Expr
 ## Documentation
 
 | Doc | Contents |
-|-----|----------|
+| --- | --- |
 | [docs/README.md](docs/README.md) | Documentation index |
 | [docs/streaming.md](docs/streaming.md) | Concurrency limiting + ABR transcoding |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Free-tier Neon / Upstash / Render |
@@ -83,7 +83,7 @@ Web UI at `/` — provider setup, groups, matching, backup, install link, and ch
 Required:
 
 | Variable | Description |
-|----------|-------------|
+| --- | --- |
 | `DATABASE_URL` | Postgres connection string |
 | `REDIS_URL` | Redis connection string |
 | `ENCRYPTION_KEY` | Master key for config encryption |
@@ -93,7 +93,7 @@ Common optional: `PORT`, `LOGO_PROXY_URL`, `ASSET_BASE_URL`, `CLUSTER_WORKERS`, 
 Streaming (default **off**):
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| --- | --- | --- |
 | `CONCURRENCY_LIMIT_ENABLED` | `false` | HLS relay + per-user limits |
 | `CONCURRENCY_EVICTION_COUNTDOWN_MS` | `15000` | Countdown before eviction |
 | `CONCURRENCY_SESSION_IDLE_TIMEOUT_MS` | `45000` | Active session idle timeout |
@@ -111,7 +111,7 @@ Full list: [`.env.example`](.env.example). Streaming detail: [docs/streaming.md]
 ## Key modules
 
 | Path | Role |
-|------|------|
+| --- | --- |
 | `server.js` | HTTP API, auth, Stremio routes, relay |
 | `src/iptvParser.js` | M3U/Xtream parse and matching |
 | `src/streamSessions.js` | Redis concurrency sessions |

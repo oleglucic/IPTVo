@@ -8,7 +8,7 @@ Requires **ffmpeg** on the host (included in the official Docker image) and **Re
 
 When `CONCURRENCY_LIMIT_ENABLED=true`, each stream is HLS-relayed so the server can count sessions per user and enforce a provider limit configured in the dashboard (`providerConcurrencyLimit`; `0` = unlimited).
 
-### Behavior
+### Concurrency-limiting behavior
 
 1. Under the limit: create a session, ffmpeg remuxes (`-c copy`) to HLS under `cache/hls/{sessionId}/`.
 2. At the limit: new play shows a **countdown** video on the same session URL.
@@ -16,7 +16,7 @@ When `CONCURRENCY_LIMIT_ENABLED=true`, each stream is HLS-relayed so the server 
 4. If the user leaves during countdown: eviction is cancelled; the original stream keeps playing.
 5. Idle reaper cleans abandoned sessions (shorter grace for countdown sessions).
 
-### Environment
+### Concurrency-limiting environment
 
 ```bash
 CONCURRENCY_LIMIT_ENABLED=false
@@ -36,7 +36,7 @@ CONCURRENCY_SESSION_IDLE_TIMEOUT_MS=45000
 
 When `TRANSCODE_ENABLED=true` (independent of concurrency limiting), the server can expose a master playlist and encode selected heights.
 
-### Environment
+### Transcoding environment
 
 ```bash
 TRANSCODE_ENABLED=false
@@ -49,7 +49,7 @@ TRANSCODE_PRESET=veryfast
 TRANSCODE_MAX_CONCURRENT_JOBS=2
 ```
 
-### Behavior
+### Transcoding behavior
 
 - Master route builds an HLS multivariant playlist (source + configured heights).
 - Encode args live in `src/transcodeConfig.js` (scale / tone-map, encoder, rate control).
@@ -70,7 +70,7 @@ The app service should receive `CONCURRENCY_*` and `TRANSCODE_*` variables and a
 ## Related modules
 
 | Module | Role |
-|--------|------|
+| --- | --- |
 | `src/streamSessions.js` | Redis session lifecycle, reserve, reaper |
 | `src/streamRelay.js` | ffmpeg remux / encode / countdown processes |
 | `src/transcodeConfig.js` | Encoder CLI args for one rendition |
