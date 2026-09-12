@@ -1925,7 +1925,6 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
 app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
     if (!TRANSCODE_ENABLED) return res.status(404).send('Not found');
 
-    const userId = req.params.userId;
     const channelId = req.params.channelId;
 
     // Validate channelId using the existing UUID_RE from server.js scope
