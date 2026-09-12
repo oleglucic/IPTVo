@@ -92,7 +92,7 @@ async function decryptConfig(encryptedConfigB64, ivB64, saltB64, masterKeyB64) {
         // Derive user-specific key
         const key = await deriveKey(masterKey, salt);
 
-        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
         decipher.setAuthTag(authTag);
 
         const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);

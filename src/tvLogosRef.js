@@ -144,8 +144,13 @@ function normalize(name) {
  */
 function stripSuffix(filename, suffix) {
     const noExt = filename.replace(/\.(png|svg)$/i, '');
-    const re = new RegExp(`-${suffix}$`, 'i');
-    return noExt.replace(re, '');
+    // Use endsWith instead of dynamic RegExp to avoid ReDoS
+    const lowerSuffix = suffix.toLowerCase();
+    const lowerNoExt = noExt.toLowerCase();
+    if (lowerNoExt.endsWith(`-${lowerSuffix}`)) {
+        return noExt.slice(0, -lowerSuffix.length - 1);
+    }
+    return noExt;
 }
 
 /**

@@ -83,6 +83,8 @@ function posterRoot(req) {
     return `${protocol}://${host}`;
 }
 
+// semgrep-ignore express-check-csurf-middleware-usage - This is a stateless API using Bearer token auth, not a form-based web app with cookies. CSRF protection is not applicable for token-based APIs.
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -1829,6 +1831,10 @@ app.get('/:userId/catalog/:type/:id.json', async (req, res, next) => {
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = req.params.extra || {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -1846,6 +1852,10 @@ app.get('/:userId/catalog/:type/:id/:extra.json', async (req, res, next) => {
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = req.params.extra || {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -1863,6 +1873,10 @@ app.get('/:userId/meta/:type/:id.json', async (req, res, next) => {
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -1880,6 +1894,10 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -2176,6 +2194,10 @@ app.get('/:config/catalog/:type/:id.json', async (req, res, next) => {
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = req.params.extra || {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -2194,6 +2216,10 @@ app.get('/:config/catalog/:type/:id/:extra.json', async (req, res, next) => {
         const resource = 'catalog';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = req.params.extra || {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -2212,6 +2238,10 @@ app.get('/:config/meta/:type/:id.json', async (req, res, next) => {
         const resource = 'meta';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
@@ -2230,6 +2260,10 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
+        // Validate ID to prevent path traversal (same as poster route)
+        if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id) || id.includes('..')) {
+            return res.status(400).send('Invalid ID');
+        }
         const extra = {};
         const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
