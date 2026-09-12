@@ -1,7 +1,7 @@
 # IPTVo documentation
 
 | Guide | Description |
-|-------|-------------|
+| --- | --- |
 | [Streaming proxy](streaming.md) | Optional concurrency limiting and ABR transcoding |
 | [Deployment ($0/month)](../DEPLOYMENT.md) | Neon + Upstash + Render free-tier path |
 | [Cloudflare Workers](../WORKER_SETUP.md) | Edge logo/assets workers |
