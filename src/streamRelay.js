@@ -47,21 +47,37 @@ async function detectHdr(upstreamUrl) {
 // Mirrors the existing poster cache directory pattern in imageEngine.js.
 const SESSION_HLS_DIR = path.join(__dirname, '..', 'cache', 'hls');
 
+// UUID v4 shape — same pattern used by server.js relay routes.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve a path under the session HLS root.
+ * Returns null if sessionId is not a UUID or the resolved path escapes the base dir.
+ * CodeQL recognizes path.resolve + startsWith(base + sep) as path sanitization.
+ * @param {string} sessionId
+ * @param {...string} parts
+ * @returns {string|null}
+ */
+function safeSessionPath(sessionId, ...parts) {
+    if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) return null;
+    const base = path.resolve(SESSION_HLS_DIR);
+    const resolved = path.resolve(base, sessionId, ...parts);
+    if (resolved !== base && !resolved.startsWith(base + path.sep)) return null;
+    return resolved;
+}
+
 // In-memory map: sessionId -> { process: <ChildProcess>, upstreamUrl: <string>, rendition: <string> }
 const activeProcesses = new Map();
 
 // Global cap: only counts REAL encodes (rendition !== 'source'), never remux/passthrough
 let activeTranscodeJobCount = 0;
 
-// Note: sessionId is validated as UUID v4 format in server.js routes before
-// reaching this function (defense-in-depth checks at lines 1976-1978 and 2069-2071),
-// making the path safe for directory creation.
 function ensureSessionDir(sessionId) {
-    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
-    const dir = path.join(SESSION_HLS_DIR, sessionId);
-    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
+    const dir = safeSessionPath(sessionId);
+    if (!dir) {
+        throw new Error('Invalid sessionId');
+    }
     if (!fs.existsSync(dir)) {
-        // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
         fs.mkdirSync(dir, { recursive: true });
     }
     return dir;
@@ -69,17 +85,6 @@ function ensureSessionDir(sessionId) {
 
 // --- startRealStream ---
 
-/**
- * Spawns ffmpeg to remux or transcode an upstream URL into HLS.
- * Idempotent: does nothing if activeProcesses already has this sessionId.
- * @param {string} sessionId
- * @param {string} upstreamUrl
- * @param {string|number} rendition - either the literal string 'source' (passthrough/remux)
- *   or a number matching one of TRANSCODE_RENDITIONS (e.g. 720). When 'source', audio is
- *   copied and video is not re-encoded. When a number, video is transcoded to that height.
- * @param {number} [maxConcurrentJobs] - optional global cap for real encodes.
- *   When not provided, no cap is applied (backs-compat with Phase 1 flow).
- */
 /**
  * Spawns ffmpeg to remux or transcode an upstream URL into HLS.
  * Idempotent: does nothing if activeProcesses already has this sessionId.
@@ -314,11 +319,10 @@ function stopFfmpegForSession(sessionId) {
         activeTranscodeJobCount--;
     }
 
-    // Delete the session's working directory
-    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
-    const sessionDir = path.join(SESSION_HLS_DIR, sessionId);
+    // Delete the session's working directory (only if sessionId is a valid UUID path)
+    const sessionDir = safeSessionPath(sessionId);
     try {
-        if (fs.existsSync(sessionDir)) {
+        if (sessionDir && fs.existsSync(sessionDir)) {
             fs.rmSync(sessionDir, { recursive: true, force: true });
         }
     } catch (e) {
@@ -334,11 +338,10 @@ function stopFfmpegForSession(sessionId) {
  * Returns the HLS working directory path for a session.
  * Used by HTTP route handlers to serve files.
  * @param {string} sessionId
- * @returns {string}
+ * @returns {string|null}
  */
 function getSessionDir(sessionId) {
-    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
-    return path.join(SESSION_HLS_DIR, sessionId);
+    return safeSessionPath(sessionId);
 }
 
 module.exports = {
@@ -346,4 +349,5 @@ module.exports = {
     startCountdownStream,
     stopFfmpegForSession,
     getSessionDir,
+    safeSessionPath,
 };
