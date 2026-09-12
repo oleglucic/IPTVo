@@ -1933,6 +1933,7 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
 
     // Resolve the effective config for this user (same logic as the stream selection code)
     const { configKey: resolvedUserId, configObj } = await getConfigFromReq(req);
+    if (!resolvedUserId) return res.status(404).send('Not found');
 
     // Look up the upstream URL for this channel from the user's channel cache
     let ud = userCaches.get(resolvedUserId);
@@ -1983,7 +1984,9 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         lines.push(`${rootUrl}/${userId}/relay/master/${channelId}/${sessionIds.shift()}/playlist.m3u8`);
     }
 
-    res.type('application/vnd.apple.mpegurl').send(lines.join('\n'));
+    res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+    res.set('X-Content-Type-Options', 'nosniff');
+    return res.send(lines.join('\n'));
 });
 
 // --- Concurrency-limited streaming proxy routes ---
