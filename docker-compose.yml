@@ -40,10 +40,6 @@ services:
 
   iptvo:
     image: itsoleglucic/iptvo:latest
-    # For building from source, comment out 'image' and uncomment 'build:'
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
@@ -51,16 +47,14 @@ services:
       - DATABASE_URL=postgresql://iptvo:${POSTGRES_PASSWORD:-changeme}@postgres:5432/iptvo
       - REDIS_URL=redis://redis:6379
       - LOGO_PROXY_URL=${LOGO_PROXY_URL:-https://assets.oleglucic.com/logo}
-    # Optional feature flags (unset = defaults)
       - PORT=${PORT:-3000}
-      - CLUSTER_WORKERS=${CLUSTER_WORKERS:-0}          # 0=single, 'auto'=cores/2, N=workers
+      - CLUSTER_WORKERS=${CLUSTER_WORKERS:-0}
       - ASSET_BASE_URL=${ASSET_BASE_URL:-}
       - ADDON_CACHE_URL=${ADDON_CACHE_URL:-}
       - EDGE_PURGE_SECRET=${EDGE_PURGE_SECRET:-}
       - EPG_HUB_CONCURRENCY=${EPG_HUB_CONCURRENCY:-3}
       - MAX_CONCURRENT_PARSES=${MAX_CONCURRENT_PARSES:-4}
       - PREWARM_CONCURRENCY=${PREWARM_CONCURRENCY:-8}
-      # Concurrency limiting + transcoding (optional; unset = server defaults / feature off)
       - CONCURRENCY_LIMIT_ENABLED=${CONCURRENCY_LIMIT_ENABLED:-false}
       - CONCURRENCY_EVICTION_COUNTDOWN_MS=${CONCURRENCY_EVICTION_COUNTDOWN_MS:-15000}
       - CONCURRENCY_SESSION_IDLE_TIMEOUT_MS=${CONCURRENCY_SESSION_IDLE_TIMEOUT_MS:-45000}
@@ -71,18 +65,15 @@ services:
       - TRANSCODE_CRF=${TRANSCODE_CRF:-23}
       - TRANSCODE_PRESET=${TRANSCODE_PRESET:-veryfast}
       - TRANSCODE_MAX_CONCURRENT_JOBS=${TRANSCODE_MAX_CONCURRENT_JOBS:-2}
-      # Hostnames allowed to verify Turnstile tokens (comma-separated, e.g. iptvo.oleglucic.com)
+      - TRANSCODE_VAAPI_DEVICE=${TRANSCODE_VAAPI_DEVICE:-/dev/dri/renderD128}
       - TURNSTILE_HOSTNAMES=${TURNSTILE_HOSTNAMES:-}
-      # Turnstile secret for auth bot protection (optional; unset disables the check)
       - TURNSTILE_SECRET=${TURNSTILE_SECRET:-}
     volumes:
-      # Writable cache for posters + HLS relay segments (required when concurrency limiting is on)
       - iptvo_cache:/app/cache
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
-    # Not read_only: Node needs to write cache/hls and poster cache under /app/cache
     depends_on:
       postgres:
         condition: service_healthy
