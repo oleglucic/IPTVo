@@ -88,8 +88,18 @@ function attachStderrDrain(ffmpeg, sessionId, label) {
 }
 
 function ensureSessionDir(sessionId) {
-    const dir = safeSessionPath(sessionId);
-    if (!dir) {
+    // Local UUID + basename barriers so CodeQL treats the path as sanitized
+    // (interprocedural analysis often does not credit safeSessionPath alone).
+    if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) {
+        throw new Error('Invalid sessionId');
+    }
+    const safeId = path.basename(sessionId);
+    if (safeId !== sessionId || !UUID_RE.test(safeId)) {
+        throw new Error('Invalid sessionId');
+    }
+    const base = path.resolve(SESSION_HLS_DIR);
+    const dir = path.resolve(base, safeId);
+    if (!dir.startsWith(base + path.sep)) {
         throw new Error('Invalid sessionId');
     }
     if (!fs.existsSync(dir)) {
