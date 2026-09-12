@@ -2060,8 +2060,14 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', relayLimiter, async (req, res
         // (lines 1976-1978), removing this path from uncontrolled data analysis.
         // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID above
         const sessionDir = getSessionDir(sessionId);
-        // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID above
-        const playlistPath = path.join(sessionDir, 'playlist.m3u8');
+        if (!sessionDir) {
+            return res.status(404).send('Session not found');
+        }
+        // path.resolve + startsWith: CodeQL-recognized path sanitizer
+        const playlistPath = path.resolve(sessionDir, 'playlist.m3u8');
+        if (!playlistPath.startsWith(sessionDir + path.sep)) {
+            return res.status(404).send('Session not found');
+        }
 
         let retries = 10;
         let playlistContent = null;
