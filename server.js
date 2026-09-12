@@ -117,7 +117,7 @@ const authLimiter = rateLimit({
 // Relay route rate limiter (HLS segment/playlist requests)
 const relayLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
-    max: 60, // limit each IP to 60 requests per minute
+    max: 300, // HLS: playlist + segments across concurrent streams (~2–4s)
     message: { error: 'Too many relay requests, please try again later' },
     standardHeaders: true,
     legacyHeaders: false
@@ -1927,8 +1927,8 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
 
     const channelId = req.params.channelId;
 
-    // Validate channelId using the existing UUID_RE from server.js scope
-    if (!UUID_RE.test(channelId)) return res.status(400).send('Invalid channel ID');
+    // Same channel id rule as /stream/:type/:id.json
+    if (!channelId || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(channelId) || channelId.includes('..')) return res.status(400).send('Invalid channel ID');
 
     // Resolve the effective config for this user (same logic as the stream selection code)
     const { configKey: resolvedUserId, configObj } = await getConfigFromReq(req);
@@ -1955,7 +1955,7 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
     // (no reserveSessionSlot — these are internal ABR ladder sessions)
     const sessionIds = [];
     for (const rendition of renditions) {
-        const sid = await require('./src/streamSessions').createSession(resolvedUserId, channelId, rendition);
+        const sid = await require('./src/streamSessions').createSession(resolvedUserId, channelId, rendition, { countTowardLimit: false });
         if (sid) sessionIds.push(sid);
     }
 
