@@ -57,7 +57,9 @@ let activeTranscodeJobCount = 0;
 // reaching this function (defense-in-depth checks at lines 1976-1978 and 2069-2071),
 // making the path safe for directory creation.
 function ensureSessionDir(sessionId) {
+    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
     const dir = path.join(SESSION_HLS_DIR, sessionId);
+    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -312,6 +314,7 @@ function stopFfmpegForSession(sessionId) {
     }
 
     // Delete the session's working directory
+    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
     const sessionDir = path.join(SESSION_HLS_DIR, sessionId);
     try {
         if (fs.existsSync(sessionDir)) {
@@ -333,6 +336,7 @@ function stopFfmpegForSession(sessionId) {
  * @returns {string}
  */
 function getSessionDir(sessionId) {
+    // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
     return path.join(SESSION_HLS_DIR, sessionId);
 }
 
