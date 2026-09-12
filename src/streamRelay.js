@@ -37,27 +37,14 @@ async function detectHdr(upstreamUrl) {
         }
         return false;
     } catch (e) {
-        // timeout, ffprobe non-zero exit, JSON parse failure, etc.
         console.warn(`[HDR Detect] ${e.message || 'unknown error'}`);
         return false;
     }
 }
-// --- Working directory for HLS output ---
-// One subfolder per session, created the first time it's needed.
-// Mirrors the existing poster cache directory pattern in imageEngine.js.
-const SESSION_HLS_DIR = path.join(__dirname, '..', 'cache', 'hls');
 
-// UUID v4 shape — same pattern used by server.js relay routes.
+const SESSION_HLS_DIR = path.join(__dirname, '..', 'cache', 'hls');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Resolve a path under the session HLS root.
- * Returns null if sessionId is not a UUID or the resolved path escapes the base dir.
- * CodeQL recognizes path.resolve + startsWith(base + sep) as path sanitization.
- * @param {string} sessionId
- * @param {...string} parts
- * @returns {string|null}
- */
 function safeSessionPath(sessionId, ...parts) {
     if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) return null;
     const base = path.resolve(SESSION_HLS_DIR);
@@ -66,13 +53,9 @@ function safeSessionPath(sessionId, ...parts) {
     return resolved;
 }
 
-// In-memory map: sessionId -> { process: <ChildProcess>, upstreamUrl: <string>, rendition: <string> }
 const activeProcesses = new Map();
-
-// Global cap: only counts REAL encodes (rendition !== 'source'), never remux/passthrough
 let activeTranscodeJobCount = 0;
 
-/** Drain ffmpeg stderr without unbounded accumulation (CodeRabbit memory note). */
 function attachStderrDrain(ffmpeg, sessionId, label) {
     let tail = '';
     const MAX = 4096;
@@ -88,8 +71,6 @@ function attachStderrDrain(ffmpeg, sessionId, label) {
 }
 
 function ensureSessionDir(sessionId) {
-    // Local UUID + basename barriers so CodeQL treats the path as sanitized
-    // (interprocedural analysis often does not credit safeSessionPath alone).
     if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) {
         throw new Error('Invalid sessionId');
     }
@@ -108,44 +89,32 @@ function ensureSessionDir(sessionId) {
     return dir;
 }
 
-// --- startRealStream ---
-
-/**
- * Spawns ffmpeg to remux or transcode an upstream URL into HLS.
- * Idempotent: does nothing if activeProcesses already has this sessionId.
- * @param {string} sessionId
- * @param {string} upstreamUrl
- * @param {string|number} rendition - either the literal string 'source' (passthrough/remux)
- *   or a number matching one of TRANSCODE_RENDITIONS (e.g. 720). When 'source', audio is
- *   copied and video is not re-encoded. When a number, video is transcoded to that height.
- * @param {number} [maxConcurrentJobs] - optional global cap for real encodes.
- *   When not provided, no cap is applied (backs-compat with Phase 1 flow).
- * @returns {Promise<{error?: string}>} Returns { error: 'capacity' } if the transcoding
- *   job cap is hit, otherwise undefined.
- */
 async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJobs) {
     if (activeProcesses.has(sessionId)) {
-        // Already running — idempotent, do nothing
         return;
+    }
+
+    if (rendition === undefined || rendition === null || rendition === '') {
+        rendition = 'source';
     }
 
     const sessionDir = ensureSessionDir(sessionId);
 
-    // When a numeric rendition is requested, do transcoding logic.
-    // When 'source', use the original passthrough/remux behavior.
+    if (activeProcesses.has(sessionId)) {
+        return;
+    }
+    activeProcesses.set(sessionId, { process: null, upstreamUrl, pending: true });
+
     if (rendition !== 'source') {
-        // Import transcode config here to avoid top-level I/O in the module
         const { buildVideoEncodeArgs } = require('./transcodeConfig');
 
-        // Detect HDR on the upstream source
         const sourceIsHdr = await detectHdr(upstreamUrl);
 
-        // Enforce global concurrency cap for real encodes
         if (maxConcurrentJobs !== undefined && activeTranscodeJobCount >= maxConcurrentJobs) {
+            activeProcesses.delete(sessionId);
             return { error: 'capacity' };
         }
 
-        // Build video encode arguments from the transcoder config
         const videoArgs = buildVideoEncodeArgs({
             targetHeight: rendition,
             codec: process.env.TRANSCODE_CODEC,
@@ -155,10 +124,7 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             sourceIsHdr,
         });
 
-        // Increment the global counter before spawning
         activeTranscodeJobCount++;
-
-        // Capture rendition for use in cleanup handlers
         const jobRendition = rendition;
 
         const ffmpeg = spawn(
@@ -174,42 +140,38 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
                 '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
                 path.join(sessionDir, 'playlist.m3u8'),
             ],
-            {
-                // Don't kill ffmpeg on SIGHUP, let it manage its own lifecycle
-                detached: false,
-            }
+            { detached: false }
         );
 
         attachStderrDrain(ffmpeg, sessionId, 'transcode');
 
         ffmpeg.on('close', (code) => {
             log.info(`[Relay ${sessionId}] ffmpeg closed with code ${code}`);
+            const prev = activeProcesses.get(sessionId);
             activeProcesses.delete(sessionId);
-            // Decrement the global counter when the job finishes (only for real encodes)
-            if (jobRendition !== 'source') {
-                activeTranscodeJobCount--;
+            if (prev && prev.countsTowardsTranscodeCap) {
+                activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
             }
         });
 
         ffmpeg.on('error', (err) => {
             log.error(`[Relay ${sessionId}] ffmpeg spawn error:`, err.message);
+            const prev = activeProcesses.get(sessionId);
             activeProcesses.delete(sessionId);
-            // Also decrement on error if this was a real encode job
-            if (jobRendition !== 'source') {
-                activeTranscodeJobCount--;
+            if (prev && prev.countsTowardsTranscodeCap) {
+                activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
             }
         });
 
-        // Store in active map — include rendition info for concurrency bookkeeping
         activeProcesses.set(sessionId, {
             process: ffmpeg,
             upstreamUrl,
             rendition: jobRendition,
+            countsTowardsTranscodeCap: true,
         });
 
-        log.info(`[Relay ${sessionId}] Started transcoded stream ${jobRendition}p from ${upstreamUrl}`);
+        log.info(`[Relay ${sessionId}] Started transcoded stream ${jobRendition}p`);
     } else {
-        // Original passthrough/remux branch (rendition === 'source')
         const ffmpeg = spawn(
             'ffmpeg',
             [
@@ -222,10 +184,7 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
                 '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
                 path.join(sessionDir, 'playlist.m3u8'),
             ],
-            {
-                // Don't kill ffmpeg on SIGHUP, let it manage its own lifecycle
-                detached: false,
-            }
+            { detached: false }
         );
 
         attachStderrDrain(ffmpeg, sessionId, 'remux');
@@ -233,7 +192,6 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
         ffmpeg.on('close', (code) => {
             log.info(`[Relay ${sessionId}] ffmpeg closed with code ${code}`);
             activeProcesses.delete(sessionId);
-            // Source streams don't count toward transcode cap
         });
 
         ffmpeg.on('error', (err) => {
@@ -241,22 +199,16 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
             activeProcesses.delete(sessionId);
         });
 
-        // Store in active map
         activeProcesses.set(sessionId, {
             process: ffmpeg,
             upstreamUrl,
+            countsTowardsTranscodeCap: false,
         });
 
-        log.info(`[Relay ${sessionId}] Started real stream from ${upstreamUrl}`);
+        log.info(`[Relay ${sessionId}] Started real stream (source)`);
     }
 }
-// --- startCountdownStream ---
 
-/**
- * Spawns ffmpeg to generate a black screen with countdown text.
- * @param {string} sessionId
- * @param {number} countdownSeconds - duration of the countdown in seconds
- */
 function startCountdownStream(sessionId, countdownSeconds) {
     const sessionDir = ensureSessionDir(sessionId);
 
@@ -276,9 +228,7 @@ function startCountdownStream(sessionId, countdownSeconds) {
             '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
             path.join(sessionDir, 'playlist.m3u8'),
         ],
-        {
-            detached: false,
-        }
+        { detached: false }
     );
 
     attachStderrDrain(ffmpeg, sessionId, 'countdown');
@@ -296,23 +246,15 @@ function startCountdownStream(sessionId, countdownSeconds) {
     activeProcesses.set(sessionId, {
         process: ffmpeg,
         upstreamUrl: null,
+        countsTowardsTranscodeCap: false,
     });
 
     log.info(`[Relay ${sessionId}] Started countdown stream for ${countdownSeconds}s`);
 }
 
-// --- stopFfmpegForSession ---
-
-/**
- * Sends SIGTERM to the ffmpeg process for a session, removes it from the map,
- * and deletes the session's working directory.
- * Idempotent: does nothing if activeProcesses does not have this sessionId.
- * @param {string} sessionId
- */
 function stopFfmpegForSession(sessionId) {
     const entry = activeProcesses.get(sessionId);
     if (!entry) {
-        // Not running — idempotent, never throw
         return;
     }
 
@@ -327,13 +269,11 @@ function stopFfmpegForSession(sessionId) {
 
     activeProcesses.delete(sessionId);
 
-    // Decrement the global transcode job counter only if this was a real encode
-    // (not a 'source' remux/passthrough session)
-    if (entry.rendition !== 'source') {
-        activeTranscodeJobCount--;
+    if (entry.countsTowardsTranscodeCap) {
+        entry.countsTowardsTranscodeCap = false;
+        activeTranscodeJobCount = Math.max(0, activeTranscodeJobCount - 1);
     }
 
-    // Delete the session's working directory (only if sessionId is a valid UUID path)
     const sessionDir = safeSessionPath(sessionId);
     try {
         if (sessionDir && fs.existsSync(sessionDir)) {
@@ -346,14 +286,6 @@ function stopFfmpegForSession(sessionId) {
     log.info(`[stopFfmpegForSession ${sessionId}] stopped and cleaned up`);
 }
 
-// --- getSessionDir ---
-
-/**
- * Returns the HLS working directory path for a session.
- * Used by HTTP route handlers to serve files.
- * @param {string} sessionId
- * @returns {string|null}
- */
 function getSessionDir(sessionId) {
     return safeSessionPath(sessionId);
 }
