@@ -2367,11 +2367,7 @@ const CONCURRENCY_SESSION_IDLE_TIMEOUT_MS = parseInt(process.env.CONCURRENCY_SES
 const TRANSCODE_ENABLED = process.env.TRANSCODE_ENABLED === 'true';
 const TRANSCODE_RENDITIONS = (process.env.TRANSCODE_RENDITIONS || '1080,720,480,360')
     .split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
-const TRANSCODE_CODEC = ['h264', 'hevc', 'av1'].includes(process.env.TRANSCODE_CODEC) ? process.env.TRANSCODE_CODEC : 'h264';
-const TRANSCODE_HWACCEL = ['none', 'nvenc', 'qsv', 'vaapi'].includes(process.env.TRANSCODE_HWACCEL) ? process.env.TRANSCODE_HWACCEL : 'none';
-const TRANSCODE_CRF = parseInt(process.env.TRANSCODE_CRF || '23', 10);
-const TRANSCODE_PRESET = process.env.TRANSCODE_PRESET || 'veryfast';
-const TRANSCODE_MAX_CONCURRENT_JOBS = parseInt(process.env.TRANSCODE_MAX_CONCURRENT_JOBS || '2', 10);
+// TRANSCODE_CODEC/HWACCEL/CRF/PRESET/MAX_CONCURRENT_JOBS read from process.env in streamRelay/transcodeConfig
 const workercount = CLUSTER_WORKERS > 1
     ? CLUSTER_WORKERS
     : (process.env.CLUSTER_WORKERS === 'auto' ? Math.max(1, Math.floor(os.cpus().length / 2)) : 1);
