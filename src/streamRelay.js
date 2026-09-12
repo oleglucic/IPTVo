@@ -53,6 +53,9 @@ const activeProcesses = new Map();
 // Global cap: only counts REAL encodes (rendition !== 'source'), never remux/passthrough
 let activeTranscodeJobCount = 0;
 
+// Note: sessionId is validated as UUID v4 format in server.js routes before
+// reaching this function (defense-in-depth checks at lines 1976-1978 and 2069-2071),
+// making the path safe for directory creation.
 function ensureSessionDir(sessionId) {
     const dir = path.join(SESSION_HLS_DIR, sessionId);
     if (!fs.existsSync(dir)) {

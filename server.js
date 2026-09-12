@@ -2028,6 +2028,8 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', async (req, res) => {
         }
 
         // Serve the playlist.m3u8 file with retries
+        // Note: sessionId has already been validated as a UUID v4 format above
+        // (lines 1976-1978), removing this path from uncontrolled data analysis.
         const sessionDir = getSessionDir(sessionId);
         const playlistPath = path.join(sessionDir, 'playlist.m3u8');
 
@@ -2106,6 +2108,8 @@ app.get('/:userId/relay/:sessionId/seg_:num.ts', async (req, res) => {
         }
 
         res.set('Content-Type', 'video/mp2t');
+        // Note: sessionId is validated as UUID v4 format above (line 2069),
+        // making the path safe for use with sendFile.
         res.sendFile(segmentPath);
     } catch (e) {
         log.error('Relay segment error:', e.message);
