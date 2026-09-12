@@ -2,44 +2,24 @@
 
 ## Reporting a Vulnerability
 
-**Please do not open a public issue for a security vulnerability.** File a
-private [security advisory](https://github.com/oleglucic/IPTVo/security/advisories/new)
-instead, or email the maintainer directly.
-
-We will acknowledge reports within five business days and aim to ship a fix
-for confirmed vulnerabilities in the next patch release. Security issues are
-handled confidentially until a patched version is available.
+Please report security issues privately via GitHub Security Advisories for this repository, or contact the maintainer. Do not open a public issue for unreleased vulnerabilities.
 
 ## Scope
 
-In scope:
-
-- The Express backend (`server.js`, `iptvParser.js`, related modules)
-- The dashboard web UI (`/dashboard`)
-- The Cloudflare Worker logo proxy (`logo-proxy.worker.js`)
-- The Docker image and its deployment surface
-
-Out of scope:
-
-- Third-party IPTV providers and their content
-- The Stremio client itself
+- Authentication, session tokens, and encrypted user config
+- Path handling for posters, cache, and HLS relay sessions
+- Secrets in CI and deployment configuration
 
 ## Supported Versions
 
-| Version | Supported      |
-| ------- | -------------- |
-| latest  | Security fixes |
-| older   | Best effort    |
+Security fixes target the latest `main` release line.
 
 ## Security Model
 
-- Live channel streams are fetched server-side, so provider credentials are
-  never exposed to the client.
-- User configs are encrypted at rest with AES-256-GCM using a
-  per-user salt and IV.
-- Outbound requests are validated against private, loopback, and cloud
-  metadata address ranges (`isSafeUrl`) to block SSRF.
-- All log output is redacted (`sanitizeForLog`) for passwords, keys, and
-  credential-bearing URLs.
-- All endpoint input is size-limited or rate-limited where cost could
-  otherwise be abused by an unauthenticated caller.
+- User configs are encrypted at rest with `ENCRYPTION_KEY`.
+- Auth endpoints are rate-limited; Turnstile may be enabled when configured.
+- Host allowlists can restrict poster URL generation behind reverse proxies.
+
+## Streaming proxy
+
+When concurrency limiting or transcoding is enabled, playlist and segment paths are constrained to UUID session directories under the HLS cache root. Relay routes check session ownership and apply rate limits. Report path-traversal or session-confusion issues via the process above.
