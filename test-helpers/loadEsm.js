@@ -51,6 +51,7 @@ function loadEsmModule(filePath, options = {}) {
     // lives in `<repoRoot>/test-helpers/`), regardless of which directory
     // the calling test file is located in.
     const repoRoot = path.resolve(__dirname, '..');
+    // semgrep-ignore path-join-resolve-traversal - Internal test helper, filePath comes from test files not user input
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(repoRoot, filePath);
     let code = fs.readFileSync(absPath, 'utf8');
 

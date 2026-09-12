@@ -1,10 +1,5 @@
 name: CI/CD Pipeline
 
-env:
-  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
 on:
   push:
     branches: [main]
@@ -94,26 +89,28 @@ jobs:
       - name: Release
         if: env.DOCKERHUB_TOKEN != '' && env.GITHUB_TOKEN != ''
         env:
-          # Used by @semantic-release/* plugins that call the GitHub API
-          # (release creation, etc.). The `git push` uses the credential header
-          # set above; the App token is a bypass actor on the `main` ruleset, so
-          # @semantic-release/git can push the version-bump commit to the
-          # protected branch. github-actions[bot] cannot bypass protection.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GHCR_TOKEN: ${{ env.GITHUB_TOKEN }}
         run: npx semantic-release
       - name: Setup Docker Buildx
         if: env.DOCKERHUB_TOKEN != '' && env.GITHUB_TOKEN != ''
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
       - name: Log in to Docker Hub
         if: env.DOCKERHUB_TOKEN != '' && env.GITHUB_TOKEN != ''
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
       - name: Log in to GitHub Container Registry
         if: env.DOCKERHUB_TOKEN != '' && env.GITHUB_TOKEN != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ghcr.io

@@ -51,8 +51,10 @@ function sha256(filePath) {
 }
 
 function resolveDir(group) {
+  // semgrep-ignore path-join-resolve-traversal - Static config from GROUPS, not user input
   const obfuscated = path.join(DIST, group.name);
   if (fs.existsSync(obfuscated)) return obfuscated;
+  // semgrep-ignore path-join-resolve-traversal - Static config from GROUPS, not user input
   return path.join(ROOT, group.sourceRoot);
 }
 
@@ -67,6 +69,7 @@ function build() {
     const dir = resolveDir(group);
     const obfuscated = dir === path.join(DIST, group.name);
     for (const file of group.artifacts) {
+      // semgrep-ignore path-join-resolve-traversal - Static config from GROUPS, not user input
       const abs = path.join(dir, file);
       manifest.files[`${group.name}/${file}`] = {
         integrity: `sha256-${sha256(abs)}`,
