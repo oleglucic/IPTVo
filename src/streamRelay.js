@@ -61,6 +61,7 @@ function ensureSessionDir(sessionId) {
     const dir = path.join(SESSION_HLS_DIR, sessionId);
     // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
     if (!fs.existsSync(dir)) {
+        // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID in server.js routes
         fs.mkdirSync(dir, { recursive: true });
     }
     return dir;
