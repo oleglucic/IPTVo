@@ -1601,7 +1601,7 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
         // instead of a single-rendition relay URL. This works independently of
         // CONCURRENCY_LIMIT_ENABLED — the two flags are orthogonal.
         const streamUrl = TRANSCODE_ENABLED
-            ? `${rootUrl}/${userId}/relay/master/${id}/master.m3u8`
+            ? `${rootUrl}/${encodeURIComponent(String(userId))}/relay/master/${encodeURIComponent(String(id))}/master.m3u8`
             : `${rootUrl}/${userId}/relay/${sessionId}/playlist.m3u8`;
 
         return {
@@ -1971,7 +1971,7 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         const height = 1080;
         const bandwidth = 8000000;
         lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height}`);
-        lines.push(`${rootUrl}/${userId}/relay/master/${channelId}/playlist.m3u8`);
+        lines.push(`${rootUrl}/${encodeURIComponent(String(resolvedUserId))}/relay/master/${encodeURIComponent(String(channelId))}/playlist.m3u8`);
     }
 
     // Each transcoded rendition (from highest to lowest)
@@ -1981,7 +1981,7 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         const bandwidthMap = { 1080: 5000000, 720: 3000000, 480: 1500000, 360: 800000 };
         const bandwidth = bandwidthMap[rendition] || 5000000; // fallback
         lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height}`);
-        lines.push(`${rootUrl}/${userId}/relay/master/${channelId}/${sessionIds.shift()}/playlist.m3u8`);
+        lines.push(`${rootUrl}/${encodeURIComponent(String(resolvedUserId))}/relay/master/${encodeURIComponent(String(channelId))}/${encodeURIComponent(String(sessionIds.shift() || ""))}/playlist.m3u8`);
     }
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
