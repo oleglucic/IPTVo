@@ -1,3 +1,41 @@
+## [2.3.0](https://github.com/oleglucic/IPTVo/compare/v2.2.0...v2.3.0) (2026-09-12)
+
+### Features
+
+* phase 2 configurable transcoding (opt-in, independent of CONCURRENCY_LIMIT_ENABLED) ([4542356](https://github.com/oleglucic/IPTVo/commit/45423562755cf2e0434833eb94dcb02a63735a27))
+* implement concurrency-limited streaming proxy (Phase 1) ([9885b14](https://github.com/oleglucic/IPTVo/commit/9885b144bcf337a9a80aca2af7091d2fa374384d))
+* **streamRelay:** HDR transfer string + Redis global TRANSCODE_MAX_CONCURRENT_JOBS ([2b185d8](https://github.com/oleglucic/IPTVo/commit/2b185d8b029692876422e909d20e9a3a778f4397))
+* **transcode:** VAAPI nv12/hwupload, SVT-AV1 preset map, HDR transfer metadata ([a90f997](https://github.com/oleglucic/IPTVo/commit/a90f997bff7fb24c5732af8f5f91e121f32c49d1))
+
+### Bug Fixes
+
+* master route channel id rule, ABR no slot use, higher relay rate limit ([58068ea](https://github.com/oleglucic/IPTVo/commit/58068ea6afb46fc7c483aa153e3cd28012b047f3))
+* address still-valid CodeRabbit findings (minimal) ([7d5bc92](https://github.com/oleglucic/IPTVo/commit/7d5bc92ce29d4fdbca6b02c214a9133c2040f325))
+* remove unused userId in master m3u8 route (CodeQL) ([1824747](https://github.com/oleglucic/IPTVo/commit/18247470e9d8e1fa3684f648cea62c8c61083159))
+* harden concurrency PR for merge (stderr drain, CodeQL pin, compose cache, env) ([fb9fb60](https://github.com/oleglucic/IPTVo/commit/fb9fb60b73f223e63453478821d1d95c15e2d809))
+* restore TRANSCODE_* vars in .env.example (were overwritten by CONCURRENCY_*) ([5f60cb1](https://github.com/oleglucic/IPTVo/commit/5f60cb1d280ba0289037731b4749c86cbb66c7eb))
+* add semgrep-ignore for XSS and path traversal alerts ([8eee377](https://github.com/oleglucic/IPTVo/commit/8eee3778b703bd771cb4ff3a5fcf658172c90c32))
+* address CodeQL alerts - XSS, rate limiting, path traversal suppressions, unused vars ([9a45a1f](https://github.com/oleglucic/IPTVo/commit/9a45a1f5713f7f5799fbe3a92fc0683d58c66029))
+* address all code scanning alerts - path traversal, ReDoS, GCM auth tag, Docker hardening, workflow secrets ([04eb370](https://github.com/oleglucic/IPTVo/commit/04eb370eb26e74a53184421e1f0f054c2875d9ad))
+* add CodeQL suppression comments for path expression issues ([8befb83](https://github.com/oleglucic/IPTVo/commit/8befb837331bd3c6ebfb480971d21690ac5dd7a8))
+* various security fixes ([72b13ad](https://github.com/oleglucic/IPTVo/commit/72b13ad55009c874a944ab9cd983ce5981bd40af))
+* **memory:** bound ffmpeg stderr drain in streamRelay ([5d45774](https://github.com/oleglucic/IPTVo/commit/5d457740cc3b31ffac4c10eb74b1714e290541d3))
+* **security:** encodeURIComponent on master m3u8 path segments for CodeQL XSS ([7c20e90](https://github.com/oleglucic/IPTVo/commit/7c20e9051363d995c53c6c2ecc38b155830219f9))
+* **security:** CodeQL XSS barriers on master m3u8; drop unused TRANSCODE consts ([eea9536](https://github.com/oleglucic/IPTVo/commit/eea95363c06aba727d1ba5d98e9a8c174192f17c))
+* **security:** CodeQL XSS barriers on master m3u8; drop unused TRANSCODE consts ([8438ad1](https://github.com/oleglucic/IPTVo/commit/8438ad1ea226f530685855d50781991d21b2902a))
+* **security:** local UUID/basename barriers in ensureSessionDir for CodeQL ([3ed8e4e](https://github.com/oleglucic/IPTVo/commit/3ed8e4eff6899b41c522c25a0a7d3d9490607887))
+* **security:** CodeQL path containment on relay segment route ([7d35f8e](https://github.com/oleglucic/IPTVo/commit/7d35f8e40fb9d9af92f71b5a6c4d6f48f883f1a2))
+* **security:** CodeQL path containment on relay playlist/segment routes ([c4e2a86](https://github.com/oleglucic/IPTVo/commit/c4e2a86b5a4496593031a81c65e645dbeeb38f5d))
+* **security:** restore server.js and CodeQL path containment on relay routes ([71c0589](https://github.com/oleglucic/IPTVo/commit/71c0589262cee78f6ea093b2756f1e1f746b388d))
+* **security:** CodeQL path containment checks on relay playlist/segment routes ([2535fb8](https://github.com/oleglucic/IPTVo/commit/2535fb85b0dac31eeb3dbcb8d76e20448ebfded3))
+* **security:** add safeSessionPath for CodeQL path sanitization ([0bffcef](https://github.com/oleglucic/IPTVo/commit/0bffcefea51c595fcdc0fe78b9028a8e5bef0324))
+* **streamRelay:** default source rendition, race guard, cap flag, redact URL logs ([3df3e9f](https://github.com/oleglucic/IPTVo/commit/3df3e9ff5542e76d7270ad48e8a42f2a3e40fa8b))
+* **streamSessions:** fail createSession on partial Redis writes; countTowardLimit option ([7b09ff8](https://github.com/oleglucic/IPTVo/commit/7b09ff85588b3528ad339a2e72237337f874d6ca))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.2.0](https://github.com/oleglucic/IPTVo/compare/v2.1.1...v2.2.0) (2026-09-06)
 
 ### Features
