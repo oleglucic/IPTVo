@@ -1986,7 +1986,6 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height},NAME="${height}p"`);
         lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
     }
-    }
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
     res.set('X-Content-Type-Options', 'nosniff');
