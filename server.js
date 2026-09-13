@@ -1617,19 +1617,23 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
     };
 
     // ── Transcoding (optional, opt-in) ──────────────────────────────────────
-    // If TRANSCODE_ENABLED is true, use the master playlist URL instead of a
-    // single-rendition relay URL. This is independent of CONCURRENCY_LIMIT_ENABLED.
-    if (TRANSCODE_ENABLED && upstreamUrl) {
-        const { createSession } = require('./src/streamSessions');
-        const sessionId = await createSession(configKey, id);
-
-        if (sessionId) {
-            const { startRealStream } = require('./src/streamRelay');
-            // Start with 'source' rendition — the player will lazily request
-            // other renditions, starting their ffmpeg processes on demand.
-            await startRealStream(sessionId, upstreamUrl, 'source');
-            return await buildRelayResponse(sessionId, configKey);
-        }
+    // One "Auto" stream (HLS master) first — ExoPlayer picks quality from the ladder.
+    // Raw provider URLs stay below. Independent of CONCURRENCY_LIMIT_ENABLED.
+    if (TRANSCODE_ENABLED && upstreamUrl && bestStream) {
+        const masterUrl = `${rootUrl}/${encodeURIComponent(String(configKey))}/relay/master/${encodeURIComponent(String(id))}/master.m3u8`;
+        const autoStream = {
+            name: bestStream.name,
+            title: 'Auto',
+            url: masterUrl,
+        };
+        const rawStreams = sortedStreams.map(stream => ({
+            name: stream.name,
+            title: streamTitle(stream),
+            url: stream.url,
+        }));
+        return {
+            streams: [autoStream, ...rawStreams, ...await buildCatchupEntries()],
+        };
     }
 
     // ── Concurrency-limited streaming proxy (Phase 1) ──────────────────────
@@ -2007,14 +2011,14 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', relayLimiter, async (req, res
         return res.status(404).send('Session not found');
     }
 
-    // Only available when feature is enabled
-    if (!CONCURRENCY_LIMIT_ENABLED) {
+    // Relay is used by concurrency limiting and/or ABR transcoding
+    if (!CONCURRENCY_LIMIT_ENABLED && !TRANSCODE_ENABLED) {
         return res.status(404).send('Not found');
     }
 
     try {
         const { claimEviction, destroySession, getSession, markActive, touchSession } = require('./src/streamSessions');
-        const { getSessionDir, stopFfmpegForSession } = require('./src/streamRelay');
+        const { getSessionDir, stopFfmpegForSession, startRealStream } = require('./src/streamRelay');
 
         const session = await getSession(sessionId);
         if (!session || session.userId !== userId) {
@@ -2057,26 +2061,38 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', relayLimiter, async (req, res
             }
         }
 
-        // Serve the playlist.m3u8 file with retries
-        // Note: sessionId has already been validated as a UUID v4 format above
-        // (lines 1976-1978), removing this path from uncontrolled data analysis.
-        // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID above
+        // Serve playlist.m3u8 (start ffmpeg lazily if not running yet)
         const sessionDir = getSessionDir(sessionId);
         if (!sessionDir) {
             return res.status(404).send('Session not found');
         }
-        // path.resolve + startsWith: CodeQL-recognized path sanitizer
         const playlistPath = path.resolve(sessionDir, 'playlist.m3u8');
         if (!playlistPath.startsWith(sessionDir + path.sep)) {
             return res.status(404).send('Session not found');
         }
 
-        let retries = 10;
+        if (!fs.existsSync(playlistPath) && session.status !== 'countdown') {
+            await ensureCache(userId, configObj);
+            const ud = userCaches.get(userId);
+            if (ud && ud.channelMap?.has(session.channelId)) {
+                const channel = ud.channelMap.get(session.channelId);
+                const bestStream = [...channel.streams].sort((a, b) => b.score - a.score)[0] || null;
+                const upstreamUrl = bestStream ? bestStream.url : null;
+                if (upstreamUrl) {
+                    const rendition = session.rendition || 'source';
+                    const startResult = await startRealStream(sessionId, upstreamUrl, rendition);
+                    if (startResult && startResult.error === 'capacity') {
+                        return res.status(503).send('Transcode capacity reached, try a different quality');
+                    }
+                }
+            }
+        }
+
+        let retries = 15;
         let playlistContent = null;
 
         while (retries > 0) {
             try {
-                // semgrep-ignore path-join-resolve-traversal - sessionId validated as UUID above
                 playlistContent = await fs.promises.readFile(playlistPath, 'utf8');
                 break;
             } catch (e) {
@@ -2123,8 +2139,7 @@ app.get('/:userId/relay/:sessionId/seg_:num.ts', relayLimiter, async (req, res) 
         return res.status(400).send('Invalid segment number');
     }
 
-    // Only available when feature is enabled
-    if (!CONCURRENCY_LIMIT_ENABLED) {
+    if (!CONCURRENCY_LIMIT_ENABLED && !TRANSCODE_ENABLED) {
         return res.status(404).send('Not found');
     }
 
