@@ -1955,36 +1955,37 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
     // Build the ABR ladder: source first, then each TRANSCODE_RENDITIONS entry from highest to lowest
     const renditions = ['source', ...TRANSCODE_RENDITIONS.sort((a, b) => b - a)];
 
-    // Create one session per (channel, rendition) pair using plain createSession
-    // (no reserveSessionSlot — these are internal ABR ladder sessions)
-    const sessionIds = [];
+    // One Redis session per ladder entry (not counted toward provider concurrency).
+    // Playlist URLs use /:userId/relay/:sessionId/playlist.m3u8
+    const { createSession } = require('./src/streamSessions');
+    const sessionByRendition = {};
     for (const rendition of renditions) {
-        const sid = await require('./src/streamSessions').createSession(resolvedUserId, channelId, rendition, { countTowardLimit: false });
-        if (sid) sessionIds.push(sid);
+        const sid = await createSession(resolvedUserId, channelId, rendition, { countTowardLimit: false });
+        if (sid) sessionByRendition[String(rendition)] = sid;
+    }
+    if (!sessionByRendition.source) {
+        return res.status(503).send('Session storage unavailable');
     }
 
-    // Build the master playlist text
-    // semgrep-ignore javascript.lang.security.audit.xss.express-res-send.xss - rootUrl validated by posterRoot host allowlist
     const rootUrl = assetRoot(req);
+    const uid = encodeURIComponent(String(resolvedUserId));
     const lines = ['#EXTM3U'];
 
-    // Source entry (first)
     {
-        const width = 1920;
-        const height = 1080;
-        const bandwidth = 8000000;
-        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height}`);
-        lines.push(`${rootUrl}/${encodeURIComponent(String(resolvedUserId))}/relay/master/${encodeURIComponent(String(channelId))}/playlist.m3u8`);
+        const sid = sessionByRendition.source;
+        lines.push('#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,NAME="source"');
+        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
     }
 
-    // Each transcoded rendition (from highest to lowest)
-    for (const rendition of TRANSCODE_RENDITIONS.sort((a, b) => b - a)) {
-        const width = Math.round(rendition * 16 / 9);
-        const height = rendition;
-        const bandwidthMap = { 1080: 5000000, 720: 3000000, 480: 1500000, 360: 800000 };
-        const bandwidth = bandwidthMap[rendition] || 5000000; // fallback
-        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height}`);
-        lines.push(`${rootUrl}/${encodeURIComponent(String(resolvedUserId))}/relay/master/${encodeURIComponent(String(channelId))}/${encodeURIComponent(String(sessionIds.shift() || ""))}/playlist.m3u8`);
+    const bandwidthMap = { 1080: 5000000, 720: 3000000, 480: 1500000, 360: 800000 };
+    for (const height of [...TRANSCODE_RENDITIONS].sort((a, b) => b - a)) {
+        const sid = sessionByRendition[String(height)];
+        if (!sid) continue;
+        const width = Math.round(height * 16 / 9);
+        const bandwidth = bandwidthMap[height] || 1500000;
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height},NAME="${height}p"`);
+        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
+    }
     }
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
