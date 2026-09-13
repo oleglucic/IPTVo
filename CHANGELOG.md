@@ -1,3 +1,15 @@
+## [2.3.1](https://github.com/oleglucic/IPTVo/compare/v2.3.0...v2.3.1) (2026-09-13)
+
+### Bug Fixes
+
+* **stream:** remove stray brace in master playlist route ([9d713e1](https://github.com/oleglucic/IPTVo/commit/9d713e140ab41af97146bae9be7f4a955da593d6))
+* **stream:** master playlist uses real /relay/:sessionId URLs ([15ebb54](https://github.com/oleglucic/IPTVo/commit/15ebb542cc953a8c7e9f6edc6e5fd417caca9de4))
+* **stream:** wire ABR Auto stream + real relay URLs for transcoding ([651e672](https://github.com/oleglucic/IPTVo/commit/651e6722f9769aa26e692522fa3ddf08a19f60c3))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.3.0](https://github.com/oleglucic/IPTVo/compare/v2.2.0...v2.3.0) (2026-09-12)
 
 ### Features
