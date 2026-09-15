@@ -1600,9 +1600,10 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
         // When transcoding is enabled, Stremio receives the master playlist URL
         // instead of a single-rendition relay URL. This works independently of
         // CONCURRENCY_LIMIT_ENABLED — the two flags are orthogonal.
+        const streamBase = config.streamRoot || rootUrl;
         const streamUrl = TRANSCODE_ENABLED
-            ? `${rootUrl}/${encodeURIComponent(String(userId))}/relay/master/${encodeURIComponent(String(id))}/master.m3u8`
-            : `${rootUrl}/${userId}/relay/${sessionId}/playlist.m3u8`;
+            ? `${streamBase}/${encodeURIComponent(String(userId))}/relay/master/${encodeURIComponent(String(id))}/master.m3u8`
+            : `${streamBase}/${userId}/relay/${sessionId}/playlist.m3u8`;
 
         return {
             streams: [
@@ -1620,10 +1621,11 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
     // One "Auto" stream (HLS master) first — ExoPlayer picks quality from the ladder.
     // Raw provider URLs stay below. Independent of CONCURRENCY_LIMIT_ENABLED.
     if (TRANSCODE_ENABLED && upstreamUrl && bestStream) {
-        const masterUrl = `${rootUrl}/${encodeURIComponent(String(configKey))}/relay/master/${encodeURIComponent(String(id))}/master.m3u8`;
+        const streamBase = config.streamRoot || rootUrl;
+        const masterUrl = `${streamBase}/${encodeURIComponent(String(configKey))}/relay/master/${encodeURIComponent(String(id))}/master.m3u8`;
         const autoStream = {
-            name: bestStream.name,
-            title: 'Auto',
+            name: 'Auto',
+            title: streamTitle(bestStream),
             url: masterUrl,
         };
         const rawStreams = sortedStreams.map(stream => ({
@@ -1904,6 +1906,7 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
         const { configKey, configObj } = await getConfigFromReq(req);
         const rootUrl = assetRoot(req);
         const posterRootUrl = posterRoot(req);
+        const streamRootUrl = posterRootUrl;
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
@@ -1912,7 +1915,7 @@ app.get('/:userId/stream/:type/:id.json', async (req, res, next) => {
             return res.status(400).send('Invalid ID');
         }
         const extra = {};
-        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl, streamRoot: streamRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
@@ -1967,7 +1970,8 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         return res.status(503).send('Session storage unavailable');
     }
 
-    const rootUrl = assetRoot(req);
+    // App host — assets Worker does not proxy /relay/*
+    const rootUrl = posterRoot(req);
     const uid = encodeURIComponent(String(resolvedUserId));
     const lines = ['#EXTM3U'];
 
@@ -2302,6 +2306,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
         const configObj = extractConfig(req);
         const rootUrl = assetRoot(req);
         const posterRootUrl = posterRoot(req);
+        const streamRootUrl = posterRootUrl;
         const resource = 'stream';
         const type = req.params.type;
         const id = req.params.id;
@@ -2310,7 +2315,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res, next) => {
             return res.status(400).send('Invalid ID');
         }
         const extra = {};
-        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl };
+        const config = { configKey, configObj, rootUrl, posterRoot: posterRootUrl, streamRoot: streamRootUrl };
         const result = await addonInterface.get(resource, type, id, extra, config);
         res.json(result);
     } catch (err) {
