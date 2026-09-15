@@ -416,12 +416,13 @@ async function withOnceLock(lockName, ttlSeconds, fn) {
 // 30-day TTL (matches the previous in-memory expiry). Node cluster / replicas
 // only work once this is Redis-backed.
 const SESSION_PREFIX = 'nuvio:session:';
-const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; /**
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
  * Retrieves a shared session by its token.
  * @param {string} token - The session token.
  * @return {Object|null} The parsed session data, or `null` if the token is missing, the session is unavailable, or the stored data is invalid.
  */
-
 async function sessionGet(token) {
     if (!redis || !token) return null;
     try {
@@ -475,10 +476,15 @@ async function sessionPruneExpired() {
                         if (!s || (s.expiresAt && s.expiresAt < now)) toDel.push(keys[i]);
                     } catch { toDel.push(keys[i]); }
                 }
-                if (toDel.length) { await redis.del(toDel); cleared += toDel.length; }
+                if (toDel.length) {
+                    await redis.del(...toDel);
+                    cleared += toDel.length;
+                }
             }
         } while (cursor !== '0');
-    } catch (e) { log.error('sessionPrune:', e.message); }
+    } catch (e) {
+        log.error('sessionPruneExpired:', e.message);
+    }
     return cleared;
 }
 
@@ -503,5 +509,6 @@ module.exports = {
     sessionSet,
     sessionDelete,
     sessionPruneExpired,
-    hasRedis: !!redis
+    hasRedis: !!redis,
+    redisClient: redis
 };
