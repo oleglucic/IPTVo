@@ -975,39 +975,102 @@ async function parseXtreamData(configKey, configObj) {
 
         log.info(`Xtream Engine Querying data channels from endpoint: ${baseUrl}`);
 
-        const [catRes, streamRes] = await Promise.all([
-            axios.get(`${apiBase}&action=get_live_categories`, { timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(() => ({ data: [] })),
-            axios.get(`${apiBase}&action=get_live_streams`, { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } })
-        ]);
-
-        revalidateResponseUrl(streamRes);
+        // Categories first → map selected group names to category_id and fetch
+        // only those (get_live_streams&category_id=). Full panel only when include
+        // is empty or only exclude is set.
+        const catRes = await axios.get(`${apiBase}&action=get_live_categories`, {
+            timeout: 60000,
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+        }).catch(() => ({ data: [] }));
         revalidateResponseUrl(catRes);
 
-        if (!streamRes.data || !Array.isArray(streamRes.data)) {
-            throw new Error("Invalid stream response payload from Xtream server.");
+        const catMap = new Map();
+        const nameToIds = new Map();
+        if (Array.isArray(catRes.data)) {
+            for (const item of catRes.data) {
+                if (!item || item.category_id == null || !item.category_name) continue;
+                const id = String(item.category_id);
+                const name = String(item.category_name).trim();
+                if (!name) continue;
+                catMap.set(id, name);
+                const key = name.toLowerCase();
+                if (!nameToIds.has(key)) nameToIds.set(key, []);
+                nameToIds.get(key).push(id);
+            }
         }
 
-        const catMap = new Map();
-        if (Array.isArray(catRes.data)) {
-            catRes.data.forEach(item => {
-                if (item.category_id && item.category_name) {
-                    catMap.set(item.category_id.toString(), item.category_name.trim());
+        const filterGroups = (configObj.include || []).map(g => String(g).toLowerCase()).filter(Boolean);
+        const excludeGroups = (configObj.exclude || []).map(g => String(g).toLowerCase()).filter(Boolean);
+
+        let streamResData;
+        if (filterGroups.length > 0) {
+            const selectedIds = [];
+            const unresolved = [];
+            for (const g of filterGroups) {
+                const ids = nameToIds.get(g);
+                if (ids && ids.length) selectedIds.push(...ids);
+                else unresolved.push(g);
+            }
+            if (unresolved.length) {
+                log.warn(`Xtream: selected groups not in provider categories: ${unresolved.join(', ')}`);
+            }
+            const uniqueIds = [...new Set(selectedIds)];
+            if (uniqueIds.length === 0) {
+                log.warn('Xtream: no category_ids matched include; falling back to full get_live_streams');
+                const streamRes = await axios.get(`${apiBase}&action=get_live_streams`, {
+                    timeout: 90000,
+                    headers: { 'User-Agent': 'Mozilla/5.0' },
+                });
+                revalidateResponseUrl(streamRes);
+                streamResData = streamRes.data;
+            } else {
+                const conc = Math.min(
+                    uniqueIds.length,
+                    Math.max(1, parseInt(process.env.XTREAM_CATEGORY_FETCH_CONCURRENCY || '4', 10) || 4)
+                );
+                log.info(`Xtream: category-scoped fetch ${uniqueIds.length} categories (concurrency=${conc})`);
+                streamResData = [];
+                for (let i = 0; i < uniqueIds.length; i += conc) {
+                    const batch = uniqueIds.slice(i, i + conc);
+                    const parts = await Promise.all(batch.map(async (cid) => {
+                        try {
+                            const r = await axios.get(
+                                `${apiBase}&action=get_live_streams&category_id=${encodeURIComponent(cid)}`,
+                                { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } }
+                            );
+                            revalidateResponseUrl(r);
+                            return Array.isArray(r.data) ? r.data : [];
+                        } catch (e) {
+                            log.error(`Xtream category ${cid} fetch failed: ${e.message}`);
+                            return [];
+                        }
+                    }));
+                    for (const arr of parts) streamResData.push(...arr);
                 }
+            }
+        } else {
+            const streamRes = await axios.get(`${apiBase}&action=get_live_streams`, {
+                timeout: 90000,
+                headers: { 'User-Agent': 'Mozilla/5.0' },
             });
+            revalidateResponseUrl(streamRes);
+            streamResData = streamRes.data;
+        }
+
+        if (!streamResData || !Array.isArray(streamResData)) {
+            throw new Error("Invalid stream response payload from Xtream server.");
         }
 
         const tMap = new Map(), logoTrack = new Map(), tCat = [];
         const groups = new Set(), epgMap = new Map();
         const dirtyChannels = [];
 
-        for (const stream of streamRes.data) {
+        for (const stream of streamResData) {
             if (stream.stream_type !== 'live' || !stream.stream_id) continue;
             const catchupInfo = extractXtreamCatchupInfo(stream);
 
             const rawGrp = catMap.get(stream.category_id?.toString()) || 'Uncategorized';
 
-            const filterGroups = (configObj.include || []).map(g => g.toLowerCase());
-            const excludeGroups = (configObj.exclude || []).map(g => g.toLowerCase());
             const rawGrpLower = rawGrp.toLowerCase();
 
             if (filterGroups.length > 0) {
