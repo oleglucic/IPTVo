@@ -1,3 +1,18 @@
+## [2.5.0](https://github.com/oleglucic/IPTVo/compare/v2.4.0...v2.5.0) (2026-09-18)
+
+### Bug Fixes
+
+* **relay:** fold HDR detect execFileAsync fix into shared-sessions branch ([1e918e8](https://github.com/oleglucic/IPTVo/commit/1e918e812b15a06be5af3bfc107756837fb7250b))
+
+### Features
+
+* **sessions:** share one upstream per channel across devices; fix ioredis zadd ([da453ed](https://github.com/oleglucic/IPTVo/commit/da453ed2915744e76b1423ff29632d8be434d283))
+* **stream:** reuse shared relay/ABR sessions for multi-device same channel ([957ceda](https://github.com/oleglucic/IPTVo/commit/957cedaf1f9f525c82c8bc2106501c96d9c51fce))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.4.0](https://github.com/oleglucic/IPTVo/compare/v2.3.2...v2.4.0) (2026-09-18)
 
 ### Bug Fixes
