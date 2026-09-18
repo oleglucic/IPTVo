@@ -1999,29 +1999,35 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         return res.status(503).send('Session storage unavailable');
     }
 
-    // Probe source resolution so 4K is not advertised as 1080p (breaks non-4K TVs).
-    // If taller than AUTO_MASTER_MAX_HEIGHT, omit source from the Auto ladder —
-    // clients still get raw 4K from the normal stream list if they want it.
+    // Full Auto ladder: source (incl. 4K) + every transcode rung, with honest RESOLUTION.
+    // Optional safety: set AUTO_MASTER_MAX_HEIGHT=1080 to hide taller source on broken clients.
+    // Default: no max → Netflix-style; player filters unplayable tracks.
     const { startRealStream, probeSourceVideo } = require('./src/streamRelay');
-    const masterMaxHeight = parseInt(process.env.AUTO_MASTER_MAX_HEIGHT || '1080', 10);
+    const masterMaxRaw = process.env.AUTO_MASTER_MAX_HEIGHT;
+    const masterMaxHeight = masterMaxRaw ? parseInt(masterMaxRaw, 10) : null;
+
     let sourceMeta = null;
     try {
         sourceMeta = await probeSourceVideo(upstreamUrl);
     } catch (_) { /* ignore */ }
     const sourceHeight = sourceMeta ? sourceMeta.height : null;
     const sourceWidth = sourceMeta ? sourceMeta.width : null;
-    const includeSourceInMaster = !sourceHeight || sourceHeight <= masterMaxHeight;
+    const includeSourceInMaster =
+        !masterMaxHeight ||
+        !Number.isFinite(masterMaxHeight) ||
+        !sourceHeight ||
+        sourceHeight <= masterMaxHeight;
 
-    // Pre-start the variant the player is most likely to pick first
     const sortedHeights = [...TRANSCODE_RENDITIONS].sort((a, b) => b - a);
-    const preferredHeight = sortedHeights.find((h) => h <= masterMaxHeight) || sortedHeights[0];
-    const preStartRendition = includeSourceInMaster ? 'source' : preferredHeight;
-    const preStartSessionId = includeSourceInMaster
-        ? sessionByRendition.source
-        : sessionByRendition[String(preferredHeight)];
+    // Fast start: mid rung (prefer 720, else highest <= 1080), never cold-start on 4K source
+    const preferredHeight =
+        sortedHeights.find((h) => h === 720) ||
+        sortedHeights.find((h) => h <= 1080) ||
+        sortedHeights[0];
+    const preStartSessionId = sessionByRendition[String(preferredHeight)];
     if (preStartSessionId) {
-        startRealStream(preStartSessionId, upstreamUrl, preStartRendition).catch((e) => {
-            log.warn(`Pre-start ${preStartRendition} relay failed: ${e.message}`);
+        startRealStream(preStartSessionId, upstreamUrl, preferredHeight).catch((e) => {
+            log.warn(`Pre-start ${preferredHeight}p relay failed: ${e.message}`);
         });
     }
 
@@ -2030,9 +2036,30 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
     const uid = encodeURIComponent(String(resolvedUserId));
     const lines = ['#EXTM3U'];
 
-    const bandwidthMap = { 1080: 5000000, 720: 3000000, 480: 1500000, 360: 800000 };
+    const bandwidthMap = {
+        2160: 20000000,
+        1440: 12000000,
+        1080: 5000000,
+        720: 3000000,
+        480: 1500000,
+        360: 800000,
+        240: 400000,
+    };
 
-    // Transcoded rungs first (safe for 1080-max TVs), then source only if not too tall
+    // Source first when included (best quality), then high → low encodes
+    if (includeSourceInMaster && sessionByRendition.source) {
+        const w = sourceWidth || 1920;
+        const h = sourceHeight || 1080;
+        const bandwidth = Math.min(
+            25000000,
+            Math.max(bandwidthMap[h] || 8000000, Math.round(w * h * 0.1))
+        );
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${w}x${h},NAME="source"`);
+        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sessionByRendition.source)}/playlist.m3u8`);
+    } else if (sourceHeight && masterMaxHeight && sourceHeight > masterMaxHeight) {
+        log.info(`Auto master: omitting ${sourceWidth}x${sourceHeight} source (AUTO_MASTER_MAX_HEIGHT=${masterMaxHeight}) channel=${channelId}`);
+    }
+
     for (const height of sortedHeights) {
         const sid = sessionByRendition[String(height)];
         if (!sid) continue;
@@ -2040,16 +2067,6 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         const bandwidth = bandwidthMap[height] || 1500000;
         lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height},NAME="${height}p"`);
         lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
-    }
-
-    if (includeSourceInMaster && sessionByRendition.source) {
-        const w = sourceWidth || 1920;
-        const h = sourceHeight || 1080;
-        const bandwidth = Math.min(25000000, Math.max(8000000, Math.round(w * h * 0.1)));
-        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${w}x${h},NAME="source"`);
-        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sessionByRendition.source)}/playlist.m3u8`);
-    } else if (sourceHeight && sourceHeight > masterMaxHeight) {
-        log.info(`Auto master: omitting ${sourceWidth}x${sourceHeight} source (max ${masterMaxHeight}p) channel=${channelId}`);
     }
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
@@ -2449,7 +2466,7 @@ const CONCURRENCY_LIMIT_ENABLED = process.env.CONCURRENCY_LIMIT_ENABLED === 'tru
 const CONCURRENCY_EVICTION_COUNTDOWN_MS = parseInt(process.env.CONCURRENCY_EVICTION_COUNTDOWN_MS || '15000', 10);
 const CONCURRENCY_SESSION_IDLE_TIMEOUT_MS = parseInt(process.env.CONCURRENCY_SESSION_IDLE_TIMEOUT_MS || '45000', 10);
 const TRANSCODE_ENABLED = process.env.TRANSCODE_ENABLED === 'true';
-const TRANSCODE_RENDITIONS = (process.env.TRANSCODE_RENDITIONS || '1080,720,480,360')
+const TRANSCODE_RENDITIONS = (process.env.TRANSCODE_RENDITIONS || '1080,720,480,360,240')
     .split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
 // TRANSCODE_CODEC/HWACCEL/CRF/PRESET/MAX_CONCURRENT_JOBS read from process.env in streamRelay/transcodeConfig
 const workercount = CLUSTER_WORKERS > 1
