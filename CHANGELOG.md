@@ -1,3 +1,15 @@
+## [2.3.2](https://github.com/oleglucic/IPTVo/compare/v2.3.1...v2.3.2) (2026-09-18)
+
+### Bug Fixes
+
+* **redis:** export redisClient for stream session tracking ([e2d46b8](https://github.com/oleglucic/IPTVo/commit/e2d46b8b267f77aa060bdaab315a86bd9071bec2))
+* **stream:** Auto name, source title, relay URLs on app host ([881a9d7](https://github.com/oleglucic/IPTVo/commit/881a9d74fdf65c17b3ce392eae2e4aae7dd8454a))
+* **stream:** Auto name, source title, relay on app host not assets CDN ([d3ac47f](https://github.com/oleglucic/IPTVo/commit/d3ac47fb476dcc44cc4d89c682489177d3888807))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.3.1](https://github.com/oleglucic/IPTVo/compare/v2.3.0...v2.3.1) (2026-09-13)
 
 ### Bug Fixes
