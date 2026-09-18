@@ -159,6 +159,42 @@ function sanitizeUpstreamUrl(upstreamUrl) {
     return url;
 }
 
+/**
+ * Quick width/height probe for master ladder decisions.
+ * @returns {Promise<{width:number,height:number}|null>}
+ */
+async function probeSourceVideo(upstreamUrl) {
+    if (!upstreamUrl || typeof upstreamUrl !== 'string') return null;
+    let url = sanitizeUpstreamUrl(upstreamUrl);
+    try {
+        const { stdout } = await execFileAsync(
+            'ffprobe',
+            [
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height',
+                '-of', 'json',
+                '-analyzeduration', '500000',
+                '-probesize', '65536',
+                url,
+            ],
+            { timeout: 2000, encoding: 'utf8', maxBuffer: 256 * 1024 }
+        );
+        const data = JSON.parse(String(stdout || '{}'));
+        const stream = data.streams && data.streams[0];
+        if (!stream) return null;
+        const width = Number(stream.width);
+        const height = Number(stream.height);
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width < 2 || height < 2) {
+            return null;
+        }
+        return { width, height };
+    } catch (e) {
+        log.info(`Source probe skipped: ${e.message || 'unknown'}`);
+        return null;
+    }
+}
+
 async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJobs) {
     if (activeProcesses.has(sessionId)) {
         return;
@@ -376,4 +412,6 @@ module.exports = {
     stopFfmpegForSession,
     getSessionDir,
     safeSessionPath,
+    probeSourceVideo,
+    sanitizeUpstreamUrl,
 };
