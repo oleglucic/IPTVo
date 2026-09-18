@@ -1,3 +1,17 @@
+## [2.4.0](https://github.com/oleglucic/IPTVo/compare/v2.3.2...v2.4.0) (2026-09-18)
+
+### Bug Fixes
+
+* **security:** xtreamApiUrl helper + numeric category_id for CodeQL SSRF ([308b46f](https://github.com/oleglucic/IPTVo/commit/308b46fb55cc08643c3733ff7edf1b736ba5b90e))
+
+### Features
+
+* **xtream:** category-scoped live stream fetch for selected groups ([618bb3a](https://github.com/oleglucic/IPTVo/commit/618bb3a14b934665a727394210ad7380a7a14ed3))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.3.2](https://github.com/oleglucic/IPTVo/compare/v2.3.1...v2.3.2) (2026-09-18)
 
 ### Bug Fixes
