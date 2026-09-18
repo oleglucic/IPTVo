@@ -35,7 +35,7 @@ async function writeSessionHash(sessionId, fields) {
 async function addToSortedSet(userId, sessionId, score) {
     if (!redis) return false;
     try {
-        await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, [{ score, value: sessionId }]);
+        await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, score, sessionId);
         return true;
     } catch (e) {
         log.error('addToSortedSet error:', e.message);
@@ -132,7 +132,7 @@ async function reserveSessionSlot(userId, channelId, limit) {
 async function touchSession(sessionId, userId) {
     if (!redis) return;
     try {
-        await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, [{ score: Date.now(), value: sessionId }]);
+        await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, Date.now(), sessionId);
         await writeSessionHash(sessionId, { lastActivityAt: Date.now() });
     } catch (e) {
         log.error('touchSession error:', e.message);
