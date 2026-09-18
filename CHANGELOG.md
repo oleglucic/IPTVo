@@ -1,3 +1,22 @@
+## [2.5.1](https://github.com/oleglucic/IPTVo/compare/v2.5.0...v2.5.1) (2026-09-18)
+
+### Performance Improvements
+
+* **relay:** hls_init_time 1s for faster first segment ([d565be7](https://github.com/oleglucic/IPTVo/commit/d565be738005c0c0636bdd6cafd8bca080513a9a))
+* **stream:** faster playlist poll + pre-start source on master ([5752628](https://github.com/oleglucic/IPTVo/commit/5752628b75cc91e809cc0173f86e95d1fa0f23c2))
+
+### Bug Fixes
+
+* restore reserveSessionSlot KEYS order (channelSession key) ([2451ab1](https://github.com/oleglucic/IPTVo/commit/2451ab1336b00e12536329af4acbc5669f7efa9e))
+* remove unused role binding (CodeQL) ([87268f0](https://github.com/oleglucic/IPTVo/commit/87268f0aaba7460d817e9ffdcc59f22eeae1518e))
+* **relay:** live HLS 2s segments, sanitize upstream URLs, faster HDR probe, ultrafast defaults ([63435a6](https://github.com/oleglucic/IPTVo/commit/63435a6c898603eefd11b2d8c7095eb05f268d81))
+* **sessions:** ABR ladder touch/reap — do not kill live Auto rungs ([d33f1c3](https://github.com/oleglucic/IPTVo/commit/d33f1c3b4884d509b67ffd1089418613156ca1b2))
+* **stream:** ABR-safe idle reap, live HLS/encode defaults, faster HDR probe ([3c369ec](https://github.com/oleglucic/IPTVo/commit/3c369ecd248040a054e4517ebc801b72b3669dae))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.5.0](https://github.com/oleglucic/IPTVo/compare/v2.4.0...v2.5.0) (2026-09-18)
 
 ### Bug Fixes
