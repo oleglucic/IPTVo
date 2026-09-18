@@ -254,6 +254,36 @@ function isSafeUrl(url) {
  * link-local or cloud-metadata host on a public server. If a stream is being
  * consumed it is destroyed so an under-read response is not leaked.
  */
+/**
+ * Build a player_api.php URL from an already-validated Xtream base.
+ * Uses URL + searchParams so the path/query cannot escape the origin,
+ * then re-checks isSafeUrl on the final href (CodeQL SSRF).
+ * @param {string} baseUrl
+ * @param {string} user
+ * @param {string} pass
+ * @param {string} action
+ * @param {Record<string, string|number>} [extra]
+ * @returns {string}
+ */
+function xtreamApiUrl(baseUrl, user, pass, action, extra = {}) {
+    if (!isSafeUrl(baseUrl)) {
+        throw new Error("Invalid Xtream URL: private/internal addresses not allowed");
+    }
+    const root = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    const u = new URL('player_api.php', root);
+    u.searchParams.set('username', String(user ?? ''));
+    u.searchParams.set('password', String(pass ?? ''));
+    u.searchParams.set('action', String(action));
+    for (const [k, v] of Object.entries(extra || {})) {
+        if (v === undefined || v === null) continue;
+        u.searchParams.set(k, String(v));
+    }
+    if (!isSafeUrl(u.href)) {
+        throw new Error("Invalid Xtream URL: private/internal addresses not allowed");
+    }
+    return u.href;
+}
+
 function revalidateResponseUrl(res, stream) {
     const resNode = res && res.request && res.request.res;
     const finalUrl = (res && res.responseUrl) || (resNode && resNode.responseUrl) || (res && res.config && res.config.url);
@@ -971,17 +1001,16 @@ async function parseXtreamData(configKey, configObj) {
             throw new Error("Invalid Xtream URL: private/internal addresses not allowed");
         }
 
-        const apiBase = `${baseUrl}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
-
         log.info(`Xtream Engine Querying data channels from endpoint: ${baseUrl}`);
 
         // Categories first → map selected group names to category_id and fetch
         // only those (get_live_streams&category_id=). Full panel only when include
-        // is empty or only exclude is set.
-        const catRes = await axios.get(`${apiBase}&action=get_live_categories`, {
-            timeout: 60000,
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-        }).catch(() => ({ data: [] }));
+        // is empty or only exclude is set. All player_api URLs go through
+        // xtreamApiUrl (URL + isSafeUrl) so CodeQL SSRF sees a sanitizer.
+        const catRes = await axios.get(
+            xtreamApiUrl(baseUrl, user, pass, 'get_live_categories'),
+            { timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } }
+        ).catch(() => ({ data: [] }));
         revalidateResponseUrl(catRes);
 
         const catMap = new Map();
@@ -990,6 +1019,8 @@ async function parseXtreamData(configKey, configObj) {
             for (const item of catRes.data) {
                 if (!item || item.category_id == null || !item.category_name) continue;
                 const id = String(item.category_id);
+                // Provider JSON is untrusted — only numeric category_id in URLs
+                if (!/^\d+$/.test(id)) continue;
                 const name = String(item.category_name).trim();
                 if (!name) continue;
                 catMap.set(id, name);
@@ -1014,13 +1045,13 @@ async function parseXtreamData(configKey, configObj) {
             if (unresolved.length) {
                 log.warn(`Xtream: selected groups not in provider categories: ${unresolved.join(', ')}`);
             }
-            const uniqueIds = [...new Set(selectedIds)];
+            const uniqueIds = [...new Set(selectedIds)].filter((id) => /^\d+$/.test(id));
             if (uniqueIds.length === 0) {
                 log.warn('Xtream: no category_ids matched include; falling back to full get_live_streams');
-                const streamRes = await axios.get(`${apiBase}&action=get_live_streams`, {
-                    timeout: 90000,
-                    headers: { 'User-Agent': 'Mozilla/5.0' },
-                });
+                const streamRes = await axios.get(
+                    xtreamApiUrl(baseUrl, user, pass, 'get_live_streams'),
+                    { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } }
+                );
                 revalidateResponseUrl(streamRes);
                 streamResData = streamRes.data;
             } else {
@@ -1035,7 +1066,7 @@ async function parseXtreamData(configKey, configObj) {
                     const parts = await Promise.all(batch.map(async (cid) => {
                         try {
                             const r = await axios.get(
-                                `${apiBase}&action=get_live_streams&category_id=${encodeURIComponent(cid)}`,
+                                xtreamApiUrl(baseUrl, user, pass, 'get_live_streams', { category_id: cid }),
                                 { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } }
                             );
                             revalidateResponseUrl(r);
@@ -1049,10 +1080,10 @@ async function parseXtreamData(configKey, configObj) {
                 }
             }
         } else {
-            const streamRes = await axios.get(`${apiBase}&action=get_live_streams`, {
-                timeout: 90000,
-                headers: { 'User-Agent': 'Mozilla/5.0' },
-            });
+            const streamRes = await axios.get(
+                xtreamApiUrl(baseUrl, user, pass, 'get_live_streams'),
+                { timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } }
+            );
             revalidateResponseUrl(streamRes);
             streamResData = streamRes.data;
         }
