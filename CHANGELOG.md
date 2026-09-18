@@ -1,3 +1,18 @@
+## [2.6.0](https://github.com/oleglucic/IPTVo/compare/v2.5.1...v2.6.0) (2026-09-18)
+
+### Features
+
+* **auto:** full ladder source+4K→240 with honest tags; mid-rung pre-start ([a55627d](https://github.com/oleglucic/IPTVo/commit/a55627d9e158d51de22ffc7515ce11336550f6e9))
+* **relay:** probeSourceVideo for Auto master resolution decisions ([e9f58a3](https://github.com/oleglucic/IPTVo/commit/e9f58a38a3fd66afcfaffbb585932354f6e2f60e))
+
+### Bug Fixes
+
+* **auto:** omit 4K source from master; pre-start 1080p for non-4K TVs ([839e539](https://github.com/oleglucic/IPTVo/commit/839e539e280aa446d9bab9c26584e7d6e106d837))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.5.1](https://github.com/oleglucic/IPTVo/compare/v2.5.0...v2.5.1) (2026-09-18)
 
 ### Performance Improvements
