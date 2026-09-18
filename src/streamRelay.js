@@ -59,9 +59,21 @@ async function releaseTranscodeSlot() {
 }
 
 /**
+ * Best-effort HDR transfer probe. Skips obviously broken URLs and uses a short
+ * timeout so live startup is not blocked for seconds on probe failure.
  * @returns {Promise<string|null>} smpte2084 | arib-std-b67 | null
  */
 async function detectHdr(upstreamUrl) {
+    if (!upstreamUrl || typeof upstreamUrl !== 'string') return null;
+    // Provider URLs sometimes append a second truncated URL as a query string
+    let url = upstreamUrl.trim();
+    const q = url.indexOf('?');
+    if (q !== -1) {
+        const qs = url.slice(q + 1);
+        if (qs.startsWith('http://') || qs.startsWith('https://')) {
+            url = url.slice(0, q);
+        }
+    }
     try {
         const { stdout } = await execFileAsync(
             'ffprobe',
@@ -70,9 +82,11 @@ async function detectHdr(upstreamUrl) {
                 '-select_streams', 'v:0',
                 '-show_entries', 'stream=color_transfer',
                 '-of', 'json',
-                upstreamUrl,
+                '-analyzeduration', '500000',
+                '-probesize', '65536',
+                url,
             ],
-            { timeout: 5000, encoding: 'utf8', maxBuffer: 1024 * 1024 }
+            { timeout: 1500, encoding: 'utf8', maxBuffer: 256 * 1024 }
         );
         const data = JSON.parse(String(stdout || '{}'));
         const transfer = data.streams && data.streams[0] && data.streams[0].color_transfer;
@@ -81,7 +95,8 @@ async function detectHdr(upstreamUrl) {
         }
         return null;
     } catch (e) {
-        log.warn(`HDR detect: ${e.message || 'unknown error'}`);
+        // Common on flaky IPTV edges — not actionable at warn level every segment
+        log.info(`HDR detect skipped: ${e.message || 'unknown error'}`);
         return null;
     }
 }
@@ -133,6 +148,19 @@ function ensureSessionDir(sessionId) {
     return dir;
 }
 
+function sanitizeUpstreamUrl(upstreamUrl) {
+    if (!upstreamUrl || typeof upstreamUrl !== 'string') return upstreamUrl;
+    let url = upstreamUrl.trim();
+    const q = url.indexOf('?');
+    if (q !== -1) {
+        const qs = url.slice(q + 1);
+        if (qs.startsWith('http://') || qs.startsWith('https://')) {
+            url = url.slice(0, q);
+        }
+    }
+    return url;
+}
+
 async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJobs) {
     if (activeProcesses.has(sessionId)) {
         return;
@@ -141,6 +169,8 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
     if (rendition === undefined || rendition === null || rendition === '') {
         rendition = 'source';
     }
+
+    upstreamUrl = sanitizeUpstreamUrl(upstreamUrl);
 
     const sessionDir = ensureSessionDir(sessionId);
 
@@ -165,10 +195,11 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
 
         const videoArgs = buildVideoEncodeArgs({
             targetHeight: rendition,
-            codec: process.env.TRANSCODE_CODEC,
-            hwaccel: process.env.TRANSCODE_HWACCEL,
-            crf: process.env.TRANSCODE_CRF,
-            preset: process.env.TRANSCODE_PRESET,
+            // Live defaults: h264 + ultrafast unless operator overrides
+            codec: process.env.TRANSCODE_CODEC || 'h264',
+            hwaccel: process.env.TRANSCODE_HWACCEL || 'none',
+            crf: process.env.TRANSCODE_CRF || '23',
+            preset: process.env.TRANSCODE_PRESET || 'ultrafast',
             sourceIsHdr: hdrTransfer,
             vaapiDevice: process.env.TRANSCODE_VAAPI_DEVICE,
         });
@@ -182,9 +213,9 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
                 ...videoArgs,
                 '-c:a', 'copy',
                 '-f', 'hls',
-                '-hls_time', '4',
+                '-hls_time', '2',
                 '-hls_list_size', '6',
-                '-hls_flags', 'delete_segments+append_list',
+                '-hls_flags', 'delete_segments+append_list+independent_segments',
                 '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
                 path.join(sessionDir, 'playlist.m3u8'),
             ],
@@ -228,9 +259,9 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
                 '-i', upstreamUrl,
                 '-c', 'copy',
                 '-f', 'hls',
-                '-hls_time', '4',
+                '-hls_time', '2',
                 '-hls_list_size', '6',
-                '-hls_flags', 'delete_segments+append_list',
+                '-hls_flags', 'delete_segments+append_list+independent_segments',
                 '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
                 path.join(sessionDir, 'playlist.m3u8'),
             ],
