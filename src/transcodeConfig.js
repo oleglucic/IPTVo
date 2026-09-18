@@ -63,6 +63,13 @@ function buildVideoEncodeArgs({
 
     if (hwaccel === 'none' || encoder === 'libsvtav1') {
         rateControl = ['-c:v', encoder, '-preset', String(preset), '-crf', String(crf)];
+        // Live glass-to-glass: prefer low latency over compression efficiency
+        if (encoder === 'libx264') {
+            rateControl.push('-tune', 'zerolatency', '-g', '50', '-keyint_min', '25');
+        }
+        if (encoder === 'libx265') {
+            rateControl.push('-tune', 'zerolatency');
+        }
     } else if (hwaccel === 'nvenc') {
         const nvencPreset = preset === 'veryfast' ? 'p1' : String(preset);
         rateControl = ['-c:v', encoder, '-preset', nvencPreset, '-cq', String(crf)];
