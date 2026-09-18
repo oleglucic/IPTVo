@@ -256,13 +256,13 @@ async function reserveSessionSlot(userId, channelId, limit) {
         3,
         SESSION_SORTED_SET_PREFIX + userId,
         SESSION_HASH_PREFIX + sessionId,
+        channelSessionKey(userId, channelId),
         limit,
         userId,
         channelId,
         now,
         SESSION_TTL_SECONDS,
-        sessionId,
-        channelSessionKey(userId, channelId)
+        sessionId
     );
 
     if (reserved !== 1) return null;
