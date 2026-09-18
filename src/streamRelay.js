@@ -3,6 +3,8 @@
 // One HLS subfolder per session under repo-root cache/hls/.
 
 const { spawn, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger').for('streamRelay');
@@ -61,7 +63,7 @@ async function releaseTranscodeSlot() {
  */
 async function detectHdr(upstreamUrl) {
     try {
-        const result = await execFile(
+        const { stdout } = await execFileAsync(
             'ffprobe',
             [
                 '-v', 'error',
@@ -70,16 +72,16 @@ async function detectHdr(upstreamUrl) {
                 '-of', 'json',
                 upstreamUrl,
             ],
-            { timeout: 5000 }
+            { timeout: 5000, encoding: 'utf8', maxBuffer: 1024 * 1024 }
         );
-        const data = JSON.parse(result.stdout);
+        const data = JSON.parse(String(stdout || '{}'));
         const transfer = data.streams && data.streams[0] && data.streams[0].color_transfer;
         if (transfer === 'smpte2084' || transfer === 'arib-std-b67') {
             return transfer;
         }
         return null;
     } catch (e) {
-        console.warn(`[HDR Detect] ${e.message || 'unknown error'}`);
+        log.warn(`HDR detect: ${e.message || 'unknown error'}`);
         return null;
     }
 }
