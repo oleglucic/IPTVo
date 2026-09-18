@@ -1648,10 +1648,22 @@ builder.defineStreamHandler(async ({ _type, id, _extra, config }) => {
         let sessionId = null;
 
         try {
-            const { createSession, reserveSessionSlot } = require('./src/streamSessions');
-            sessionId = providerConcurrencyLimit > 0
-                ? await reserveSessionSlot(userId, id, providerConcurrencyLimit)
-                : await createSession(userId, id);
+            const {
+                createSession,
+                reserveSessionSlot,
+                findSharedRelaySession,
+                touchSession,
+            } = require('./src/streamSessions');
+            // Same channel on multiple devices → one upstream (shared session)
+            sessionId = await findSharedRelaySession(userId, id);
+            if (sessionId) {
+                await touchSession(sessionId, userId);
+                log.info(`Reusing shared relay session ${sessionId} for channel ${id}`);
+            } else {
+                sessionId = providerConcurrencyLimit > 0
+                    ? await reserveSessionSlot(userId, id, providerConcurrencyLimit)
+                    : await createSession(userId, id);
+            }
 
             if (sessionId) {
                 const { startRealStream } = require('./src/streamRelay');
@@ -1958,13 +1970,30 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
     // Build the ABR ladder: source first, then each TRANSCODE_RENDITIONS entry from highest to lowest
     const renditions = ['source', ...TRANSCODE_RENDITIONS.sort((a, b) => b - a)];
 
-    // One Redis session per ladder entry (not counted toward provider concurrency).
-    // Playlist URLs use /:userId/relay/:sessionId/playlist.m3u8
-    const { createSession } = require('./src/streamSessions');
-    const sessionByRendition = {};
-    for (const rendition of renditions) {
-        const sid = await createSession(resolvedUserId, channelId, rendition, { countTowardLimit: false });
-        if (sid) sessionByRendition[String(rendition)] = sid;
+    // Share one ladder across devices for this channel (phone + TV = one upstream).
+    const {
+        createSession,
+        findSharedAbrSessions,
+        bindSharedAbrSessions,
+        touchSession,
+    } = require('./src/streamSessions');
+
+    let sessionByRendition = await findSharedAbrSessions(resolvedUserId, channelId);
+    if (sessionByRendition) {
+        for (const sid of Object.values(sessionByRendition)) {
+            await touchSession(sid, resolvedUserId);
+        }
+        log.info(`Reusing shared ABR sessions for ${resolvedUserId} channel ${channelId}`);
+    } else {
+        sessionByRendition = {};
+        for (const rendition of renditions) {
+            const sid = await createSession(resolvedUserId, channelId, rendition, { countTowardLimit: false });
+            if (sid) sessionByRendition[String(rendition)] = sid;
+        }
+        if (!sessionByRendition.source) {
+            return res.status(503).send('Session storage unavailable');
+        }
+        await bindSharedAbrSessions(resolvedUserId, channelId, sessionByRendition);
     }
     if (!sessionByRendition.source) {
         return res.status(503).send('Session storage unavailable');
