@@ -65,7 +65,6 @@ async function releaseTranscodeSlot() {
  */
 async function detectHdr(upstreamUrl) {
     if (!upstreamUrl || typeof upstreamUrl !== 'string') return null;
-    // Provider URLs sometimes append a second truncated URL as a query string
     let url = upstreamUrl.trim();
     const q = url.indexOf('?');
     if (q !== -1) {
@@ -95,7 +94,6 @@ async function detectHdr(upstreamUrl) {
         }
         return null;
     } catch (e) {
-        // Common on flaky IPTV edges — not actionable at warn level every segment
         log.info(`HDR detect skipped: ${e.message || 'unknown error'}`);
         return null;
     }
@@ -195,7 +193,6 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
 
         const videoArgs = buildVideoEncodeArgs({
             targetHeight: rendition,
-            // Live defaults: h264 + ultrafast unless operator overrides
             codec: process.env.TRANSCODE_CODEC || 'h264',
             hwaccel: process.env.TRANSCODE_HWACCEL || 'none',
             crf: process.env.TRANSCODE_CRF || '23',
@@ -214,6 +211,7 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
                 '-c:a', 'copy',
                 '-f', 'hls',
                 '-hls_time', '2',
+                '-hls_init_time', '1',
                 '-hls_list_size', '6',
                 '-hls_flags', 'delete_segments+append_list+independent_segments',
                 '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
@@ -260,6 +258,7 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
                 '-c', 'copy',
                 '-f', 'hls',
                 '-hls_time', '2',
+                '-hls_init_time', '1',
                 '-hls_list_size', '6',
                 '-hls_flags', 'delete_segments+append_list+independent_segments',
                 '-hls_segment_filename', path.join(sessionDir, 'seg_%05d.ts'),
