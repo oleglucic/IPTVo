@@ -1,11 +1,9 @@
 // streamSessions.js
 // Redis-backed session tracking for concurrency-limited streaming proxy.
-// Uses the existing Redis connection pattern from redisCache.js — same
-// REDIS_URL, same ioredis configuration, shared client across modules.
 //
 // Provider concurrency counts *distinct channels* (upstream pulls), not devices.
-// Multiple clients watching the same channel share one session / ffmpeg and
-// only touch activity on the shared session.
+// ABR ladder sessions share one channel index; secondary rungs are not concurrency
+// slots and must not be idle-reaped while the ladder is still in use.
 
 const crypto = require('crypto');
 const { hasRedis, redisClient } = require('./redisCache');
@@ -18,11 +16,9 @@ if (!redis) {
 
 const SESSION_SORTED_SET_PREFIX = 'sessions:';
 const SESSION_HASH_PREFIX = 'session:';
-// Primary relay session for (userId, channelId) — one upstream per channel
 const CHANNEL_SESSION_PREFIX = 'channelSession:';
-// ABR ladder: JSON map rendition -> sessionId for (userId, channelId)
 const CHANNEL_ABR_PREFIX = 'channelAbr:';
-const SESSION_TTL_SECONDS = 4 * 60 * 60; // 4 hours
+const SESSION_TTL_SECONDS = 4 * 60 * 60;
 
 function v4Uuid() {
     return crypto.randomUUID();
@@ -51,7 +47,6 @@ async function writeSessionHash(sessionId, fields) {
 async function addToSortedSet(userId, sessionId, score) {
     if (!redis) return false;
     try {
-        // ioredis: zadd(key, score, member) — not node-redis object form
         await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, score, sessionId);
         return true;
     } catch (e) {
@@ -69,10 +64,6 @@ async function removeFromSortedSet(userId, sessionId) {
     }
 }
 
-/**
- * Return existing active primary relay session for this channel, if any.
- * @returns {Promise<string|null>}
- */
 async function findSharedRelaySession(userId, channelId) {
     if (!redis || !userId || !channelId) return null;
     try {
@@ -94,27 +85,15 @@ async function findSharedRelaySession(userId, channelId) {
     }
 }
 
-/**
- * Index primary relay session so other devices reuse the same upstream.
- */
 async function bindSharedRelaySession(userId, channelId, sessionId) {
     if (!redis || !userId || !channelId || !sessionId) return;
     try {
-        await redis.set(
-            channelSessionKey(userId, channelId),
-            sessionId,
-            'EX',
-            SESSION_TTL_SECONDS
-        );
+        await redis.set(channelSessionKey(userId, channelId), sessionId, 'EX', SESSION_TTL_SECONDS);
     } catch (e) {
         log.error('bindSharedRelaySession error:', e.message);
     }
 }
 
-/**
- * Return ABR session map for this channel if every session still exists.
- * @returns {Promise<Record<string, string>|null>}
- */
 async function findSharedAbrSessions(userId, channelId) {
     if (!redis || !userId || !channelId) return null;
     try {
@@ -158,20 +137,55 @@ async function bindSharedAbrSessions(userId, channelId, sessionByRendition) {
             'EX',
             SESSION_TTL_SECONDS
         );
-        // Primary channel index points at source so concurrency treats Auto as one pull
         await bindSharedRelaySession(userId, channelId, sessionByRendition.source);
+        const now = String(Date.now());
+        for (const [rendition, sid] of Object.entries(sessionByRendition)) {
+            if (!sid) continue;
+            await writeSessionHash(sid, {
+                abrChannelId: String(channelId),
+                abrRole: rendition === 'source' ? 'source' : 'rendition',
+                lastActivityAt: now,
+            });
+        }
     } catch (e) {
         log.error('bindSharedAbrSessions error:', e.message);
     }
 }
 
 /**
- * @param {string} userId
- * @param {string} channelId
- * @param {string} [rendition]
- * @param {{ countTowardLimit?: boolean }} [options]
- * @returns {Promise<string|null>}
+ * Refresh activity for every session in an ABR ladder (keeps unused rungs alive
+ * while any client is watching the channel).
  */
+async function touchAbrLadder(userId, channelId) {
+    if (!redis || !userId || !channelId) return;
+    try {
+        const raw = await redis.get(channelAbrKey(userId, channelId));
+        if (!raw) return;
+        let map;
+        try {
+            map = JSON.parse(raw);
+        } catch {
+            return;
+        }
+        const now = String(Date.now());
+        const score = Date.now();
+        for (const sid of Object.values(map || {})) {
+            if (!sid) continue;
+            await writeSessionHash(sid, { lastActivityAt: now });
+        }
+        if (map.source) {
+            const src = await getSession(map.source);
+            if (src && src.countsTowardLimit === '1') {
+                await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, score, map.source);
+            }
+        }
+        await redis.expire(channelAbrKey(userId, channelId), SESSION_TTL_SECONDS);
+        await redis.expire(channelSessionKey(userId, channelId), SESSION_TTL_SECONDS);
+    } catch (e) {
+        log.error('touchAbrLadder error:', e.message);
+    }
+}
+
 async function createSession(userId, channelId, rendition, options = {}) {
     if (!redis) return null;
     const sessionId = v4Uuid();
@@ -185,6 +199,8 @@ async function createSession(userId, channelId, rendition, options = {}) {
         startedAt: now,
         status: 'active',
         rendition: r,
+        countsTowardLimit: countTowardLimit ? '1' : '0',
+        lastActivityAt: String(now),
     });
     if (!wrote) {
         log.error(`createSession: hash write failed for ${sessionId}`);
@@ -200,7 +216,6 @@ async function createSession(userId, channelId, rendition, options = {}) {
             log.error(`createSession: sorted-set write failed for ${sessionId}`);
             return null;
         }
-        // Only the primary (slot-counting) session owns the shared channel index
         if (!rendition || rendition === 'source') {
             await bindSharedRelaySession(userId, channelId, sessionId);
         }
@@ -213,7 +228,6 @@ async function createSession(userId, channelId, rendition, options = {}) {
 async function reserveSessionSlot(userId, channelId, limit) {
     if (!redis) return null;
 
-    // Reuse existing upstream for this channel — does not consume another slot
     const existing = await findSharedRelaySession(userId, channelId);
     if (existing) {
         await touchSession(existing, userId);
@@ -236,7 +250,9 @@ async function reserveSessionSlot(userId, channelId, limit) {
             'channelId', ARGV[3],
             'startedAt', ARGV[4],
             'status', 'active',
-            'rendition', 'source')
+            'rendition', 'source',
+            'countsTowardLimit', '1',
+            'lastActivityAt', ARGV[4])
         redis.call('EXPIRE', KEYS[2], ARGV[5])
         redis.call('ZADD', KEYS[1], ARGV[4], ARGV[6])
         redis.call('SET', KEYS[3], ARGV[6], 'EX', ARGV[5])
@@ -261,19 +277,29 @@ async function reserveSessionSlot(userId, channelId, limit) {
 async function touchSession(sessionId, userId) {
     if (!redis) return;
     try {
-        await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, Date.now(), sessionId);
-        await writeSessionHash(sessionId, { lastActivityAt: Date.now() });
-        // Refresh shared indexes TTLs when clients keep watching
         const session = await getSession(sessionId);
-        if (session && session.channelId) {
-            const key = channelSessionKey(userId, session.channelId);
-            const bound = await redis.get(key);
-            if (bound === sessionId) {
-                await redis.expire(key, SESSION_TTL_SECONDS);
+        if (!session) return;
+
+        const now = Date.now();
+        await writeSessionHash(sessionId, { lastActivityAt: String(now) });
+
+        const abrChannelId = session.abrChannelId || session.channelId;
+        if (abrChannelId) {
+            const abrRaw = await redis.get(channelAbrKey(userId, abrChannelId));
+            if (abrRaw) {
+                await touchAbrLadder(userId, abrChannelId);
+                return;
             }
-            const abrKey = channelAbrKey(userId, session.channelId);
-            if (await redis.exists(abrKey)) {
-                await redis.expire(abrKey, SESSION_TTL_SECONDS);
+        }
+
+        if (session.countsTowardLimit === '1') {
+            await redis.zadd(SESSION_SORTED_SET_PREFIX + userId, now, sessionId);
+            if (session.channelId) {
+                const key = channelSessionKey(userId, session.channelId);
+                const bound = await redis.get(key);
+                if (bound === sessionId) {
+                    await redis.expire(key, SESSION_TTL_SECONDS);
+                }
             }
         }
     } catch (e) {
@@ -308,8 +334,6 @@ async function getLeastRecentlyActiveSession(userId, excludeSessionId) {
                 leastSessionId = sid;
             }
         }
-
-        if (leastSessionId === null) return null;
         return leastSessionId;
     } catch (e) {
         log.error('getLeastRecentlyActiveSession error:', e.message);
@@ -371,17 +395,32 @@ async function destroySession(sessionId, userId) {
             if (bound === sessionId) {
                 await redis.del(ck);
             }
-            // If this was an ABR source (or any ABR member), drop the whole ladder index
+
             const abrKey = channelAbrKey(userId, session.channelId);
             const abrRaw = await redis.get(abrKey);
             if (abrRaw) {
                 try {
                     const map = JSON.parse(abrRaw);
-                    if (map && Object.values(map).includes(sessionId)) {
+                    if (map && map.source === sessionId) {
                         await redis.del(abrKey);
-                        // Clear primary index if it pointed at source we just killed
-                        if (map.source === sessionId) {
-                            await redis.del(ck);
+                        for (const [role, sid] of Object.entries(map)) {
+                            if (!sid || sid === sessionId) continue;
+                            await removeFromSortedSet(userId, sid);
+                            await redis.del(SESSION_HASH_PREFIX + sid);
+                            try {
+                                const { stopFfmpegForSession } = require('./streamRelay');
+                                await stopFfmpegForSession(sid);
+                            } catch (_) { /* ignore */ }
+                        }
+                    } else if (map && Object.values(map).includes(sessionId)) {
+                        const next = { ...map };
+                        for (const [k, v] of Object.entries(next)) {
+                            if (v === sessionId) delete next[k];
+                        }
+                        if (next.source) {
+                            await redis.set(abrKey, JSON.stringify(next), 'EX', SESSION_TTL_SECONDS);
+                        } else {
+                            await redis.del(abrKey);
                         }
                     }
                 } catch (_) { /* ignore */ }
@@ -399,7 +438,6 @@ async function reapIdleSessions(idleTimeoutMs) {
 
     const now = Date.now();
     let cleanedCount = 0;
-
     const COUNTDOWN_HLS_TIME_MS = 2000;
     const COUNTDOWN_GRACE_MS = Math.max(4000, COUNTDOWN_HLS_TIME_MS * 2);
 
@@ -413,40 +451,102 @@ async function reapIdleSessions(idleTimeoutMs) {
                 for (const key of keys) {
                     const userId = key.substring(SESSION_SORTED_SET_PREFIX.length);
                     const members = await redis.zrange(SESSION_SORTED_SET_PREFIX + userId, 0, -1, 'WITHSCORES');
+                    if (!members || members.length === 0) continue;
 
-                    if (members && members.length > 0) {
-                        for (let i = 0; i < members.length; i += 2) {
-                            const sessionId = members[i];
-                            const lastActivityAt = Number(members[i + 1]);
-
-                            const session = await getSession(sessionId);
-                            if (!session) {
-                                await removeFromSortedSet(userId, sessionId);
-                                continue;
-                            }
-
-                            const status = session.status;
-                            let threshold;
-
-                            if (status === 'countdown') {
-                                threshold = now - COUNTDOWN_GRACE_MS;
-                            } else {
-                                threshold = now - idleTimeoutMs;
-                            }
-
-                            if (lastActivityAt < threshold) {
-                                try {
-                                    const { stopFfmpegForSession } = require('./streamRelay');
-                                    await stopFfmpegForSession(sessionId);
-                                    await destroySession(sessionId, userId);
-                                    cleanedCount++;
-                                    log.info(`Reaped idle ${status} session ${sessionId} (lastActivityAt=${lastActivityAt})`);
-                                } catch (e) {
-                                    log.error(`Failed to reap session ${sessionId}:`, e.message);
-                                }
+                    for (let i = 0; i < members.length; i += 2) {
+                        const sessionId = members[i];
+                        const lastActivityAt = Number(members[i + 1]);
+                        const session = await getSession(sessionId);
+                        if (!session) {
+                            await removeFromSortedSet(userId, sessionId);
+                            continue;
+                        }
+                        if (session.abrRole === 'rendition' || session.countsTowardLimit === '0') {
+                            await removeFromSortedSet(userId, sessionId);
+                            continue;
+                        }
+                        const status = session.status;
+                        const threshold = status === 'countdown'
+                            ? now - COUNTDOWN_GRACE_MS
+                            : now - idleTimeoutMs;
+                        if (lastActivityAt < threshold) {
+                            try {
+                                const { stopFfmpegForSession } = require('./streamRelay');
+                                await stopFfmpegForSession(sessionId);
+                                await destroySession(sessionId, userId);
+                                cleanedCount++;
+                                log.info(`Reaped idle ${status} session ${sessionId} (lastActivityAt=${lastActivityAt})`);
+                            } catch (e) {
+                                log.error(`Failed to reap session ${sessionId}:`, e.message);
                             }
                         }
                     }
+                }
+            }
+        } while (cursor !== '0');
+
+        cursor = '0';
+        do {
+            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${CHANNEL_ABR_PREFIX}*`, 'COUNT', 50);
+            cursor = nextCursor;
+            if (!keys || !keys.length) continue;
+
+            for (const key of keys) {
+                const rest = key.substring(CHANNEL_ABR_PREFIX.length);
+                const uuidMatch = rest.match(
+                    /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(.+)$/i
+                );
+                if (!uuidMatch) continue;
+                const userId = uuidMatch[1];
+                const channelId = uuidMatch[2];
+
+                const raw = await redis.get(key);
+                if (!raw) continue;
+                let map;
+                try {
+                    map = JSON.parse(raw);
+                } catch {
+                    await redis.del(key);
+                    continue;
+                }
+                if (!map || !map.source) {
+                    await redis.del(key);
+                    continue;
+                }
+
+                const source = await getSession(map.source);
+                if (!source) {
+                    for (const sid of Object.values(map)) {
+                        if (sid) {
+                            try {
+                                const { stopFfmpegForSession } = require('./streamRelay');
+                                await stopFfmpegForSession(sid);
+                            } catch (_) { /* ignore */ }
+                            await removeFromSortedSet(userId, sid);
+                            await redis.del(SESSION_HASH_PREFIX + sid);
+                        }
+                    }
+                    await redis.del(key);
+                    await redis.del(channelSessionKey(userId, channelId));
+                    cleanedCount++;
+                    continue;
+                }
+
+                const last = Number(source.lastActivityAt || source.startedAt || 0);
+                if (last && last < now - idleTimeoutMs) {
+                    log.info(`Reaping idle ABR ladder user=${userId} channel=${channelId}`);
+                    for (const sid of Object.values(map)) {
+                        if (!sid) continue;
+                        try {
+                            const { stopFfmpegForSession } = require('./streamRelay');
+                            await stopFfmpegForSession(sid);
+                        } catch (_) { /* ignore */ }
+                        await removeFromSortedSet(userId, sid);
+                        await redis.del(SESSION_HASH_PREFIX + sid);
+                        cleanedCount++;
+                    }
+                    await redis.del(key);
+                    await redis.del(channelSessionKey(userId, channelId));
                 }
             }
         } while (cursor !== '0');
@@ -473,4 +573,5 @@ module.exports = {
     bindSharedRelaySession,
     findSharedAbrSessions,
     bindSharedAbrSessions,
+    touchAbrLadder,
 };
