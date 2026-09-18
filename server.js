@@ -1999,6 +1999,16 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         return res.status(503).send('Session storage unavailable');
     }
 
+    // Kick source remux immediately so playlist is ready when the player requests it
+    try {
+        const { startRealStream } = require('./src/streamRelay');
+        startRealStream(sessionByRendition.source, upstreamUrl, 'source').catch((e) => {
+            log.warn(`Pre-start source relay failed: ${e.message}`);
+        });
+    } catch (e) {
+        log.warn(`Pre-start source relay error: ${e.message}`);
+    }
+
     // App host — assets Worker does not proxy /relay/*
     const rootUrl = posterRoot(req);
     const uid = encodeURIComponent(String(resolvedUserId));
@@ -2121,7 +2131,8 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', relayLimiter, async (req, res
             }
         }
 
-        let retries = 15;
+        // Poll quickly: first segment ~1s (hls_init_time); max wait ~3s
+        let retries = 60;
         let playlistContent = null;
 
         while (retries > 0) {
@@ -2134,7 +2145,7 @@ app.get('/:userId/relay/:sessionId/playlist.m3u8', relayLimiter, async (req, res
                     throw e;
                 }
             }
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 50));
             retries--;
         }
 
