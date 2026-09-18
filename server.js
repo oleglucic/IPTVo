@@ -1999,14 +1999,30 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         return res.status(503).send('Session storage unavailable');
     }
 
-    // Kick source remux immediately so playlist is ready when the player requests it
+    // Probe source resolution so 4K is not advertised as 1080p (breaks non-4K TVs).
+    // If taller than AUTO_MASTER_MAX_HEIGHT, omit source from the Auto ladder —
+    // clients still get raw 4K from the normal stream list if they want it.
+    const { startRealStream, probeSourceVideo } = require('./src/streamRelay');
+    const masterMaxHeight = parseInt(process.env.AUTO_MASTER_MAX_HEIGHT || '1080', 10);
+    let sourceMeta = null;
     try {
-        const { startRealStream } = require('./src/streamRelay');
-        startRealStream(sessionByRendition.source, upstreamUrl, 'source').catch((e) => {
-            log.warn(`Pre-start source relay failed: ${e.message}`);
+        sourceMeta = await probeSourceVideo(upstreamUrl);
+    } catch (_) { /* ignore */ }
+    const sourceHeight = sourceMeta ? sourceMeta.height : null;
+    const sourceWidth = sourceMeta ? sourceMeta.width : null;
+    const includeSourceInMaster = !sourceHeight || sourceHeight <= masterMaxHeight;
+
+    // Pre-start the variant the player is most likely to pick first
+    const sortedHeights = [...TRANSCODE_RENDITIONS].sort((a, b) => b - a);
+    const preferredHeight = sortedHeights.find((h) => h <= masterMaxHeight) || sortedHeights[0];
+    const preStartRendition = includeSourceInMaster ? 'source' : preferredHeight;
+    const preStartSessionId = includeSourceInMaster
+        ? sessionByRendition.source
+        : sessionByRendition[String(preferredHeight)];
+    if (preStartSessionId) {
+        startRealStream(preStartSessionId, upstreamUrl, preStartRendition).catch((e) => {
+            log.warn(`Pre-start ${preStartRendition} relay failed: ${e.message}`);
         });
-    } catch (e) {
-        log.warn(`Pre-start source relay error: ${e.message}`);
     }
 
     // App host — assets Worker does not proxy /relay/*
@@ -2014,20 +2030,26 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
     const uid = encodeURIComponent(String(resolvedUserId));
     const lines = ['#EXTM3U'];
 
-    {
-        const sid = sessionByRendition.source;
-        lines.push('#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,NAME="source"');
-        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
-    }
-
     const bandwidthMap = { 1080: 5000000, 720: 3000000, 480: 1500000, 360: 800000 };
-    for (const height of [...TRANSCODE_RENDITIONS].sort((a, b) => b - a)) {
+
+    // Transcoded rungs first (safe for 1080-max TVs), then source only if not too tall
+    for (const height of sortedHeights) {
         const sid = sessionByRendition[String(height)];
         if (!sid) continue;
         const width = Math.round(height * 16 / 9);
         const bandwidth = bandwidthMap[height] || 1500000;
         lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height},NAME="${height}p"`);
         lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
+    }
+
+    if (includeSourceInMaster && sessionByRendition.source) {
+        const w = sourceWidth || 1920;
+        const h = sourceHeight || 1080;
+        const bandwidth = Math.min(25000000, Math.max(8000000, Math.round(w * h * 0.1)));
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${w}x${h},NAME="source"`);
+        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sessionByRendition.source)}/playlist.m3u8`);
+    } else if (sourceHeight && sourceHeight > masterMaxHeight) {
+        log.info(`Auto master: omitting ${sourceWidth}x${sourceHeight} source (max ${masterMaxHeight}p) channel=${channelId}`);
     }
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
