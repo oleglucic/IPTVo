@@ -152,10 +152,6 @@ async function bindSharedAbrSessions(userId, channelId, sessionByRendition) {
     }
 }
 
-/**
- * Refresh activity for every session in an ABR ladder (keeps unused rungs alive
- * while any client is watching the channel).
- */
 async function touchAbrLadder(userId, channelId) {
     if (!redis || !userId || !channelId) return;
     try {
@@ -260,13 +256,13 @@ async function reserveSessionSlot(userId, channelId, limit) {
         3,
         SESSION_SORTED_SET_PREFIX + userId,
         SESSION_HASH_PREFIX + sessionId,
-        channelSessionKey(userId, channelId),
         limit,
         userId,
         channelId,
         now,
         SESSION_TTL_SECONDS,
-        sessionId
+        sessionId,
+        channelSessionKey(userId, channelId)
     );
 
     if (reserved !== 1) return null;
@@ -403,7 +399,7 @@ async function destroySession(sessionId, userId) {
                     const map = JSON.parse(abrRaw);
                     if (map && map.source === sessionId) {
                         await redis.del(abrKey);
-                        for (const [role, sid] of Object.entries(map)) {
+                        for (const sid of Object.values(map)) {
                             if (!sid || sid === sessionId) continue;
                             await removeFromSortedSet(userId, sid);
                             await redis.del(SESSION_HASH_PREFIX + sid);
