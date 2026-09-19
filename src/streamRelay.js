@@ -216,7 +216,10 @@ async function startRealStream(sessionId, upstreamUrl, rendition, maxConcurrentJ
     if (rendition !== 'source') {
         const { buildVideoEncodeArgs } = require('./transcodeConfig');
 
-        const hdrTransfer = await detectHdr(upstreamUrl);
+        // Live IPTV: HDR probe often fails/times out and delays first segment. Opt-in only.
+        const hdrTransfer = process.env.TRANSCODE_DETECT_HDR === 'true'
+            ? await detectHdr(upstreamUrl)
+            : null;
 
         const maxJobs = maxConcurrentJobs !== undefined
             ? maxConcurrentJobs
