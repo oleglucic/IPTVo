@@ -1,3 +1,13 @@
+## [2.6.1](https://github.com/oleglucic/IPTVo/compare/v2.6.0...v2.6.1) (2026-09-19)
+
+### Bug Fixes
+
+* **auto:** encode-first master, 180s idle, skip HDR probe by default ([7f1eebf](https://github.com/oleglucic/IPTVo/commit/7f1eebf50e5a52d8fc48c2dda1e056c25c98bce0))
+
+## 🤝 Contributors
+
+- Oleg lučić (@oleglucic)
+
 ## [2.6.0](https://github.com/oleglucic/IPTVo/compare/v2.5.1...v2.6.0) (2026-09-18)
 
 ### Features
