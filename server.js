@@ -2046,7 +2046,16 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         240: 400000,
     };
 
-    // Source first when included (best quality), then high → low encodes
+    // Encodes first (safe for 1080 TVs), source last (4K / best when player can use it)
+    for (const height of sortedHeights) {
+        const sid = sessionByRendition[String(height)];
+        if (!sid) continue;
+        const width = Math.round(height * 16 / 9);
+        const bandwidth = bandwidthMap[height] || 1500000;
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height},NAME="${height}p"`);
+        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
+    }
+
     if (includeSourceInMaster && sessionByRendition.source) {
         const w = sourceWidth || 1920;
         const h = sourceHeight || 1080;
@@ -2058,15 +2067,6 @@ app.get('/:userId/relay/master/:channelId/master.m3u8', async (req, res) => {
         lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sessionByRendition.source)}/playlist.m3u8`);
     } else if (sourceHeight && masterMaxHeight && sourceHeight > masterMaxHeight) {
         log.info(`Auto master: omitting ${sourceWidth}x${sourceHeight} source (AUTO_MASTER_MAX_HEIGHT=${masterMaxHeight}) channel=${channelId}`);
-    }
-
-    for (const height of sortedHeights) {
-        const sid = sessionByRendition[String(height)];
-        if (!sid) continue;
-        const width = Math.round(height * 16 / 9);
-        const bandwidth = bandwidthMap[height] || 1500000;
-        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},RESOLUTION=${width}x${height},NAME="${height}p"`);
-        lines.push(`${rootUrl}/${uid}/relay/${encodeURIComponent(sid)}/playlist.m3u8`);
     }
 
     res.set('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
@@ -2464,7 +2464,7 @@ const os = require('os');
 const CLUSTER_WORKERS = process.env.CLUSTER_WORKERS ? parseInt(process.env.CLUSTER_WORKERS, 10) : 0;
 const CONCURRENCY_LIMIT_ENABLED = process.env.CONCURRENCY_LIMIT_ENABLED === 'true';
 const CONCURRENCY_EVICTION_COUNTDOWN_MS = parseInt(process.env.CONCURRENCY_EVICTION_COUNTDOWN_MS || '15000', 10);
-const CONCURRENCY_SESSION_IDLE_TIMEOUT_MS = parseInt(process.env.CONCURRENCY_SESSION_IDLE_TIMEOUT_MS || '45000', 10);
+const CONCURRENCY_SESSION_IDLE_TIMEOUT_MS = parseInt(process.env.CONCURRENCY_SESSION_IDLE_TIMEOUT_MS || '180000', 10);
 const TRANSCODE_ENABLED = process.env.TRANSCODE_ENABLED === 'true';
 const TRANSCODE_RENDITIONS = (process.env.TRANSCODE_RENDITIONS || '1080,720,480,360,240')
     .split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
